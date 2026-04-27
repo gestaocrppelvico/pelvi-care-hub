@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, MapPin, Loader2 } from "lucide-react";
+import { ArrowLeft, MapPin, Loader2, Search } from "lucide-react";
 import { z } from "zod";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -28,8 +28,32 @@ export default function MedicoNovo() {
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
   const [gettingGps, setGettingGps] = useState(false);
+  const [geocoding, setGeocoding] = useState(false);
   const [lat, setLat] = useState("");
   const [lng, setLng] = useState("");
+
+  async function geocodificarEndereco() {
+    const form = document.querySelector("form") as HTMLFormElement | null;
+    if (!form) return;
+    const fd = new FormData(form);
+    const endereco = String(fd.get("endereco") ?? "").trim();
+    const cidade = String(fd.get("cidade") ?? "").trim();
+    const estado = String(fd.get("estado") ?? "").trim();
+    if (!endereco && !cidade) {
+      toast.error("Preencha pelo menos endereço ou cidade");
+      return;
+    }
+    setGeocoding(true);
+    const { data, error } = await supabase.functions.invoke("geocode", {
+      body: { endereco, cidade, estado },
+    });
+    setGeocoding(false);
+    if (error) { toast.error(error.message); return; }
+    if (!data?.found) { toast.error("Endereço não encontrado no mapa"); return; }
+    setLat(String(data.latitude));
+    setLng(String(data.longitude));
+    toast.success("Coordenadas encontradas!");
+  }
 
   function pegarGps() {
     if (!navigator.geolocation) {
@@ -107,17 +131,29 @@ export default function MedicoNovo() {
           </div>
 
           <div className="space-y-2">
-            <Label>Localização (GPS)</Label>
-            <Button
-              type="button"
-              variant="secondary"
-              className="w-full h-11"
-              onClick={pegarGps}
-              disabled={gettingGps}
-            >
-              {gettingGps ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <MapPin className="w-4 h-4 mr-2" />}
-              Obter localização atual
-            </Button>
+            <Label>Localização no mapa</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-11"
+                onClick={geocodificarEndereco}
+                disabled={geocoding}
+              >
+                {geocoding ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Search className="w-4 h-4 mr-2" />}
+                Buscar pelo endereço
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-11"
+                onClick={pegarGps}
+                disabled={gettingGps}
+              >
+                {gettingGps ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <MapPin className="w-4 h-4 mr-2" />}
+                Usar GPS atual
+              </Button>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <Input placeholder="Latitude" value={lat} onChange={(e) => setLat(e.target.value)} />
               <Input placeholder="Longitude" value={lng} onChange={(e) => setLng(e.target.value)} />
