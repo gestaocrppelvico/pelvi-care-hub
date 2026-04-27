@@ -24,8 +24,30 @@ export default function Auth() {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
 
   if (!loading && user) return <Navigate to="/" replace />;
+
+  async function handleForgot(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const email = forgotEmail.trim();
+    if (!z.string().email().safeParse(email).success) {
+      toast.error("E-mail inválido");
+      return;
+    }
+    setBusy(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    setBusy(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Enviamos um link de redefinição para seu e-mail.");
+    setForgotOpen(false);
+  }
 
   async function handleLogin(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -104,6 +126,28 @@ export default function Auth() {
                 <Button type="submit" className="w-full h-12 text-base" disabled={busy}>
                   {busy ? "Entrando..." : "Entrar"}
                 </Button>
+                <button
+                  type="button"
+                  onClick={() => setForgotOpen((v) => !v)}
+                  className="block w-full text-sm text-primary hover:underline text-center"
+                >
+                  Esqueci minha senha
+                </button>
+                {forgotOpen && (
+                  <form onSubmit={handleForgot} className="space-y-3 pt-2 border-t">
+                    <Label htmlFor="forgot-email">Informe seu e-mail cadastrado</Label>
+                    <Input
+                      id="forgot-email"
+                      type="email"
+                      required
+                      value={forgotEmail}
+                      onChange={(e) => setForgotEmail(e.target.value)}
+                    />
+                    <Button type="submit" variant="secondary" className="w-full" disabled={busy}>
+                      {busy ? "Enviando..." : "Enviar link de redefinição"}
+                    </Button>
+                  </form>
+                )}
               </form>
             </TabsContent>
 
