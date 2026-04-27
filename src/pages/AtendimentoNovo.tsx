@@ -14,7 +14,7 @@ const schema = z.object({
   paciente_id: z.string().uuid("Selecione um paciente"),
   profissional_id: z.string().uuid("Selecione um profissional"),
   data_inicio: z.string().min(1, "Informe a data/hora"),
-  duracao: z.coerce.number().min(15).max(240).default(60),
+  duracao: z.coerce.number().min(15).max(240).default(40),
   tipo: z.enum(["Plano", "Particular"]),
 });
 
@@ -97,7 +97,8 @@ export default function AtendimentoNovo() {
 
           <div className="space-y-2">
             <Label htmlFor="duracao">Duração (min)</Label>
-            <Input id="duracao" name="duracao" type="number" defaultValue={60} min={15} max={240} className="h-12" />
+            <Input id="duracao" name="duracao" type="number" defaultValue={40} min={15} max={240} step={5} className="h-12" />
+            <p className="text-xs text-muted-foreground">Padrão da clínica: 40 minutos por sessão.</p>
           </div>
 
           <div className="space-y-2">
