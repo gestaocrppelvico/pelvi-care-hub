@@ -1,12 +1,12 @@
 import { NavLink } from "react-router-dom";
-import { Home, Calendar, Users, Stethoscope, Menu } from "lucide-react";
+import { Home, Calendar, Stethoscope, MapPin, Menu } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const items = [
   { to: "/", icon: Home, label: "Início" },
   { to: "/agenda", icon: Calendar, label: "Agenda" },
-  { to: "/pacientes", icon: Users, label: "Pacientes" },
   { to: "/medicos", icon: Stethoscope, label: "Médicos" },
+  { to: "/explorar", icon: MapPin, label: "Explorar" },
   { to: "/mais", icon: Menu, label: "Mais" },
 ];
 
