@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Calendar as CalendarIcon, Plus, Clock } from "lucide-react";
+import { Calendar as CalendarIcon, Plus, Clock, FileText } from "lucide-react";
 import { Link } from "react-router-dom";
 import { format, addDays, startOfDay, endOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -90,6 +90,11 @@ export default function Agenda() {
                 <div className="font-semibold truncate">{a.paciente?.nome ?? "—"}</div>
                 <div className="text-xs text-muted-foreground truncate">{a.profissional?.nome}</div>
               </div>
+              <Button asChild size="icon" variant="ghost" aria-label="Abrir prontuário">
+                <Link to={`/atendimentos/${a.id}/prontuario`}>
+                  <FileText className="w-4 h-4" />
+                </Link>
+              </Button>
             </Card>
           ))}
         </div>
