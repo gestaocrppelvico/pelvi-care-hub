@@ -10,6 +10,8 @@ import ResetPassword from "./pages/ResetPassword";
 import Dashboard from "./pages/Dashboard";
 import Pacientes from "./pages/Pacientes";
 import PacienteNovo from "./pages/PacienteNovo";
+import PacienteDetalhe from "./pages/PacienteDetalhe";
+import Prontuario from "./pages/Prontuario";
 import Medicos from "./pages/Medicos";
 import MedicoNovo from "./pages/MedicoNovo";
 import Agenda from "./pages/Agenda";
@@ -33,8 +35,10 @@ const App = () => (
             <Route path="/" element={<Dashboard />} />
             <Route path="/agenda" element={<Agenda />} />
             <Route path="/agenda/novo" element={<AtendimentoNovo />} />
+            <Route path="/atendimentos/:atendimentoId/prontuario" element={<Prontuario />} />
             <Route path="/pacientes" element={<Pacientes />} />
             <Route path="/pacientes/novo" element={<PacienteNovo />} />
+            <Route path="/pacientes/:id" element={<PacienteDetalhe />} />
             <Route path="/medicos" element={<Medicos />} />
             <Route path="/medicos/novo" element={<MedicoNovo />} />
             <Route path="/explorar" element={<Explorar />} />

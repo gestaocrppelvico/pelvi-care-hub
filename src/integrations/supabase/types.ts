@@ -524,6 +524,57 @@ export type Database = {
         }
         Relationships: []
       }
+      prontuarios: {
+        Row: {
+          atendimento_id: string
+          avaliacao_funcional: string | null
+          conduta: string | null
+          created_at: string
+          created_by: string | null
+          escala_dor: number | null
+          evolucao_livre: string | null
+          exercicios_prescritos: string | null
+          id: string
+          paciente_id: string
+          profissional_id: string
+          proximos_passos: string | null
+          queixa_principal: string | null
+          updated_at: string
+        }
+        Insert: {
+          atendimento_id: string
+          avaliacao_funcional?: string | null
+          conduta?: string | null
+          created_at?: string
+          created_by?: string | null
+          escala_dor?: number | null
+          evolucao_livre?: string | null
+          exercicios_prescritos?: string | null
+          id?: string
+          paciente_id: string
+          profissional_id: string
+          proximos_passos?: string | null
+          queixa_principal?: string | null
+          updated_at?: string
+        }
+        Update: {
+          atendimento_id?: string
+          avaliacao_funcional?: string | null
+          conduta?: string | null
+          created_at?: string
+          created_by?: string | null
+          escala_dor?: number | null
+          evolucao_livre?: string | null
+          exercicios_prescritos?: string | null
+          id?: string
+          paciente_id?: string
+          profissional_id?: string
+          proximos_passos?: string | null
+          queixa_principal?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string
