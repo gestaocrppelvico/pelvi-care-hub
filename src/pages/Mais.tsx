@@ -121,7 +121,18 @@ export default function Mais() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
+      <Link to="/crm" className="block">
+        <Card className="p-4 flex items-center gap-3 hover:bg-accent transition-colors">
+          <MessageCircle className="w-6 h-6 text-primary" />
+          <div className="flex-1">
+            <div className="font-semibold">CRM</div>
+            <div className="text-xs text-muted-foreground">Lembretes, retornos e aniversariantes</div>
+          </div>
+          <ChevronRight className="w-5 h-5 text-muted-foreground" />
+        </Card>
+      </Link>
+
+      <div className="flex items-center gap-2 pt-2">
         <Users className="w-6 h-6 text-primary" />
         <h1 className="text-2xl font-bold">Usuários e papéis</h1>
       </div>
