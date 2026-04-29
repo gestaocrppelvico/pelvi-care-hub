@@ -1,1 +1,4 @@
 project_id = "vqclpgxpocyhuzblsxql"
+
+[functions.gcal-pull]
+verify_jwt = false
