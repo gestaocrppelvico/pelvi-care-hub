@@ -24,6 +24,7 @@ export type Database = {
           evolucao: string | null
           google_event_id: string | null
           id: string
+          last_synced_at: string | null
           observacoes: string | null
           paciente_id: string
           profissional_id: string
@@ -42,6 +43,7 @@ export type Database = {
           evolucao?: string | null
           google_event_id?: string | null
           id?: string
+          last_synced_at?: string | null
           observacoes?: string | null
           paciente_id: string
           profissional_id: string
@@ -60,6 +62,7 @@ export type Database = {
           evolucao?: string | null
           google_event_id?: string | null
           id?: string
+          last_synced_at?: string | null
           observacoes?: string | null
           paciente_id?: string
           profissional_id?: string
@@ -235,6 +238,33 @@ export type Database = {
           quantidade_atual?: number
           quantidade_minima?: number
           unidade?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      gcal_sync_state: {
+        Row: {
+          calendar_id: string
+          id: string
+          last_full_sync_at: string | null
+          last_incremental_at: string | null
+          sync_token: string | null
+          updated_at: string
+        }
+        Insert: {
+          calendar_id?: string
+          id?: string
+          last_full_sync_at?: string | null
+          last_incremental_at?: string | null
+          sync_token?: string | null
+          updated_at?: string
+        }
+        Update: {
+          calendar_id?: string
+          id?: string
+          last_full_sync_at?: string | null
+          last_incremental_at?: string | null
+          sync_token?: string | null
           updated_at?: string
         }
         Relationships: []
