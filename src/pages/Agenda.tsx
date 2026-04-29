@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { Calendar as CalendarIcon, Plus, Clock, FileText } from "lucide-react";
+import { Calendar as CalendarIcon, Plus, Clock, FileText, X, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { format, addDays, startOfDay, endOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { syncAtendimentoToGCal } from "@/lib/gcal";
 
 interface Atendimento {
   id: string;
