@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { syncAtendimentoToGCal } from "@/lib/gcal";
 
 const schema = z.object({
   paciente_id: z.string().uuid("Selecione um paciente"),
@@ -44,20 +45,24 @@ export default function AtendimentoNovo() {
     setBusy(true);
     const inicio = new Date(parsed.data.data_inicio);
     const fim = new Date(inicio.getTime() + parsed.data.duracao * 60_000);
-    const { error } = await supabase.from("atendimentos").insert({
+    const { data: created, error } = await supabase.from("atendimentos").insert({
       paciente_id: parsed.data.paciente_id,
       profissional_id: parsed.data.profissional_id,
       data_inicio: inicio.toISOString(),
       data_fim: fim.toISOString(),
       tipo: parsed.data.tipo,
       status: "agendado",
-    });
+    }).select("id").single();
     setBusy(false);
     if (error) {
       toast.error(error.message);
       return;
     }
-    toast.success("Atendimento agendado!");
+    if (created?.id) {
+      // best-effort: sincroniza com o Google Calendar da clínica
+      syncAtendimentoToGCal(created.id, "create");
+    }
+    toast.success("Atendimento agendado e sincronizado com o Google!");
     navigate("/agenda");
   }
 
