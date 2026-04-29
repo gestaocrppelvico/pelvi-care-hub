@@ -124,6 +124,16 @@ export default function Agenda() {
                   <FileText className="w-4 h-4" />
                 </Link>
               </Button>
+              {a.status !== "cancelado" && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label="Cancelar atendimento"
+                  onClick={() => cancelar(a.id)}
+                >
+                  <X className="w-4 h-4 text-destructive" />
+                </Button>
+              )}
             </Card>
           ))}
         </div>
