@@ -88,6 +88,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "atendimentos_paciente_id_fkey"
+            columns: ["paciente_id"]
+            isOneToOne: false
+            referencedRelation: "v_paciente_ultima_sessao"
+            referencedColumns: ["paciente_id"]
+          },
+          {
             foreignKeyName: "atendimentos_profissional_id_fkey"
             columns: ["profissional_id"]
             isOneToOne: false
@@ -153,7 +160,71 @@ export type Database = {
             referencedRelation: "pacientes"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "autorizacoes_paciente_id_fkey"
+            columns: ["paciente_id"]
+            isOneToOne: false
+            referencedRelation: "v_paciente_ultima_sessao"
+            referencedColumns: ["paciente_id"]
+          },
         ]
+      }
+      crm_envios: {
+        Row: {
+          enviado_em: string
+          enviado_por: string | null
+          id: string
+          mensagem: string
+          paciente_id: string
+          tipo: string
+        }
+        Insert: {
+          enviado_em?: string
+          enviado_por?: string | null
+          id?: string
+          mensagem: string
+          paciente_id: string
+          tipo: string
+        }
+        Update: {
+          enviado_em?: string
+          enviado_por?: string | null
+          id?: string
+          mensagem?: string
+          paciente_id?: string
+          tipo?: string
+        }
+        Relationships: []
+      }
+      crm_templates: {
+        Row: {
+          ativo: boolean
+          conteudo: string
+          created_at: string
+          id: string
+          nome: string
+          tipo: string
+          updated_at: string
+        }
+        Insert: {
+          ativo?: boolean
+          conteudo: string
+          created_at?: string
+          id?: string
+          nome: string
+          tipo: string
+          updated_at?: string
+        }
+        Update: {
+          ativo?: boolean
+          conteudo?: string
+          created_at?: string
+          id?: string
+          nome?: string
+          tipo?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       documentos_pacientes: {
         Row: {
@@ -203,6 +274,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "pacientes"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "documentos_pacientes_paciente_id_fkey"
+            columns: ["paciente_id"]
+            isOneToOne: false
+            referencedRelation: "v_paciente_ultima_sessao"
+            referencedColumns: ["paciente_id"]
           },
         ]
       }
@@ -628,7 +706,13 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      v_paciente_ultima_sessao: {
+        Row: {
+          paciente_id: string | null
+          ultima_sessao: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       current_profissional_id: { Args: never; Returns: string }
