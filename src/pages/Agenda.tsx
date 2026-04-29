@@ -26,7 +26,7 @@ export default function Agenda() {
 
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(new Date(), i - 1)), []);
 
-  useEffect(() => {
+  function reload() {
     setLoading(true);
     supabase
       .from("atendimentos")
@@ -38,15 +38,42 @@ export default function Agenda() {
         setList((data as any) ?? []);
         setLoading(false);
       });
+  }
+
+  async function cancelar(id: string) {
+    if (!confirm("Cancelar este atendimento? Será removido também do Google Calendar.")) return;
+    const { error } = await supabase.from("atendimentos").update({ status: "cancelado" }).eq("id", id);
+    if (error) { toast.error(error.message); return; }
+    await syncAtendimentoToGCal(id, "delete");
+    toast.success("Atendimento cancelado e removido do Google.");
+    reload();
+  }
+
+  async function syncNow() {
+    toast.info("Sincronizando com Google Calendar...");
+    const { error } = await supabase.functions.invoke("gcal-pull");
+    if (error) toast.error("Falha na sincronização: " + error.message);
+    else { toast.success("Sincronização concluída"); reload(); }
+  }
+
+
+  useEffect(() => {
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [day]);
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Agenda</h1>
-        <Button asChild size="sm">
-          <Link to="/agenda/novo"><Plus className="w-4 h-4 mr-1" /> Novo</Link>
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={syncNow} aria-label="Sincronizar com Google">
+            <RefreshCw className="w-4 h-4" />
+          </Button>
+          <Button asChild size="sm">
+            <Link to="/agenda/novo"><Plus className="w-4 h-4 mr-1" /> Novo</Link>
+          </Button>
+        </div>
       </div>
 
       <div className="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4">
