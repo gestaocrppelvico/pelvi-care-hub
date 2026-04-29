@@ -155,6 +155,63 @@ export type Database = {
           },
         ]
       }
+      crm_envios: {
+        Row: {
+          enviado_em: string
+          enviado_por: string | null
+          id: string
+          mensagem: string
+          paciente_id: string
+          tipo: string
+        }
+        Insert: {
+          enviado_em?: string
+          enviado_por?: string | null
+          id?: string
+          mensagem: string
+          paciente_id: string
+          tipo: string
+        }
+        Update: {
+          enviado_em?: string
+          enviado_por?: string | null
+          id?: string
+          mensagem?: string
+          paciente_id?: string
+          tipo?: string
+        }
+        Relationships: []
+      }
+      crm_templates: {
+        Row: {
+          ativo: boolean
+          conteudo: string
+          created_at: string
+          id: string
+          nome: string
+          tipo: string
+          updated_at: string
+        }
+        Insert: {
+          ativo?: boolean
+          conteudo: string
+          created_at?: string
+          id?: string
+          nome: string
+          tipo: string
+          updated_at?: string
+        }
+        Update: {
+          ativo?: boolean
+          conteudo?: string
+          created_at?: string
+          id?: string
+          nome?: string
+          tipo?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       documentos_pacientes: {
         Row: {
           arquivo_url: string | null

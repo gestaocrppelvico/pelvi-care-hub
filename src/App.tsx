@@ -18,6 +18,8 @@ import Agenda from "./pages/Agenda";
 import AtendimentoNovo from "./pages/AtendimentoNovo";
 import Mais from "./pages/Mais";
 import Explorar from "./pages/Explorar";
+import Crm from "./pages/Crm";
+import CrmTemplates from "./pages/CrmTemplates";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -42,6 +44,8 @@ const App = () => (
             <Route path="/medicos" element={<Medicos />} />
             <Route path="/medicos/novo" element={<MedicoNovo />} />
             <Route path="/explorar" element={<Explorar />} />
+            <Route path="/crm" element={<Crm />} />
+            <Route path="/crm/templates" element={<CrmTemplates />} />
             <Route path="/mais" element={<Mais />} />
           </Route>
           <Route path="*" element={<NotFound />} />
