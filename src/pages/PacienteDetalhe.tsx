@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, FileText, Phone, Calendar, Activity } from "lucide-react";
+import { ArrowLeft, FileText, Phone, Calendar, Activity, Wallet } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
@@ -83,6 +83,13 @@ export default function PacienteDetalhe() {
           <p className="text-xs text-muted-foreground pt-2 border-t">{pac.observacoes}</p>
         )}
       </Card>
+
+      <Link to={`/pacientes/${pac.id}/financeiro`}>
+        <Card className="p-3 flex items-center gap-3 hover:bg-accent transition-colors">
+          <Wallet className="w-5 h-5 text-primary" />
+          <div className="flex-1 font-medium text-sm">Ficha financeira</div>
+        </Card>
+      </Link>
 
       <div className="flex items-center justify-between pt-2">
         <h2 className="text-lg font-semibold">Histórico de evoluções</h2>

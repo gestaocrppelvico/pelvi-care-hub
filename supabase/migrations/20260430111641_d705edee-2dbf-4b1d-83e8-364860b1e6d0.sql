@@ -1,0 +1,1 @@
+REVOKE ALL ON FUNCTION public.processar_atendimento_realizado() FROM PUBLIC, anon, authenticated;
