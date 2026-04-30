@@ -19,19 +19,54 @@ const schema = z.object({
   tipo: z.enum(["Plano", "Particular"]),
 });
 
+interface PacientePacote {
+  id: string;
+  sessoes_restantes: number;
+  pacote: { nome: string; numero_sessoes: number } | null;
+}
+interface PacienteServico {
+  id: string;
+  utilizado: boolean;
+  servico: { nome: string } | null;
+}
+
 export default function AtendimentoNovo() {
   const navigate = useNavigate();
   const [pacientes, setPacientes] = useState<{ id: string; nome: string }[]>([]);
   const [profs, setProfs] = useState<{ id: string; nome: string }[]>([]);
+  const [servicos, setServicos] = useState<{ id: string; nome: string }[]>([]);
+  const [pacientePacotes, setPacientePacotes] = useState<PacientePacote[]>([]);
+  const [pacienteServicos, setPacienteServicos] = useState<PacienteServico[]>([]);
   const [paciente, setPaciente] = useState("");
   const [prof, setProf] = useState("");
   const [tipo, setTipo] = useState<"Plano" | "Particular">("Plano");
+  const [vinculo, setVinculo] = useState<string>("none"); // "none" | "pp:<id>" | "ps:<id>"
+  const [servicoId, setServicoId] = useState<string>("none");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     supabase.from("pacientes").select("id, nome").eq("ativo", true).order("nome").then(({ data }) => setPacientes(data ?? []));
     supabase.from("profissionais").select("id, nome").eq("ativo", true).order("nome").then(({ data }) => setProfs(data ?? []));
+    supabase.from("servicos").select("id, nome").eq("ativo", true).order("nome").then(({ data }) => setServicos(data ?? []));
   }, []);
+
+  // Carrega ficha do paciente
+  useEffect(() => {
+    setVinculo("none");
+    if (!paciente) {
+      setPacientePacotes([]);
+      setPacienteServicos([]);
+      return;
+    }
+    (async () => {
+      const [pp, ps] = await Promise.all([
+        supabase.from("paciente_pacotes").select("id, sessoes_restantes, pacote:pacotes(nome, numero_sessoes)").eq("paciente_id", paciente).gt("sessoes_restantes", 0),
+        supabase.from("paciente_servicos").select("id, utilizado, servico:servicos(nome)").eq("paciente_id", paciente).eq("utilizado", false),
+      ]);
+      setPacientePacotes((pp.data as any) ?? []);
+      setPacienteServicos((ps.data as any) ?? []);
+    })();
+  }, [paciente]);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -45,21 +80,26 @@ export default function AtendimentoNovo() {
     setBusy(true);
     const inicio = new Date(parsed.data.data_inicio);
     const fim = new Date(inicio.getTime() + parsed.data.duracao * 60_000);
-    const { data: created, error } = await supabase.from("atendimentos").insert({
+
+    const payload: any = {
       paciente_id: parsed.data.paciente_id,
       profissional_id: parsed.data.profissional_id,
       data_inicio: inicio.toISOString(),
       data_fim: fim.toISOString(),
       tipo: parsed.data.tipo,
       status: "agendado",
-    }).select("id").single();
+    };
+    if (servicoId !== "none") payload.servico_id = servicoId;
+    if (vinculo.startsWith("pp:")) payload.paciente_pacote_id = vinculo.slice(3);
+    if (vinculo.startsWith("ps:")) payload.paciente_servico_id = vinculo.slice(3);
+
+    const { data: created, error } = await supabase.from("atendimentos").insert(payload).select("id").single();
     setBusy(false);
     if (error) {
       toast.error(error.message);
       return;
     }
     if (created?.id) {
-      // best-effort: sincroniza com o Google Calendar da clínica
       syncAtendimentoToGCal(created.id, "create");
     }
     toast.success("Atendimento agendado e sincronizado com o Google!");
@@ -116,6 +156,40 @@ export default function AtendimentoNovo() {
               </SelectContent>
             </Select>
           </div>
+
+          <div className="space-y-2">
+            <Label>Serviço (opcional)</Label>
+            <Select value={servicoId} onValueChange={setServicoId}>
+              <SelectTrigger className="h-12"><SelectValue placeholder="— nenhum —" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">— nenhum —</SelectItem>
+                {servicos.map((s) => <SelectItem key={s.id} value={s.id}>{s.nome}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {paciente && (pacientePacotes.length > 0 || pacienteServicos.length > 0) && (
+            <div className="space-y-2">
+              <Label>Consumir da ficha financeira</Label>
+              <Select value={vinculo} onValueChange={setVinculo}>
+                <SelectTrigger className="h-12"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">— não consumir —</SelectItem>
+                  {pacientePacotes.map((pp) => (
+                    <SelectItem key={pp.id} value={`pp:${pp.id}`}>
+                      Pacote: {pp.pacote?.nome} ({pp.sessoes_restantes} restantes)
+                    </SelectItem>
+                  ))}
+                  {pacienteServicos.map((ps) => (
+                    <SelectItem key={ps.id} value={`ps:${ps.id}`}>
+                      Serviço avulso: {ps.servico?.nome}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">A sessão será descontada quando o atendimento for marcado como realizado.</p>
+            </div>
+          )}
 
           <Button type="submit" className="w-full h-12" disabled={busy}>
             {busy ? "Salvando..." : "Agendar"}
