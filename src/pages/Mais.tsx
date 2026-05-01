@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Users, Shield, Trash2, UserCheck, Link2Off, MessageCircle, ChevronRight, Wallet } from "lucide-react";
+import { Users, Shield, Trash2, UserCheck, Link2Off, MessageCircle, ChevronRight, Wallet, FileText } from "lucide-react";
 
 interface UserWithRoles {
   id: string;
