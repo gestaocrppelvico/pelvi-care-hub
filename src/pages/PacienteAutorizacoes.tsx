@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import { ArrowLeft, ShieldCheck, Plus, Pencil, AlertTriangle } from "lucide-react";
 import { format } from "date-fns";
 
-type StatusAutorizacao = "pendente" | "aprovada" | "negada" | "vencida";
+type StatusAutorizacao = "pendente" | "ativa" | "esgotada" | "expirada";
 
 interface Autorizacao {
   id: string;
@@ -29,9 +29,9 @@ interface Autorizacao {
 
 const STATUS_COLORS: Record<StatusAutorizacao, string> = {
   pendente: "bg-yellow-100 text-yellow-800",
-  aprovada: "bg-green-100 text-green-800",
-  negada: "bg-red-100 text-red-800",
-  vencida: "bg-gray-100 text-gray-800",
+  ativa: "bg-green-100 text-green-800",
+  esgotada: "bg-red-100 text-red-800",
+  expirada: "bg-gray-100 text-gray-800",
 };
 
 const EMPTY: Omit<Autorizacao, "id" | "created_at"> = {
@@ -163,7 +163,7 @@ export default function PacienteAutorizacoes() {
                     <Badge className={`text-[10px] ${STATUS_COLORS[a.status]}`}>
                       {a.status}
                     </Badge>
-                    {vencida && a.status === "aprovada" && (
+                    {vencida && a.status === "ativa" && (
                       <AlertTriangle className="w-4 h-4 text-destructive" />
                     )}
                   </div>
@@ -254,9 +254,9 @@ export default function PacienteAutorizacoes() {
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="pendente">Pendente</SelectItem>
-                  <SelectItem value="aprovada">Aprovada</SelectItem>
-                  <SelectItem value="negada">Negada</SelectItem>
-                  <SelectItem value="vencida">Vencida</SelectItem>
+                  <SelectItem value="ativa">Ativa</SelectItem>
+                  <SelectItem value="esgotada">Esgotada</SelectItem>
+                  <SelectItem value="expirada">Expirada</SelectItem>
                 </SelectContent>
               </Select>
             </div>
