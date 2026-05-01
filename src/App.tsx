@@ -26,6 +26,7 @@ import FinanceiroRepasses from "./pages/FinanceiroRepasses";
 import PacienteFinanceiro from "./pages/PacienteFinanceiro";
 import Documentos from "./pages/Documentos";
 import PacienteDocumentos from "./pages/PacienteDocumentos";
+import PacienteAutorizacoes from "./pages/PacienteAutorizacoes";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
