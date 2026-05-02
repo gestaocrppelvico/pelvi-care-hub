@@ -1095,7 +1095,12 @@ export type Database = {
         | "transferencia"
         | "plano_saude"
         | "outro"
-      status_atendimento: "agendado" | "realizado" | "cancelado" | "faltou"
+      status_atendimento:
+        | "agendado"
+        | "em_andamento"
+        | "realizado"
+        | "cancelado"
+        | "faltou"
       status_autorizacao: "ativa" | "expirada" | "esgotada" | "pendente"
       status_pagamento: "pendente" | "pago" | "parcial" | "cancelado"
       status_repasse: "pendente" | "pago" | "cancelado"
@@ -1240,7 +1245,13 @@ export const Constants = {
         "plano_saude",
         "outro",
       ],
-      status_atendimento: ["agendado", "realizado", "cancelado", "faltou"],
+      status_atendimento: [
+        "agendado",
+        "em_andamento",
+        "realizado",
+        "cancelado",
+        "faltou",
+      ],
       status_autorizacao: ["ativa", "expirada", "esgotada", "pendente"],
       status_pagamento: ["pendente", "pago", "parcial", "cancelado"],
       status_repasse: ["pendente", "pago", "cancelado"],

@@ -14,6 +14,9 @@ import PacienteDetalhe from "./pages/PacienteDetalhe";
 import Prontuario from "./pages/Prontuario";
 import Medicos from "./pages/Medicos";
 import MedicoNovo from "./pages/MedicoNovo";
+import MedicoDetalhe from "./pages/MedicoDetalhe";
+import PacienteEditar from "./pages/PacienteEditar";
+import AdminDashboard from "./pages/AdminDashboard";
 import Agenda from "./pages/Agenda";
 import AtendimentoNovo from "./pages/AtendimentoNovo";
 import Mais from "./pages/Mais";
@@ -48,9 +51,12 @@ const App = () => (
             <Route path="/pacientes" element={<Pacientes />} />
             <Route path="/pacientes/novo" element={<PacienteNovo />} />
             <Route path="/pacientes/:id" element={<PacienteDetalhe />} />
+            <Route path="/pacientes/:id/editar" element={<PacienteEditar />} />
             <Route path="/medicos" element={<Medicos />} />
             <Route path="/medicos/novo" element={<MedicoNovo />} />
+            <Route path="/medicos/:id" element={<MedicoDetalhe />} />
             <Route path="/explorar" element={<Explorar />} />
+            <Route path="/dashboard" element={<AdminDashboard />} />
             <Route path="/crm" element={<Crm />} />
             <Route path="/crm/templates" element={<CrmTemplates />} />
             <Route path="/financeiro" element={<Financeiro />} />
