@@ -56,7 +56,7 @@ export default function PacienteEditar() {
     setBusy(true);
     const payload = Object.fromEntries(
       Object.entries(parsed.data).map(([k, v]) => [k, v === "" ? null : v])
-    );
+    ) as any;
     const { error } = await supabase.from("pacientes").update(payload).eq("id", id!);
     setBusy(false);
     if (error) { toast.error(error.message); return; }
