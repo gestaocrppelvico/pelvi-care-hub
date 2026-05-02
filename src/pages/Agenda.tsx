@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Calendar as CalendarIcon, Plus, Clock, FileText, X, RefreshCw } from "lucide-react";
+import { Calendar as CalendarIcon, Plus, Clock, FileText, X, RefreshCw, Play, CheckCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { format, addDays, startOfDay, endOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { syncAtendimentoToGCal } from "@/lib/gcal";
 
 interface Atendimento {
@@ -18,6 +19,20 @@ interface Atendimento {
   paciente: { nome: string } | null;
   profissional: { nome: string; cor_agenda: string } | null;
 }
+
+const statusLabel: Record<string, string> = {
+  agendado: "Agendado",
+  em_andamento: "Em andamento",
+  realizado: "Realizado",
+  cancelado: "Cancelado",
+};
+
+const statusColor: Record<string, string> = {
+  agendado: "secondary",
+  em_andamento: "default",
+  realizado: "default",
+  cancelado: "destructive",
+};
 
 export default function Agenda() {
   const [day, setDay] = useState<Date>(new Date());
@@ -40,6 +55,13 @@ export default function Agenda() {
       });
   }
 
+  async function mudarStatus(id: string, novoStatus: string) {
+    const { error } = await supabase.from("atendimentos").update({ status: novoStatus }).eq("id", id);
+    if (error) { toast.error(error.message); return; }
+    toast.success(`Status alterado para "${statusLabel[novoStatus]}"`);
+    reload();
+  }
+
   async function cancelar(id: string) {
     if (!confirm("Cancelar este atendimento? Será removido também do Google Calendar.")) return;
     const { error } = await supabase.from("atendimentos").update({ status: "cancelado" }).eq("id", id);
@@ -55,7 +77,6 @@ export default function Agenda() {
     if (error) toast.error("Falha na sincronização: " + error.message);
     else { toast.success("Sincronização concluída"); reload(); }
   }
-
 
   useEffect(() => {
     reload();
@@ -104,36 +125,59 @@ export default function Agenda() {
       ) : (
         <div className="space-y-2">
           {list.map((a) => (
-            <Card key={a.id} className="p-4 shadow-card flex items-center gap-3">
-              <div
-                className="w-1 h-12 rounded-full"
-                style={{ backgroundColor: a.profissional?.cor_agenda ?? "#3B82F6" }}
-              />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Clock className="w-3 h-3" />
-                  {format(new Date(a.data_inicio), "HH:mm")}
-                  {a.data_fim ? ` – ${format(new Date(a.data_fim), "HH:mm")}` : ""}
-                  <span className="ml-auto px-2 py-0.5 rounded-full bg-secondary text-foreground">{a.tipo}</span>
+            <Card key={a.id} className="p-4 shadow-card space-y-2">
+              <div className="flex items-center gap-3">
+                <div
+                  className="w-1 h-12 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: a.profissional?.cor_agenda ?? "#3B82F6" }}
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Clock className="w-3 h-3" />
+                    {format(new Date(a.data_inicio), "HH:mm")}
+                    {a.data_fim ? ` – ${format(new Date(a.data_fim), "HH:mm")}` : ""}
+                    <Badge variant={statusColor[a.status] as any} className="ml-auto text-[10px]">
+                      {statusLabel[a.status] ?? a.status}
+                    </Badge>
+                  </div>
+                  <div className="font-semibold truncate">{a.paciente?.nome ?? "—"}</div>
+                  <div className="text-xs text-muted-foreground truncate">{a.profissional?.nome} • {a.tipo}</div>
                 </div>
-                <div className="font-semibold truncate">{a.paciente?.nome ?? "—"}</div>
-                <div className="text-xs text-muted-foreground truncate">{a.profissional?.nome}</div>
               </div>
-              <Button asChild size="icon" variant="ghost" aria-label="Abrir prontuário">
-                <Link to={`/atendimentos/${a.id}/prontuario`}>
-                  <FileText className="w-4 h-4" />
-                </Link>
-              </Button>
-              {a.status !== "cancelado" && (
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label="Cancelar atendimento"
-                  onClick={() => cancelar(a.id)}
-                >
-                  <X className="w-4 h-4 text-destructive" />
-                </Button>
-              )}
+
+              <div className="flex gap-1 flex-wrap">
+                {a.status === "agendado" && (
+                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => mudarStatus(a.id, "em_andamento")}>
+                    <Play className="w-3 h-3 mr-1" /> Iniciar
+                  </Button>
+                )}
+                {a.status === "em_andamento" && (
+                  <Button size="sm" asChild className="h-7 text-xs">
+                    <Link to={`/atendimentos/${a.id}/prontuario`}>
+                      <FileText className="w-3 h-3 mr-1" /> Evoluir e finalizar
+                    </Link>
+                  </Button>
+                )}
+                {(a.status === "agendado" || a.status === "em_andamento") && (
+                  <>
+                    <Button size="sm" variant="ghost" asChild className="h-7 text-xs">
+                      <Link to={`/atendimentos/${a.id}/prontuario`}>
+                        <FileText className="w-3 h-3 mr-1" /> Prontuário
+                      </Link>
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive" onClick={() => cancelar(a.id)}>
+                      <X className="w-3 h-3 mr-1" /> Cancelar
+                    </Button>
+                  </>
+                )}
+                {a.status === "realizado" && (
+                  <Button size="sm" variant="ghost" asChild className="h-7 text-xs">
+                    <Link to={`/atendimentos/${a.id}/prontuario`}>
+                      <FileText className="w-3 h-3 mr-1" /> Ver evolução
+                    </Link>
+                  </Button>
+                )}
+              </div>
             </Card>
           ))}
         </div>
