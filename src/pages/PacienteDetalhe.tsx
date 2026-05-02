@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, FileText, Phone, Calendar, Activity, Wallet, FileOutput, ShieldCheck } from "lucide-react";
+import { ArrowLeft, FileText, Phone, Calendar, Activity, Wallet, FileOutput, ShieldCheck, Pencil } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
@@ -60,7 +60,10 @@ export default function PacienteDetalhe() {
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="icon" onClick={() => navigate(-1)}><ArrowLeft className="w-5 h-5" /></Button>
-        <h1 className="text-2xl font-bold truncate">{pac.nome}</h1>
+        <h1 className="text-2xl font-bold truncate flex-1">{pac.nome}</h1>
+        <Button asChild size="sm" variant="outline">
+          <Link to={`/pacientes/${pac.id}/editar`}><Pencil className="w-4 h-4 mr-1" /> Editar</Link>
+        </Button>
       </div>
 
       <Card className="p-4 space-y-2">
