@@ -56,7 +56,7 @@ export default function Agenda() {
   }
 
   async function mudarStatus(id: string, novoStatus: string) {
-    const { error } = await supabase.from("atendimentos").update({ status: novoStatus }).eq("id", id);
+    const { error } = await supabase.from("atendimentos").update({ status: novoStatus as any }).eq("id", id);
     if (error) { toast.error(error.message); return; }
     toast.success(`Status alterado para "${statusLabel[novoStatus]}"`);
     reload();
