@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Users, Shield, Trash2, UserCheck, Link2Off, MessageCircle, ChevronRight, Wallet, FileText } from "lucide-react";
+import { Users, Shield, Trash2, UserCheck, Link2Off, MessageCircle, ChevronRight, Wallet, FileText, BarChart3 } from "lucide-react";
 
 interface UserWithRoles {
   id: string;
@@ -141,6 +141,16 @@ export default function Mais() {
 
   return (
     <div className="space-y-4">
+      <Link to="/dashboard" className="block">
+        <Card className="p-4 flex items-center gap-3 hover:bg-accent transition-colors">
+          <BarChart3 className="w-6 h-6 text-primary" />
+          <div className="flex-1">
+            <div className="font-semibold">Dashboard</div>
+            <div className="text-xs text-muted-foreground">Visão geral da clínica</div>
+          </div>
+          <ChevronRight className="w-5 h-5 text-muted-foreground" />
+        </Card>
+      </Link>
       <Link to="/crm" className="block">
         <Card className="p-4 flex items-center gap-3 hover:bg-accent transition-colors">
           <MessageCircle className="w-6 h-6 text-primary" />
