@@ -40,8 +40,9 @@ Deno.serve(async (req) => {
       if (state.sync_token && !pageToken) {
         params.set("syncToken", state.sync_token);
       } else if (!state.sync_token && !pageToken) {
-        // initial full sync: only future events from yesterday onward to keep it bounded
-        params.set("timeMin", new Date(Date.now() - 24 * 60 * 60_000).toISOString());
+        // initial full sync: bounded window to avoid timeout on recurring events
+        params.set("timeMin", new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString());
+        params.set("timeMax", new Date(Date.now() + 90 * 24 * 60 * 60_000).toISOString());
       }
 
       const url = `${GATEWAY}/calendars/${calendarId}/events?${params.toString()}`;
