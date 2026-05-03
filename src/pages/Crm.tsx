@@ -39,7 +39,7 @@ interface Aniversariante {
 }
 
 export default function Crm() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, isSecretaria } = useAuth();
   const [templates, setTemplates] = useState<Record<string, Template>>({});
   const [diasInativo, setDiasInativo] = useState(45);
   const [amanha, setAmanha] = useState<AtendAmanha[]>([]);
