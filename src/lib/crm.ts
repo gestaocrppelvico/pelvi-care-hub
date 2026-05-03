@@ -35,10 +35,17 @@ export function telefoneWaMe(telefone: string | null | undefined): string | null
   return digits.startsWith("55") ? digits : `55${digits}`;
 }
 
-export function abrirWhatsapp(telefone: string | null | undefined, mensagem: string): boolean {
+/**
+ * Abre conversa no WhatsApp.
+ * @param useWeb Se true, abre via WhatsApp Web (desktop). Se false, usa wa.me (app mobile).
+ */
+export function abrirWhatsapp(telefone: string | null | undefined, mensagem: string, useWeb = false): boolean {
   const tel = telefoneWaMe(telefone);
   if (!tel) return false;
-  const url = `https://wa.me/${tel}?text=${encodeURIComponent(mensagem)}`;
+  const encoded = encodeURIComponent(mensagem);
+  const url = useWeb
+    ? `https://web.whatsapp.com/send?phone=${tel}&text=${encoded}`
+    : `https://wa.me/${tel}?text=${encoded}`;
   window.open(url, "_blank", "noopener,noreferrer");
   return true;
 }
