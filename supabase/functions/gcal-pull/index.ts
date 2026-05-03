@@ -27,29 +27,29 @@ Deno.serve(async (req) => {
       "X-Connection-Api-Key": GCAL_KEY,
     };
 
+    const isIncremental = !!state.sync_token;
     let pageToken: string | undefined;
     let nextSyncToken: string | undefined;
     let processed = 0;
-    let createdInApp = 0, updatedInApp = 0, deletedInApp = 0;
+    let updatedInApp = 0, deletedInApp = 0, skippedExternal = 0;
 
     do {
       const params = new URLSearchParams();
       params.set("singleEvents", "true");
       params.set("maxResults", "250");
       if (pageToken) params.set("pageToken", pageToken);
-      if (state.sync_token && !pageToken) {
-        params.set("syncToken", state.sync_token);
-      } else if (!state.sync_token && !pageToken) {
-        // initial full sync: bounded window to avoid timeout on recurring events
-        params.set("timeMin", new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString());
-        params.set("timeMax", new Date(Date.now() + 90 * 24 * 60 * 60_000).toISOString());
+      if (isIncremental && !pageToken) {
+        params.set("syncToken", state.sync_token!);
+      } else if (!isIncremental && !pageToken) {
+        // Initial full sync: narrow window to avoid timeout on recurring events
+        params.set("timeMin", new Date(Date.now() - 3 * 24 * 60 * 60_000).toISOString());
+        params.set("timeMax", new Date(Date.now() + 30 * 24 * 60 * 60_000).toISOString());
       }
 
       const url = `${GATEWAY}/calendars/${calendarId}/events?${params.toString()}`;
       const r = await fetch(url, { headers: gHeaders });
 
       if (r.status === 410) {
-        // sync token invalid -> reset and full re-sync next call
         await admin.from("gcal_sync_state").update({ sync_token: null }).eq("id", "default");
         return new Response(JSON.stringify({ ok: true, reset: true }), {
           status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -65,13 +65,15 @@ Deno.serve(async (req) => {
         processed++;
         const appId = ev.extendedProperties?.private?.appAtendimentoId as string | undefined;
 
-        // Cancelled event from Google
+        // Cancelled event
         if (ev.status === "cancelled") {
           if (appId) {
             await admin.from("atendimentos")
               .update({ status: "cancelado", last_synced_at: new Date().toISOString() })
               .eq("id", appId);
-          } else if (ev.id) {
+            deletedInApp++;
+          } else if (ev.id && isIncremental) {
+            // Only look up by google_event_id during incremental sync (small changeset)
             const { data: existing } = await admin
               .from("atendimentos")
               .select("id")
@@ -87,10 +89,9 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // Skip events without proper time (all-day or invalid)
         if (!ev.start?.dateTime || !ev.end?.dateTime) continue;
 
-        // Event already linked to an app atendimento -> update times/status
+        // Event linked to an app atendimento -> update
         if (appId) {
           await admin.from("atendimentos").update({
             data_inicio: ev.start.dateTime,
@@ -102,25 +103,26 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // External event (created directly in Google) -> create new atendimento if we can match a profissional, otherwise log and skip
-        const { data: existing } = await admin
-          .from("atendimentos")
-          .select("id")
-          .eq("google_event_id", ev.id)
-          .maybeSingle();
-
-        if (existing) {
-          await admin.from("atendimentos").update({
-            data_inicio: ev.start.dateTime,
-            data_fim: ev.end.dateTime,
-            last_synced_at: new Date().toISOString(),
-          }).eq("id", existing.id);
-          updatedInApp++;
-        } else {
-          // Need to create a placeholder atendimento. Without paciente/profissional we skip — clinic flow expects bookings via app for those.
-          // Log so admin can see in pull logs.
-          console.log("[gcal-pull] external event skipped (no app match):", ev.id, ev.summary);
+        // During incremental sync, check if event is already tracked
+        if (isIncremental && ev.id) {
+          const { data: existing } = await admin
+            .from("atendimentos")
+            .select("id")
+            .eq("google_event_id", ev.id)
+            .maybeSingle();
+          if (existing) {
+            await admin.from("atendimentos").update({
+              data_inicio: ev.start.dateTime,
+              data_fim: ev.end.dateTime,
+              last_synced_at: new Date().toISOString(),
+            }).eq("id", existing.id);
+            updatedInApp++;
+            continue;
+          }
         }
+
+        // External event without app match — skip silently during initial sync
+        skippedExternal++;
       }
 
       pageToken = data.nextPageToken;
@@ -130,11 +132,11 @@ Deno.serve(async (req) => {
     await admin.from("gcal_sync_state").update({
       sync_token: nextSyncToken ?? state.sync_token,
       last_incremental_at: new Date().toISOString(),
-      last_full_sync_at: state.sync_token ? state.last_full_sync_at : new Date().toISOString(),
+      last_full_sync_at: isIncremental ? state.last_full_sync_at : new Date().toISOString(),
     }).eq("id", "default");
 
     return new Response(JSON.stringify({
-      ok: true, processed, createdInApp, updatedInApp, deletedInApp,
+      ok: true, processed, updatedInApp, deletedInApp, skippedExternal,
       hasSyncToken: !!nextSyncToken,
     }), {
       status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
