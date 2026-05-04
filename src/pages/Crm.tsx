@@ -139,7 +139,7 @@ export default function Crm() {
   function enviarNiver(p: Aniversariante) {
     const tpl = templates["aniversario"]?.conteudo ?? "Feliz aniversário, {paciente}!";
     const msg = aplicarTemplate(tpl, { paciente: p.nome.split(" ")[0] });
-    if (!abrirWhatsapp(p.telefone, msg, isSecretaria || isAdmin)) { toast.error("Paciente sem telefone"); return; }
+    if (!abrirWhatsapp(p.telefone, msg, isSecretaria)) { toast.error("Paciente sem telefone"); return; }
     logEnvio(p.id, "aniversario", msg);
     toast.success("WhatsApp aberto");
   }
