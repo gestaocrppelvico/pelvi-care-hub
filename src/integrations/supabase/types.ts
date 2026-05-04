@@ -25,13 +25,15 @@ export type Database = {
           google_event_id: string | null
           id: string
           last_synced_at: string | null
+          nome_paciente_livre: string | null
           observacoes: string | null
-          paciente_id: string
+          paciente_id: string | null
           paciente_pacote_id: string | null
           paciente_servico_id: string | null
           profissional_id: string
           servico_id: string | null
           status: Database["public"]["Enums"]["status_atendimento"]
+          telefone_contato: string | null
           tipo: Database["public"]["Enums"]["tipo_atendimento"]
           unidade: string | null
           updated_at: string
@@ -47,13 +49,15 @@ export type Database = {
           google_event_id?: string | null
           id?: string
           last_synced_at?: string | null
+          nome_paciente_livre?: string | null
           observacoes?: string | null
-          paciente_id: string
+          paciente_id?: string | null
           paciente_pacote_id?: string | null
           paciente_servico_id?: string | null
           profissional_id: string
           servico_id?: string | null
           status?: Database["public"]["Enums"]["status_atendimento"]
+          telefone_contato?: string | null
           tipo?: Database["public"]["Enums"]["tipo_atendimento"]
           unidade?: string | null
           updated_at?: string
@@ -69,13 +73,15 @@ export type Database = {
           google_event_id?: string | null
           id?: string
           last_synced_at?: string | null
+          nome_paciente_livre?: string | null
           observacoes?: string | null
-          paciente_id?: string
+          paciente_id?: string | null
           paciente_pacote_id?: string | null
           paciente_servico_id?: string | null
           profissional_id?: string
           servico_id?: string | null
           status?: Database["public"]["Enums"]["status_atendimento"]
+          telefone_contato?: string | null
           tipo?: Database["public"]["Enums"]["tipo_atendimento"]
           unidade?: string | null
           updated_at?: string

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { z } from "zod";
@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { syncAtendimentoToGCal } from "@/lib/gcal";
 
 const schema = z.object({
-  paciente_id: z.string().uuid("Selecione um paciente"),
+  nome_paciente: z.string().min(1, "Informe o nome do paciente"),
   profissional_id: z.string().uuid("Selecione um profissional"),
   data_inicio: z.string().min(1, "Informe a data/hora"),
   duracao: z.coerce.number().min(15).max(240).default(40),
@@ -37,10 +37,17 @@ export default function AtendimentoNovo() {
   const [servicos, setServicos] = useState<{ id: string; nome: string }[]>([]);
   const [pacientePacotes, setPacientePacotes] = useState<PacientePacote[]>([]);
   const [pacienteServicos, setPacienteServicos] = useState<PacienteServico[]>([]);
-  const [paciente, setPaciente] = useState("");
+
+  // Free text patient name + autocomplete
+  const [nomePaciente, setNomePaciente] = useState("");
+  const [matchedPacienteId, setMatchedPacienteId] = useState<string | null>(null);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [telefoneContato, setTelefoneContato] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
   const [prof, setProf] = useState("");
   const [tipo, setTipo] = useState<"Plano" | "Particular">("Plano");
-  const [vinculo, setVinculo] = useState<string>("none"); // "none" | "pp:<id>" | "ps:<id>"
+  const [vinculo, setVinculo] = useState<string>("none");
   const [servicoId, setServicoId] = useState<string>("none");
   const [busy, setBusy] = useState(false);
 
@@ -50,29 +57,44 @@ export default function AtendimentoNovo() {
     supabase.from("servicos").select("id, nome").eq("ativo", true).order("nome").then(({ data }) => setServicos(data ?? []));
   }, []);
 
-  // Carrega ficha do paciente
+  // Match patient by exact name
+  useEffect(() => {
+    const match = pacientes.find((p) => p.nome.trim().toLowerCase() === nomePaciente.trim().toLowerCase());
+    setMatchedPacienteId(match?.id ?? null);
+  }, [nomePaciente, pacientes]);
+
+  // Load financial info when matched
   useEffect(() => {
     setVinculo("none");
-    if (!paciente) {
+    if (!matchedPacienteId) {
       setPacientePacotes([]);
       setPacienteServicos([]);
       return;
     }
     (async () => {
       const [pp, ps] = await Promise.all([
-        supabase.from("paciente_pacotes").select("id, sessoes_restantes, pacote:pacotes(nome, numero_sessoes)").eq("paciente_id", paciente).gt("sessoes_restantes", 0),
-        supabase.from("paciente_servicos").select("id, utilizado, servico:servicos(nome)").eq("paciente_id", paciente).eq("utilizado", false),
+        supabase.from("paciente_pacotes").select("id, sessoes_restantes, pacote:pacotes(nome, numero_sessoes)").eq("paciente_id", matchedPacienteId).gt("sessoes_restantes", 0),
+        supabase.from("paciente_servicos").select("id, utilizado, servico:servicos(nome)").eq("paciente_id", matchedPacienteId).eq("utilizado", false),
       ]);
       setPacientePacotes((pp.data as any) ?? []);
       setPacienteServicos((ps.data as any) ?? []);
     })();
-  }, [paciente]);
+  }, [matchedPacienteId]);
+
+  const filteredPacientes = nomePaciente.length >= 2
+    ? pacientes.filter((p) => p.nome.toLowerCase().includes(nomePaciente.toLowerCase())).slice(0, 8)
+    : [];
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
-    const obj = { ...Object.fromEntries(fd), paciente_id: paciente, profissional_id: prof, tipo };
-    const parsed = schema.safeParse(obj);
+    const parsed = schema.safeParse({
+      nome_paciente: nomePaciente,
+      profissional_id: prof,
+      data_inicio: fd.get("data_inicio"),
+      duracao: fd.get("duracao"),
+      tipo,
+    });
     if (!parsed.success) {
       toast.error(parsed.error.errors[0].message);
       return;
@@ -82,13 +104,20 @@ export default function AtendimentoNovo() {
     const fim = new Date(inicio.getTime() + parsed.data.duracao * 60_000);
 
     const payload: any = {
-      paciente_id: parsed.data.paciente_id,
       profissional_id: parsed.data.profissional_id,
       data_inicio: inicio.toISOString(),
       data_fim: fim.toISOString(),
       tipo: parsed.data.tipo,
       status: "agendado",
+      nome_paciente_livre: nomePaciente.trim(),
     };
+
+    if (matchedPacienteId) {
+      payload.paciente_id = matchedPacienteId;
+    }
+    if (telefoneContato.trim()) {
+      payload.telefone_contato = telefoneContato.trim();
+    }
     if (servicoId !== "none") payload.servico_id = servicoId;
     if (vinculo.startsWith("pp:")) payload.paciente_pacote_id = vinculo.slice(3);
     if (vinculo.startsWith("ps:")) payload.paciente_servico_id = vinculo.slice(3);
@@ -115,14 +144,50 @@ export default function AtendimentoNovo() {
 
       <Card className="p-4">
         <form onSubmit={onSubmit} className="space-y-4">
-          <div className="space-y-2">
+          {/* Free-text patient name with autocomplete */}
+          <div className="space-y-2 relative">
             <Label>Paciente *</Label>
-            <Select value={paciente} onValueChange={setPaciente}>
-              <SelectTrigger className="h-12"><SelectValue placeholder="Escolha o paciente" /></SelectTrigger>
-              <SelectContent>
-                {pacientes.map((p) => <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <Input
+              ref={inputRef}
+              placeholder="Digite o nome do paciente"
+              value={nomePaciente}
+              onChange={(e) => { setNomePaciente(e.target.value); setShowSuggestions(true); }}
+              onFocus={() => setShowSuggestions(true)}
+              onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+              className="h-12"
+              autoComplete="off"
+            />
+            {matchedPacienteId ? (
+              <p className="text-xs text-green-600">✓ Paciente cadastrado encontrado</p>
+            ) : nomePaciente.trim().length > 0 ? (
+              <p className="text-xs text-muted-foreground">Paciente não cadastrado — será criado como "Avaliação"</p>
+            ) : null}
+            {showSuggestions && filteredPacientes.length > 0 && (
+              <div className="absolute z-50 top-[calc(100%-1rem)] left-0 right-0 bg-popover border rounded-md shadow-md max-h-48 overflow-y-auto">
+                {filteredPacientes.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-accent truncate"
+                    onMouseDown={(e) => { e.preventDefault(); setNomePaciente(p.nome); setShowSuggestions(false); }}
+                  >
+                    {p.nome}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Optional phone */}
+          <div className="space-y-2">
+            <Label htmlFor="telefone_contato">Telefone para contato (opcional)</Label>
+            <Input
+              id="telefone_contato"
+              placeholder="(00) 00000-0000"
+              value={telefoneContato}
+              onChange={(e) => setTelefoneContato(e.target.value)}
+              className="h-12"
+            />
           </div>
 
           <div className="space-y-2">
@@ -168,7 +233,7 @@ export default function AtendimentoNovo() {
             </Select>
           </div>
 
-          {paciente && (pacientePacotes.length > 0 || pacienteServicos.length > 0) && (
+          {matchedPacienteId && (pacientePacotes.length > 0 || pacienteServicos.length > 0) && (
             <div className="space-y-2">
               <Label>Consumir da ficha financeira</Label>
               <Select value={vinculo} onValueChange={setVinculo}>
