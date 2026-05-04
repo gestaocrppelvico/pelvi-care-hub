@@ -60,13 +60,13 @@ export default function PacienteNovo() {
 
       <Card className="p-4">
         <form onSubmit={onSubmit} className="space-y-4">
-          <Field label="Nome completo *" name="nome" required />
+          <Field label="Nome completo *" name="nome" required defaultValue={preNome} />
           <div className="grid grid-cols-2 gap-3">
             <Field label="CPF" name="cpf" />
             <Field label="Nascimento" name="data_nascimento" type="date" />
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Telefone" name="telefone" />
+            <Field label="Telefone" name="telefone" defaultValue={preTelefone} />
             <Field label="E-mail" name="email" type="email" />
           </div>
           <Field label="Endereço" name="endereco" />
