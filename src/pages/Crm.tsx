@@ -131,7 +131,7 @@ export default function Crm() {
       paciente: p.nome.split(" ")[0],
       dias_sem_atendimento: p.dias,
     });
-    if (!abrirWhatsapp(p.telefone, msg, isSecretaria || isAdmin)) { toast.error("Paciente sem telefone"); return; }
+    if (!abrirWhatsapp(p.telefone, msg, isSecretaria)) { toast.error("Paciente sem telefone"); return; }
     logEnvio(p.id, "retorno", msg);
     toast.success("WhatsApp aberto");
   }
