@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Calendar as CalendarIcon, Plus, Clock, FileText, X, RefreshCw, Play, CheckCircle } from "lucide-react";
+import { Calendar as CalendarIcon, Plus, Clock, FileText, X, RefreshCw, Play, UserPlus } from "lucide-react";
 import { Link } from "react-router-dom";
 import { format, addDays, startOfDay, endOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -16,6 +16,9 @@ interface Atendimento {
   data_fim: string | null;
   status: string;
   tipo: string;
+  nome_paciente_livre: string | null;
+  telefone_contato: string | null;
+  paciente_id: string | null;
   paciente: { nome: string } | null;
   profissional: { nome: string; cor_agenda: string } | null;
 }
@@ -45,7 +48,7 @@ export default function Agenda() {
     setLoading(true);
     supabase
       .from("atendimentos")
-      .select("id, data_inicio, data_fim, status, tipo, paciente:pacientes(nome), profissional:profissionais(nome, cor_agenda)")
+      .select("id, data_inicio, data_fim, status, tipo, paciente_id, nome_paciente_livre, telefone_contato, paciente:pacientes(nome), profissional:profissionais(nome, cor_agenda)")
       .gte("data_inicio", startOfDay(day).toISOString())
       .lte("data_inicio", endOfDay(day).toISOString())
       .order("data_inicio")
@@ -82,6 +85,17 @@ export default function Agenda() {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [day]);
+
+  function displayName(a: Atendimento) {
+    return a.paciente?.nome ?? a.nome_paciente_livre ?? "—";
+  }
+
+  function cadastrarUrl(a: Atendimento) {
+    const params = new URLSearchParams();
+    if (a.nome_paciente_livre) params.set("nome", a.nome_paciente_livre);
+    if (a.telefone_contato) params.set("telefone", a.telefone_contato);
+    return `/pacientes/novo?${params.toString()}`;
+  }
 
   return (
     <div className="space-y-4">
@@ -140,12 +154,25 @@ export default function Agenda() {
                       {statusLabel[a.status] ?? a.status}
                     </Badge>
                   </div>
-                  <div className="font-semibold truncate">{a.paciente?.nome ?? "—"}</div>
+                  <div className="font-semibold truncate">
+                    {displayName(a)}
+                    {!a.paciente_id && a.nome_paciente_livre && (
+                      <Badge variant="outline" className="ml-2 text-[10px] align-middle">Avaliação</Badge>
+                    )}
+                  </div>
                   <div className="text-xs text-muted-foreground truncate">{a.profissional?.nome} • {a.tipo}</div>
                 </div>
               </div>
 
               <div className="flex gap-1 flex-wrap">
+                {/* Cadastrar paciente button for unlinked events */}
+                {!a.paciente_id && a.nome_paciente_livre && (
+                  <Button size="sm" variant="outline" asChild className="h-7 text-xs">
+                    <Link to={cadastrarUrl(a)}>
+                      <UserPlus className="w-3 h-3 mr-1" /> Cadastrar paciente
+                    </Link>
+                  </Button>
+                )}
                 {a.status === "agendado" && (
                   <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => mudarStatus(a.id, "em_andamento")}>
                     <Play className="w-3 h-3 mr-1" /> Iniciar
