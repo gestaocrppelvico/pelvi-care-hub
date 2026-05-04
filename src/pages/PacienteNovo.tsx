@@ -24,7 +24,10 @@ const schema = z.object({
 
 export default function PacienteNovo() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [busy, setBusy] = useState(false);
+  const preNome = searchParams.get("nome") ?? "";
+  const preTelefone = searchParams.get("telefone") ?? "";
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
