@@ -117,7 +117,7 @@ export default function Crm() {
       hora: format(new Date(a.data_inicio), "HH:mm"),
       profissional: a.profissional?.nome ?? "",
     });
-    if (!abrirWhatsapp(a.paciente.telefone, msg, isSecretaria || isAdmin)) {
+    if (!abrirWhatsapp(a.paciente.telefone, msg, isSecretaria)) {
       toast.error("Paciente sem telefone cadastrado");
       return;
     }
