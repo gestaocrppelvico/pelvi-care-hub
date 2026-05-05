@@ -356,16 +356,21 @@ function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: At
                 const end = e.data_fim ? new Date(e.data_fim) : new Date(start.getTime() + 40 * 60_000);
                 const topOff = (start.getMinutes() / 60) * 60;
                 const height = Math.max((differenceInMinutes(end, start) / 60) * 60, 24);
-                return (
-                  <button
-                    key={e.id}
-                    onClick={() => onSelect(e)}
-                    className="absolute left-0 right-2 rounded px-2 py-0.5 text-[11px] leading-tight text-white truncate text-left shadow-sm hover:brightness-110 transition-all"
-                    style={{ top: topOff, height, backgroundColor: eventColor(e) }}
-                  >
-                    <span className="font-medium">{displayName(e)}</span>
-                    <span className="opacity-80 ml-1">{format(start, "HH:mm")}</span>
-                  </button>
+                  return (
+                    <button
+                      key={e.id}
+                      onClick={() => onSelect(e)}
+                      className="absolute left-0 right-2 rounded px-2 py-0.5 text-[11px] leading-tight text-white truncate text-left shadow-sm hover:brightness-110 transition-all"
+                      style={{ top: topOff, height, backgroundColor: eventColor(e) }}
+                    >
+                      <span className="font-medium">{displayName(e)}</span>
+                      <span className="opacity-80 ml-1">{format(start, "HH:mm")}</span>
+                      {height >= 36 && (
+                        <span className={`block text-[9px] mt-0.5 px-1 rounded-sm w-fit ${statusBadgeBg(e)} text-white`}>
+                          {statusBadge(e)}
+                        </span>
+                      )}
+                    </button>
                 );
               })}
           </div>
