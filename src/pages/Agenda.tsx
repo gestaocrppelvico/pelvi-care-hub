@@ -69,7 +69,19 @@ function cadastrarUrl(a: Atendimento) {
 /* ═══════════════════ Component ═══════════════════ */
 export default function Agenda() {
   const navigate = useNavigate();
-  const { isSecretaria } = useAuth();
+  const { isSecretaria, isAdmin, isFisio, user } = useAuth();
+  const [myProfissionalId, setMyProfissionalId] = useState<string | null>(null);
+
+  // Fetch current user's profissional record (for fisio role-based sync)
+  useEffect(() => {
+    if (!user) return;
+    supabase
+      .from("profissionais")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle()
+      .then(({ data }) => setMyProfissionalId(data?.id ?? null));
+  }, [user]);
   const [view, setView] = useState<ViewMode>("week");
   const [anchor, setAnchor] = useState<Date>(new Date());
   const [list, setList] = useState<Atendimento[]>([]);
