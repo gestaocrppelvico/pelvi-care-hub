@@ -1,6 +1,10 @@
-// Push atendimento changes to Google Calendar (clinic single calendar)
+// Push atendimento changes to Google Calendar (per-professional calendar)
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.0";
-import { corsHeaders } from "https://esm.sh/@supabase/supabase-js@2.95.0/cors";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
 
 const GATEWAY = "https://connector-gateway.lovable.dev/google_calendar/calendar/v3";
 
@@ -9,11 +13,10 @@ interface PushBody {
   action: "create" | "update" | "delete";
 }
 
-const PALETTE = ["1","2","3","4","5","6","7","8","9","10","11"]; // Google colorIds
+const PALETTE = ["1","2","3","4","5","6","7","8","9","10","11"];
 
 function colorIdFor(hex: string | null | undefined): string {
   if (!hex) return "1";
-  // simple deterministic mapping based on hex hash
   let h = 0;
   for (const c of hex) h = (h * 31 + c.charCodeAt(0)) | 0;
   return PALETTE[Math.abs(h) % PALETTE.length];
@@ -38,7 +41,7 @@ Deno.serve(async (req) => {
         status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    const userClient = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_PUBLISHABLE_KEY") ?? Deno.env.get("SUPABASE_ANON_KEY")!, {
+    const userClient = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_ANON_KEY")!, {
       global: { headers: { Authorization: authHeader } },
     });
     const { data: userData, error: userErr } = await userClient.auth.getUser();
@@ -56,12 +59,10 @@ Deno.serve(async (req) => {
     }
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
-    const { data: state } = await admin.from("gcal_sync_state").select("calendar_id").eq("id", "default").single();
-    const calendarId = encodeURIComponent(state?.calendar_id ?? "primary");
 
     const { data: at, error: atErr } = await admin
       .from("atendimentos")
-      .select("id, data_inicio, data_fim, status, tipo, observacoes, google_event_id, paciente:pacientes(nome), profissional:profissionais(nome, cor_agenda)")
+      .select("id, data_inicio, data_fim, status, tipo, observacoes, google_event_id, paciente:pacientes(nome), profissional:profissionais(nome, cor_agenda, google_calendar_id)")
       .eq("id", body.atendimento_id)
       .maybeSingle();
 
@@ -72,6 +73,10 @@ Deno.serve(async (req) => {
       "X-Connection-Api-Key": GCAL_KEY,
       "Content-Type": "application/json",
     };
+
+    // Use professional's calendar or fallback to primary
+    const profCalendarId = (at as any)?.profissional?.google_calendar_id;
+    const calendarId = encodeURIComponent(profCalendarId || "primary");
 
     // DELETE
     if (body.action === "delete") {
@@ -139,7 +144,7 @@ Deno.serve(async (req) => {
       last_synced_at: new Date().toISOString(),
     }).eq("id", at.id);
 
-    return new Response(JSON.stringify({ ok: true, eventId: ev.id }), {
+    return new Response(JSON.stringify({ ok: true, eventId: ev.id, calendarId: profCalendarId || "primary" }), {
       status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
