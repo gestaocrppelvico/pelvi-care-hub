@@ -410,13 +410,17 @@ function WeekView({
             </div>
             <div className="space-y-0.5">
               {evts.slice(0, 4).map((e) => (
-                <button
-                  key={e.id}
-                  onClick={() => onSelect(e)}
-                  className="w-full text-left rounded px-1 py-0.5 text-[10px] leading-tight text-white truncate hover:brightness-110 transition-colors"
-                  style={{ backgroundColor: eventColor(e) }}
-                >
-                  {format(new Date(e.data_inicio), "HH:mm")} {displayName(e)}
+                  <button
+                    key={e.id}
+                    onClick={() => onSelect(e)}
+                    className="w-full text-left rounded px-1 py-0.5 text-[10px] leading-tight text-white truncate hover:brightness-110 transition-colors relative"
+                    style={{ backgroundColor: eventColor(e) }}
+                  >
+                    {format(new Date(e.data_inicio), "HH:mm")} {displayName(e)}
+                    {!e.paciente_id && e.nome_paciente_livre && (
+                      <span className="block text-[8px] bg-amber-500/80 rounded-sm px-0.5 w-fit mt-0.5">Aguard.</span>
+                    )}
+                  </button>
                 </button>
               ))}
               {evts.length > 4 && (
