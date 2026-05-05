@@ -32,6 +32,8 @@ Deno.serve(async (req) => {
     let nextSyncToken: string | undefined;
     let processed = 0;
     let updatedInApp = 0, deletedInApp = 0, skippedExternal = 0;
+    const startedAt = Date.now();
+    const MAX_RUNTIME_MS = 120_000; // bail before 150s hard limit
 
     do {
       const params = new URLSearchParams();
