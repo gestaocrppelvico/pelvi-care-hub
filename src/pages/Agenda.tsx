@@ -421,7 +421,6 @@ function WeekView({
                       <span className="block text-[8px] bg-amber-500/80 rounded-sm px-0.5 w-fit mt-0.5">Aguard.</span>
                     )}
                   </button>
-                </button>
               ))}
               {evts.length > 4 && (
                 <p className="text-[10px] text-muted-foreground text-center">+{evts.length - 4}</p>
