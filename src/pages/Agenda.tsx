@@ -281,23 +281,36 @@ export default function Agenda() {
               <div className="flex flex-wrap gap-2">
                 {!selected.paciente_id && selected.nome_paciente_livre && (
                   <Button size="sm" variant="outline" asChild>
-                    <Link to={cadastrarUrl(selected)}><UserPlus className="w-3 h-3 mr-1" />Cadastrar</Link>
+                    <Link to={cadastrarUrl(selected)}><UserPlus className="w-3 h-3 mr-1" />Cadastrar Paciente</Link>
                   </Button>
                 )}
                 {selected.status === "agendado" && (
-                  <Button size="sm" variant="outline" onClick={() => mudarStatus(selected.id, "em_andamento")}>
-                    <Play className="w-3 h-3 mr-1" />Iniciar
-                  </Button>
+                  <>
+                    <Button size="sm" variant="outline" onClick={() => mudarStatus(selected.id, "em_andamento")}>
+                      <Play className="w-3 h-3 mr-1" />Iniciar
+                    </Button>
+                    <Button size="sm" onClick={() => mudarStatus(selected.id, "realizado")}>
+                      <CheckCircle className="w-3 h-3 mr-1" />Confirmar Presença
+                    </Button>
+                  </>
                 )}
                 {selected.status === "em_andamento" && (
-                  <Button size="sm" asChild>
-                    <Link to={`/atendimentos/${selected.id}/prontuario`}><FileText className="w-3 h-3 mr-1" />Evoluir</Link>
-                  </Button>
+                  <>
+                    <Button size="sm" onClick={() => mudarStatus(selected.id, "realizado")}>
+                      <CheckCircle className="w-3 h-3 mr-1" />Confirmar Presença
+                    </Button>
+                    <Button size="sm" variant="outline" asChild>
+                      <Link to={`/atendimentos/${selected.id}/prontuario`}><FileText className="w-3 h-3 mr-1" />Evoluir</Link>
+                    </Button>
+                  </>
                 )}
                 {(selected.status === "agendado" || selected.status === "em_andamento") && (
                   <>
                     <Button size="sm" variant="ghost" asChild>
                       <Link to={`/atendimentos/${selected.id}/prontuario`}><FileText className="w-3 h-3 mr-1" />Prontuário</Link>
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => remarcar(selected)}>
+                      <CalendarClock className="w-3 h-3 mr-1" />Remarcar
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => confirmarWhatsapp(selected)}>
                       <MessageCircle className="w-3 h-3 mr-1" />WhatsApp
