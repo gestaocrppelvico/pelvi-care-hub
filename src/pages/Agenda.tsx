@@ -16,8 +16,8 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
-  Plus, Clock, FileText, X, RefreshCw, Play, UserPlus,
-  ChevronLeft, ChevronRight, Calendar as CalendarIcon, MessageCircle,
+  Plus, Clock, FileText, X, RefreshCw, Play, UserPlus, CheckCircle,
+  ChevronLeft, ChevronRight, Calendar as CalendarIcon, MessageCircle, CalendarClock,
 } from "lucide-react";
 
 /* ───── types ───── */
@@ -58,6 +58,20 @@ function displayName(a: Atendimento) {
 }
 function eventColor(a: Atendimento) {
   return a.profissional?.cor_agenda ?? "#9CA3AF"; // gray-400 fallback
+}
+function statusBadge(a: Atendimento) {
+  if (!a.paciente_id && a.nome_paciente_livre) return "Aguardando Cadastro";
+  return statusLabel[a.status] ?? a.status;
+}
+function statusBadgeBg(a: Atendimento): string {
+  if (!a.paciente_id && a.nome_paciente_livre) return "bg-amber-500/80";
+  const map: Record<string, string> = {
+    agendado: "bg-gray-400/80",
+    em_andamento: "bg-blue-500/80",
+    realizado: "bg-green-500/80",
+    cancelado: "bg-red-500/80",
+  };
+  return map[a.status] ?? "bg-gray-400/80";
 }
 function cadastrarUrl(a: Atendimento) {
   const params = new URLSearchParams();
@@ -148,6 +162,7 @@ export default function Agenda() {
   async function mudarStatus(id: string, novoStatus: string) {
     const { error } = await supabase.from("atendimentos").update({ status: novoStatus as any }).eq("id", id);
     if (error) { toast.error(error.message); return; }
+    syncAtendimentoToGCal(id, "update");
     toast.success(`Status → "${statusLabel[novoStatus]}"`);
     setSelected(null);
     reload();
@@ -160,6 +175,11 @@ export default function Agenda() {
     toast.success("Atendimento cancelado");
     setSelected(null);
     reload();
+  }
+
+  function remarcar(a: Atendimento) {
+    navigate(`/agenda/novo?remarcar=${a.id}`);
+    setSelected(null);
   }
 
   /* ── whatsapp ── */
@@ -267,23 +287,36 @@ export default function Agenda() {
               <div className="flex flex-wrap gap-2">
                 {!selected.paciente_id && selected.nome_paciente_livre && (
                   <Button size="sm" variant="outline" asChild>
-                    <Link to={cadastrarUrl(selected)}><UserPlus className="w-3 h-3 mr-1" />Cadastrar</Link>
+                    <Link to={cadastrarUrl(selected)}><UserPlus className="w-3 h-3 mr-1" />Cadastrar Paciente</Link>
                   </Button>
                 )}
                 {selected.status === "agendado" && (
-                  <Button size="sm" variant="outline" onClick={() => mudarStatus(selected.id, "em_andamento")}>
-                    <Play className="w-3 h-3 mr-1" />Iniciar
-                  </Button>
+                  <>
+                    <Button size="sm" variant="outline" onClick={() => mudarStatus(selected.id, "em_andamento")}>
+                      <Play className="w-3 h-3 mr-1" />Iniciar
+                    </Button>
+                    <Button size="sm" onClick={() => mudarStatus(selected.id, "realizado")}>
+                      <CheckCircle className="w-3 h-3 mr-1" />Confirmar Presença
+                    </Button>
+                  </>
                 )}
                 {selected.status === "em_andamento" && (
-                  <Button size="sm" asChild>
-                    <Link to={`/atendimentos/${selected.id}/prontuario`}><FileText className="w-3 h-3 mr-1" />Evoluir</Link>
-                  </Button>
+                  <>
+                    <Button size="sm" onClick={() => mudarStatus(selected.id, "realizado")}>
+                      <CheckCircle className="w-3 h-3 mr-1" />Confirmar Presença
+                    </Button>
+                    <Button size="sm" variant="outline" asChild>
+                      <Link to={`/atendimentos/${selected.id}/prontuario`}><FileText className="w-3 h-3 mr-1" />Evoluir</Link>
+                    </Button>
+                  </>
                 )}
                 {(selected.status === "agendado" || selected.status === "em_andamento") && (
                   <>
                     <Button size="sm" variant="ghost" asChild>
                       <Link to={`/atendimentos/${selected.id}/prontuario`}><FileText className="w-3 h-3 mr-1" />Prontuário</Link>
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => remarcar(selected)}>
+                      <CalendarClock className="w-3 h-3 mr-1" />Remarcar
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => confirmarWhatsapp(selected)}>
                       <MessageCircle className="w-3 h-3 mr-1" />WhatsApp
@@ -324,16 +357,21 @@ function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: At
                 const end = e.data_fim ? new Date(e.data_fim) : new Date(start.getTime() + 40 * 60_000);
                 const topOff = (start.getMinutes() / 60) * 60;
                 const height = Math.max((differenceInMinutes(end, start) / 60) * 60, 24);
-                return (
-                  <button
-                    key={e.id}
-                    onClick={() => onSelect(e)}
-                    className="absolute left-0 right-2 rounded px-2 py-0.5 text-[11px] leading-tight text-white truncate text-left shadow-sm hover:brightness-110 transition-all"
-                    style={{ top: topOff, height, backgroundColor: eventColor(e) }}
-                  >
-                    <span className="font-medium">{displayName(e)}</span>
-                    <span className="opacity-80 ml-1">{format(start, "HH:mm")}</span>
-                  </button>
+                  return (
+                    <button
+                      key={e.id}
+                      onClick={() => onSelect(e)}
+                      className="absolute left-0 right-2 rounded px-2 py-0.5 text-[11px] leading-tight text-white truncate text-left shadow-sm hover:brightness-110 transition-all"
+                      style={{ top: topOff, height, backgroundColor: eventColor(e) }}
+                    >
+                      <span className="font-medium">{displayName(e)}</span>
+                      <span className="opacity-80 ml-1">{format(start, "HH:mm")}</span>
+                      {height >= 36 && (
+                        <span className={`block text-[9px] mt-0.5 px-1 rounded-sm w-fit ${statusBadgeBg(e)} text-white`}>
+                          {statusBadge(e)}
+                        </span>
+                      )}
+                    </button>
                 );
               })}
           </div>
@@ -373,14 +411,17 @@ function WeekView({
             </div>
             <div className="space-y-0.5">
               {evts.slice(0, 4).map((e) => (
-                <button
-                  key={e.id}
-                  onClick={() => onSelect(e)}
-                  className="w-full text-left rounded px-1 py-0.5 text-[10px] leading-tight text-white truncate hover:brightness-110 transition-colors"
-                  style={{ backgroundColor: eventColor(e) }}
-                >
-                  {format(new Date(e.data_inicio), "HH:mm")} {displayName(e)}
-                </button>
+                  <button
+                    key={e.id}
+                    onClick={() => onSelect(e)}
+                    className="w-full text-left rounded px-1 py-0.5 text-[10px] leading-tight text-white truncate hover:brightness-110 transition-colors relative"
+                    style={{ backgroundColor: eventColor(e) }}
+                  >
+                    {format(new Date(e.data_inicio), "HH:mm")} {displayName(e)}
+                    {!e.paciente_id && e.nome_paciente_livre && (
+                      <span className="block text-[8px] bg-amber-500/80 rounded-sm px-0.5 w-fit mt-0.5">Aguard.</span>
+                    )}
+                  </button>
               ))}
               {evts.length > 4 && (
                 <p className="text-[10px] text-muted-foreground text-center">+{evts.length - 4}</p>
