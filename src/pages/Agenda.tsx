@@ -176,6 +176,11 @@ export default function Agenda() {
     reload();
   }
 
+  function remarcar(a: Atendimento) {
+    navigate(`/agenda/novo?remarcar=${a.id}`);
+    setSelected(null);
+  }
+
   /* ── whatsapp ── */
   function confirmarWhatsapp(a: Atendimento) {
     const tel = a.paciente?.telefone ?? a.telefone_contato;
