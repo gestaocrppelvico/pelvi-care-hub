@@ -16,8 +16,8 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
-  Plus, Clock, FileText, X, RefreshCw, Play, UserPlus,
-  ChevronLeft, ChevronRight, Calendar as CalendarIcon, MessageCircle,
+  Plus, Clock, FileText, X, RefreshCw, Play, UserPlus, CheckCircle,
+  ChevronLeft, ChevronRight, Calendar as CalendarIcon, MessageCircle, CalendarClock,
 } from "lucide-react";
 
 /* ───── types ───── */
