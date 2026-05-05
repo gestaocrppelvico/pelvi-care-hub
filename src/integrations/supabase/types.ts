@@ -828,6 +828,7 @@ export type Database = {
           email: string | null
           especialidade: string | null
           google_calendar_color_id: string | null
+          google_calendar_id: string | null
           id: string
           nome: string
           tipo_repasse: Database["public"]["Enums"]["tipo_repasse"]
@@ -843,6 +844,7 @@ export type Database = {
           email?: string | null
           especialidade?: string | null
           google_calendar_color_id?: string | null
+          google_calendar_id?: string | null
           id?: string
           nome: string
           tipo_repasse?: Database["public"]["Enums"]["tipo_repasse"]
@@ -858,6 +860,7 @@ export type Database = {
           email?: string | null
           especialidade?: string | null
           google_calendar_color_id?: string | null
+          google_calendar_id?: string | null
           id?: string
           nome?: string
           tipo_repasse?: Database["public"]["Enums"]["tipo_repasse"]
