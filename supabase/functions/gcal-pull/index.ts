@@ -36,16 +36,22 @@ Deno.serve(async (req) => {
     const MAX_RUNTIME_MS = 120_000; // bail before 150s hard limit
 
     do {
+      // Bail early if approaching the edge-function timeout
+      if (Date.now() - startedAt > MAX_RUNTIME_MS) {
+        console.warn(`[gcal-pull] approaching timeout after ${processed} events – saving progress`);
+        break;
+      }
+
       const params = new URLSearchParams();
       params.set("singleEvents", "true");
-      params.set("maxResults", "250");
+      params.set("maxResults", "50");
       if (pageToken) params.set("pageToken", pageToken);
       if (isIncremental && !pageToken) {
         params.set("syncToken", state.sync_token!);
       } else if (!isIncremental && !pageToken) {
-        // Initial full sync: narrow window to avoid timeout on recurring events
-        params.set("timeMin", new Date(Date.now() - 3 * 24 * 60 * 60_000).toISOString());
-        params.set("timeMax", new Date(Date.now() + 30 * 24 * 60 * 60_000).toISOString());
+        // Initial full sync: narrow window
+        params.set("timeMin", new Date(Date.now() - 1 * 24 * 60 * 60_000).toISOString());
+        params.set("timeMax", new Date(Date.now() + 14 * 24 * 60 * 60_000).toISOString());
       }
 
       const url = `${GATEWAY}/calendars/${calendarId}/events?${params.toString()}`;
