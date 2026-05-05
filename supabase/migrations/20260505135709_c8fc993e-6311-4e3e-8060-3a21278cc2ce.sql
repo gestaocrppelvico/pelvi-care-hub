@@ -1,0 +1,1 @@
+UPDATE public.gcal_sync_state SET sync_token = NULL WHERE id = 'default';

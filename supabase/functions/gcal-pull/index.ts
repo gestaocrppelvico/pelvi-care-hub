@@ -1,6 +1,10 @@
 // Pull events from Google Calendar -> app (incremental sync via syncToken)
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.0";
-import { corsHeaders } from "https://esm.sh/@supabase/supabase-js@2.95.0/cors";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
 
 const GATEWAY = "https://connector-gateway.lovable.dev/google_calendar/calendar/v3";
 
@@ -32,22 +36,41 @@ Deno.serve(async (req) => {
     let nextSyncToken: string | undefined;
     let processed = 0;
     let updatedInApp = 0, deletedInApp = 0, skippedExternal = 0;
+    const startedAt = Date.now();
+    const MAX_RUNTIME_MS = 120_000; // bail before 150s hard limit
 
     do {
+      // Bail early if approaching the edge-function timeout
+      if (Date.now() - startedAt > MAX_RUNTIME_MS) {
+        console.warn(`[gcal-pull] approaching timeout after ${processed} events – saving progress`);
+        break;
+      }
+
       const params = new URLSearchParams();
       params.set("singleEvents", "true");
-      params.set("maxResults", "250");
+      params.set("maxResults", "50");
       if (pageToken) params.set("pageToken", pageToken);
       if (isIncremental && !pageToken) {
         params.set("syncToken", state.sync_token!);
       } else if (!isIncremental && !pageToken) {
-        // Initial full sync: narrow window to avoid timeout on recurring events
-        params.set("timeMin", new Date(Date.now() - 3 * 24 * 60 * 60_000).toISOString());
-        params.set("timeMax", new Date(Date.now() + 30 * 24 * 60 * 60_000).toISOString());
+        // Initial full sync: narrow window
+        params.set("timeMin", new Date(Date.now() - 1 * 24 * 60 * 60_000).toISOString());
+        params.set("timeMax", new Date(Date.now() + 14 * 24 * 60 * 60_000).toISOString());
       }
 
       const url = `${GATEWAY}/calendars/${calendarId}/events?${params.toString()}`;
-      const r = await fetch(url, { headers: gHeaders });
+      console.log(`[gcal-pull] fetching: ${url}`);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30_000);
+      let r: Response;
+      try {
+        r = await fetch(url, { headers: gHeaders, signal: controller.signal });
+      } catch (fetchErr) {
+        clearTimeout(timeout);
+        console.error("[gcal-pull] fetch aborted/failed:", fetchErr);
+        break; // save progress so far
+      }
+      clearTimeout(timeout);
 
       if (r.status === 410) {
         await admin.from("gcal_sync_state").update({ sync_token: null }).eq("id", "default");
