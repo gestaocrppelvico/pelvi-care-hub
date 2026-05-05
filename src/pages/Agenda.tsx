@@ -59,6 +59,20 @@ function displayName(a: Atendimento) {
 function eventColor(a: Atendimento) {
   return a.profissional?.cor_agenda ?? "#9CA3AF"; // gray-400 fallback
 }
+function statusBadge(a: Atendimento) {
+  if (!a.paciente_id && a.nome_paciente_livre) return "Aguardando Cadastro";
+  return statusLabel[a.status] ?? a.status;
+}
+function statusBadgeBg(a: Atendimento): string {
+  if (!a.paciente_id && a.nome_paciente_livre) return "bg-amber-500/80";
+  const map: Record<string, string> = {
+    agendado: "bg-gray-400/80",
+    em_andamento: "bg-blue-500/80",
+    realizado: "bg-green-500/80",
+    cancelado: "bg-red-500/80",
+  };
+  return map[a.status] ?? "bg-gray-400/80";
+}
 function cadastrarUrl(a: Atendimento) {
   const params = new URLSearchParams();
   if (a.nome_paciente_livre) params.set("nome", a.nome_paciente_livre);
