@@ -124,6 +124,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "atendimentos_profissional_id_fkey"
+            columns: ["profissional_id"]
+            isOneToOne: false
+            referencedRelation: "profissionais_public"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "atendimentos_servico_id_fkey"
             columns: ["servico_id"]
             isOneToOne: false
@@ -676,6 +683,13 @@ export type Database = {
             referencedRelation: "profissionais"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "pacientes_profissional_responsavel_id_fkey"
+            columns: ["profissional_responsavel_id"]
+            isOneToOne: false
+            referencedRelation: "profissionais_public"
+            referencedColumns: ["id"]
+          },
         ]
       }
       pacotes: {
@@ -1078,7 +1092,48 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      profissionais_public: {
+        Row: {
+          ativo: boolean | null
+          cor_agenda: string | null
+          created_at: string | null
+          email: string | null
+          especialidade: string | null
+          google_calendar_color_id: string | null
+          id: string | null
+          nome: string | null
+          unidade: string | null
+          updated_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          ativo?: boolean | null
+          cor_agenda?: string | null
+          created_at?: string | null
+          email?: string | null
+          especialidade?: string | null
+          google_calendar_color_id?: string | null
+          id?: string | null
+          nome?: string | null
+          unidade?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          ativo?: boolean | null
+          cor_agenda?: string | null
+          created_at?: string | null
+          email?: string | null
+          especialidade?: string | null
+          google_calendar_color_id?: string | null
+          id?: string | null
+          nome?: string | null
+          unidade?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       current_profissional_id: { Args: never; Returns: string }
