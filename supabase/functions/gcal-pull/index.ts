@@ -55,7 +55,18 @@ Deno.serve(async (req) => {
       }
 
       const url = `${GATEWAY}/calendars/${calendarId}/events?${params.toString()}`;
-      const r = await fetch(url, { headers: gHeaders });
+      console.log(`[gcal-pull] fetching: ${url}`);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30_000);
+      let r: Response;
+      try {
+        r = await fetch(url, { headers: gHeaders, signal: controller.signal });
+      } catch (fetchErr) {
+        clearTimeout(timeout);
+        console.error("[gcal-pull] fetch aborted/failed:", fetchErr);
+        break; // save progress so far
+      }
+      clearTimeout(timeout);
 
       if (r.status === 410) {
         await admin.from("gcal_sync_state").update({ sync_token: null }).eq("id", "default");
