@@ -1,4 +1,4 @@
-// Pull events from Google Calendar -> app (per-professional calendars)
+// Mirror Google Calendar events → atendimentos (read-only sync)
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.0";
 
 const corsHeaders = {
@@ -9,9 +9,6 @@ const corsHeaders = {
 const GATEWAY = "https://connector-gateway.lovable.dev/google_calendar/calendar/v3";
 
 interface PullBody {
-  // Optional: array of calendar IDs to sync. If empty, syncs all profissionais' calendars.
-  calendar_ids?: string[];
-  // Optional: profissional_id to sync only one professional's calendar
   profissional_id?: string;
 }
 
@@ -29,26 +26,19 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    // Parse optional body
     let body: PullBody = {};
-    try { body = await req.json(); } catch { /* no body is fine */ }
+    try { body = await req.json(); } catch { /* ok */ }
 
-    // Determine which calendars to pull
-    let calendarEntries: { calendar_id: string; profissional_id: string | null }[] = [];
+    // Build calendar list from profissionais
+    interface CalEntry { calendar_id: string; profissional_id: string }
+    let calendarEntries: CalEntry[] = [];
 
     if (body.profissional_id) {
-      // Single professional
       const { data: prof } = await admin.from("profissionais").select("id, google_calendar_id").eq("id", body.profissional_id).maybeSingle();
-      if (prof) {
-        calendarEntries.push({ calendar_id: prof.google_calendar_id || "primary", profissional_id: prof.id });
-      }
-    } else if (body.calendar_ids && body.calendar_ids.length > 0) {
-      // Explicit list
-      for (const cid of body.calendar_ids) {
-        calendarEntries.push({ calendar_id: cid, profissional_id: null });
+      if (prof?.google_calendar_id) {
+        calendarEntries.push({ calendar_id: prof.google_calendar_id, profissional_id: prof.id });
       }
     } else {
-      // All professionals with google_calendar_id set
       const { data: profs } = await admin.from("profissionais").select("id, google_calendar_id").eq("ativo", true);
       if (profs) {
         for (const p of profs) {
@@ -57,11 +47,15 @@ Deno.serve(async (req) => {
           }
         }
       }
-      // Also pull "primary" for events not tied to a specific calendar
-      calendarEntries.push({ calendar_id: "primary", profissional_id: null });
     }
 
-    // Deduplicate by calendar_id
+    if (calendarEntries.length === 0) {
+      return new Response(JSON.stringify({ ok: true, message: "No calendars configured" }), {
+        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Deduplicate
     const seen = new Set<string>();
     calendarEntries = calendarEntries.filter((e) => {
       if (seen.has(e.calendar_id)) return false;
@@ -69,40 +63,39 @@ Deno.serve(async (req) => {
       return true;
     });
 
+    // Load all patients for name matching
+    const { data: allPacientes } = await admin.from("pacientes").select("id, nome").eq("ativo", true);
+    const pacienteMap = new Map<string, string>(); // lowercase name -> id
+    for (const p of allPacientes ?? []) {
+      pacienteMap.set(p.nome.toLowerCase().trim(), p.id);
+    }
+
     const gHeaders = {
       "Authorization": `Bearer ${LOVABLE_API_KEY}`,
       "X-Connection-Api-Key": GCAL_KEY,
     };
 
     const startedAt = Date.now();
-    const MAX_RUNTIME_MS = 110_000;
-    let totalProcessed = 0;
-    let totalUpdated = 0;
-    let totalSkipped = 0;
-    const calendarResults: Record<string, { processed: number; updated: number }> = {};
+    const MAX_MS = 110_000;
+    let created = 0, updated = 0, skipped = 0;
 
     for (const entry of calendarEntries) {
-      if (Date.now() - startedAt > MAX_RUNTIME_MS) {
-        console.warn("[gcal-pull] approaching timeout, stopping calendar loop");
-        break;
-      }
+      if (Date.now() - startedAt > MAX_MS) break;
 
       const calId = encodeURIComponent(entry.calendar_id);
       let pageToken: string | undefined;
-      let calProcessed = 0;
-      let calUpdated = 0;
 
       do {
-        if (Date.now() - startedAt > MAX_RUNTIME_MS) break;
+        if (Date.now() - startedAt > MAX_MS) break;
 
         const params = new URLSearchParams();
         params.set("singleEvents", "true");
         params.set("maxResults", "50");
         params.set("timeMin", new Date(Date.now() - 1 * 24 * 60 * 60_000).toISOString());
-        params.set("timeMax", new Date(Date.now() + 14 * 24 * 60 * 60_000).toISOString());
+        params.set("timeMax", new Date(Date.now() + 30 * 24 * 60 * 60_000).toISOString());
         if (pageToken) params.set("pageToken", pageToken);
 
-        const url = `${GATEWAY}/calendars/${calId}/events?${params.toString()}`;
+        const url = `${GATEWAY}/calendars/${calId}/events?${params}`;
         console.log(`[gcal-pull] fetching: ${url}`);
 
         const controller = new AbortController();
@@ -110,99 +103,85 @@ Deno.serve(async (req) => {
         let r: Response;
         try {
           r = await fetch(url, { headers: gHeaders, signal: controller.signal });
-        } catch (fetchErr) {
+        } catch (err) {
           clearTimeout(timeout);
-          console.error(`[gcal-pull] fetch failed for ${entry.calendar_id}:`, fetchErr);
+          console.error(`[gcal-pull] fetch failed ${entry.calendar_id}:`, err);
           break;
         }
         clearTimeout(timeout);
 
         if (!r.ok) {
-          const t = await r.text();
-          console.error(`[gcal-pull] calendar ${entry.calendar_id} error [${r.status}]: ${t}`);
+          console.error(`[gcal-pull] ${entry.calendar_id} [${r.status}]: ${await r.text()}`);
           break;
         }
 
         const data = await r.json();
 
         for (const ev of data.items ?? []) {
-          calProcessed++;
-
           if (!ev.start?.dateTime || !ev.end?.dateTime) continue;
+          if (!ev.id) continue;
 
-          const appId = ev.extendedProperties?.private?.appAtendimentoId as string | undefined;
+          const googleEventId = ev.id as string;
 
-          // Cancelled
+          // Handle cancelled events
           if (ev.status === "cancelled") {
-            if (appId) {
+            const { data: existing } = await admin
+              .from("atendimentos").select("id").eq("google_event_id", googleEventId).maybeSingle();
+            if (existing) {
               await admin.from("atendimentos")
                 .update({ status: "cancelado", last_synced_at: new Date().toISOString() })
-                .eq("id", appId);
-              calUpdated++;
-            } else if (ev.id) {
-              const { data: existing } = await admin
-                .from("atendimentos").select("id").eq("google_event_id", ev.id).maybeSingle();
-              if (existing) {
-                await admin.from("atendimentos")
-                  .update({ status: "cancelado", last_synced_at: new Date().toISOString() })
-                  .eq("id", existing.id);
-                calUpdated++;
-              }
+                .eq("id", existing.id);
+              updated++;
             }
             continue;
           }
 
-          // Linked to app
-          if (appId) {
+          // Check if atendimento already exists for this event
+          const { data: existing } = await admin
+            .from("atendimentos").select("id, status").eq("google_event_id", googleEventId).maybeSingle();
+
+          const summary = (ev.summary ?? "").trim();
+
+          if (existing) {
+            // Update time only (don't overwrite status if user changed it)
             await admin.from("atendimentos").update({
               data_inicio: ev.start.dateTime,
               data_fim: ev.end.dateTime,
-              google_event_id: ev.id,
               last_synced_at: new Date().toISOString(),
-            }).eq("id", appId);
-            calUpdated++;
-            continue;
-          }
+            }).eq("id", existing.id);
+            updated++;
+          } else {
+            // Try to match patient by name
+            // GCal summary often is "Patient Name — Service" or just "Patient Name"
+            const namePart = summary.split("—")[0].split("-")[0].trim();
+            const matchedPacienteId = pacienteMap.get(namePart.toLowerCase()) ?? null;
 
-          // Check by google_event_id
-          if (ev.id) {
-            const { data: existing } = await admin
-              .from("atendimentos").select("id").eq("google_event_id", ev.id).maybeSingle();
-            if (existing) {
-              await admin.from("atendimentos").update({
-                data_inicio: ev.start.dateTime,
-                data_fim: ev.end.dateTime,
-                last_synced_at: new Date().toISOString(),
-              }).eq("id", existing.id);
-              calUpdated++;
-              continue;
-            }
+            await admin.from("atendimentos").insert({
+              google_event_id: googleEventId,
+              data_inicio: ev.start.dateTime,
+              data_fim: ev.end.dateTime,
+              profissional_id: entry.profissional_id,
+              paciente_id: matchedPacienteId,
+              nome_paciente_livre: matchedPacienteId ? null : (namePart || summary || null),
+              status: "agendado",
+              tipo: "Plano",
+              observacoes: ev.description ?? null,
+              last_synced_at: new Date().toISOString(),
+            });
+            created++;
           }
-
-          totalSkipped++;
         }
 
         pageToken = data.nextPageToken;
       } while (pageToken);
-
-      calendarResults[entry.calendar_id] = { processed: calProcessed, updated: calUpdated };
-      totalProcessed += calProcessed;
-      totalUpdated += calUpdated;
     }
 
-    return new Response(JSON.stringify({
-      ok: true,
-      calendars: calendarResults,
-      totalProcessed,
-      totalUpdated,
-      totalSkipped,
-    }), {
+    return new Response(JSON.stringify({ ok: true, created, updated, skipped }), {
       status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
     console.error("gcal-pull error:", e);
-    const msg = e instanceof Error ? e.message : "unknown";
-    return new Response(JSON.stringify({ error: msg }), {
+    return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "unknown" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
