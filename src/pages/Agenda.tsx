@@ -451,7 +451,7 @@ function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: At
                   <button
                     key={e.id}
                     onClick={() => onSelect(e)}
-                    className="absolute rounded px-1.5 py-0.5 text-[11px] leading-tight text-white truncate text-left shadow-sm hover:brightness-110 transition-all"
+                    className="absolute rounded px-1.5 py-0.5 text-[11px] leading-tight text-white truncate text-left shadow-sm hover:brightness-110 transition-all border border-white/40"
                     style={{ top: topOff, height, width, left, backgroundColor: eventColor(e) }}
                   >
                     <span className="font-medium">{displayName(e)}</span>
@@ -509,7 +509,7 @@ function WeekView({
                 <button
                   key={e.id}
                   onClick={() => onSelect(e)}
-                  className="w-full text-left rounded px-1 py-0.5 text-[10px] leading-tight text-white truncate hover:brightness-110 transition-colors"
+                  className="w-full text-left rounded px-1 py-0.5 text-[10px] leading-tight text-white truncate hover:brightness-110 transition-colors border border-white/30"
                   style={{ backgroundColor: eventColor(e) }}
                 >
                   {format(new Date(e.data_inicio), "HH:mm")} {displayName(e)}
