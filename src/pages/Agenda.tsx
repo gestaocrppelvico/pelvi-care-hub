@@ -380,6 +380,55 @@ export default function Agenda() {
 
 /* ═══════════════════ DAY VIEW ═══════════════════ */
 function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: Atendimento) => void }) {
+  // Calcula colunas para eventos sobrepostos
+  const columns = useMemo(() => {
+    const sorted = [...events].sort((a, b) =>
+      new Date(a.data_inicio).getTime() - new Date(b.data_inicio).getTime()
+    );
+    const cols: Atendimento[][] = [];
+    sorted.forEach((evt) => {
+      const start = new Date(evt.data_inicio).getTime();
+      const end = evt.data_fim
+        ? new Date(evt.data_fim).getTime()
+        : start + 40 * 60_000;
+      let placed = false;
+      for (const col of cols) {
+        const lastEnd = col[col.length - 1].data_fim
+          ? new Date(col[col.length - 1].data_fim!).getTime()
+          : new Date(col[col.length - 1].data_inicio).getTime() + 40 * 60_000;
+        if (start >= lastEnd) {
+          col.push(evt);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) cols.push([evt]);
+    });
+    // Mapeia cada evento para sua coluna e total de colunas no grupo
+    const map = new Map<string, { col: number; total: number }>();
+    // Para cada evento, descobre quantas colunas coexistem no mesmo instante
+    sorted.forEach((evt) => {
+      const evtStart = new Date(evt.data_inicio).getTime();
+      const evtEnd = evt.data_fim
+        ? new Date(evt.data_fim).getTime()
+        : evtStart + 40 * 60_000;
+      const colIdx = cols.findIndex((c) => c.includes(evt));
+      // Conta colunas que têm algum evento sobreposto com este
+      let maxCols = 1;
+      cols.forEach((col, ci) => {
+        if (ci === colIdx) return;
+        const overlaps = col.some((e) => {
+          const s = new Date(e.data_inicio).getTime();
+          const en = e.data_fim ? new Date(e.data_fim).getTime() : s + 40 * 60_000;
+          return s < evtEnd && en > evtStart;
+        });
+        if (overlaps) maxCols = Math.max(maxCols, cols.length);
+      });
+      map.set(evt.id, { col: colIdx, total: cols.length > 1 ? cols.length : 1 });
+    });
+    return map;
+  }, [events]);
+
   return (
     <div className="relative border rounded-lg overflow-hidden bg-card">
       {HOURS.map((h) => (
@@ -395,12 +444,15 @@ function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: At
                 const end = e.data_fim ? new Date(e.data_fim) : new Date(start.getTime() + 40 * 60_000);
                 const topOff = (start.getMinutes() / 60) * 60;
                 const height = Math.max((differenceInMinutes(end, start) / 60) * 60, 24);
+                const { col, total } = columns.get(e.id) ?? { col: 0, total: 1 };
+                const width = total > 1 ? `calc(${100 / total}% - 2px)` : "calc(100% - 8px)";
+                const left = total > 1 ? `calc(${(col / total) * 100}%)` : "0px";
                 return (
                   <button
                     key={e.id}
                     onClick={() => onSelect(e)}
-                    className="absolute left-0 right-2 rounded px-2 py-0.5 text-[11px] leading-tight text-white truncate text-left shadow-sm hover:brightness-110 transition-all"
-                    style={{ top: topOff, height, backgroundColor: eventColor(e) }}
+                    className="absolute rounded px-1.5 py-0.5 text-[11px] leading-tight text-white truncate text-left shadow-sm hover:brightness-110 transition-all"
+                    style={{ top: topOff, height, width, left, backgroundColor: eventColor(e) }}
                   >
                     <span className="font-medium">{displayName(e)}</span>
                     <span className="opacity-80 ml-1">{format(start, "HH:mm")}</span>
@@ -418,6 +470,7 @@ function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: At
     </div>
   );
 }
+
 
 /* ═══════════════════ WEEK VIEW ═══════════════════ */
 function WeekView({
