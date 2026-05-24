@@ -284,7 +284,7 @@ export default function Agenda() {
       ) : (
         <>
           {view === "day" && <DayView events={list} onSelect={setSelected} />}
-          {view === "week" && <WeekView anchor={anchor} eventsByDay={eventsByDay} onSelect={setSelected} />}
+          {view === "week" && <WeekView anchor={anchor} eventsByDay={eventsByDay} onSelect={setSelected} onDayClick={(d) => { setAnchor(d); setView("day"); }} />}
           {view === "month" && <MonthView anchor={anchor} eventsByDay={eventsByDay} onDayClick={(d) => { setAnchor(d); setView("day"); }} />}
         </>
       )}
@@ -474,11 +474,12 @@ function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: At
 
 /* ═══════════════════ WEEK VIEW ═══════════════════ */
 function WeekView({
-  anchor, eventsByDay, onSelect,
+  anchor, eventsByDay, onSelect, onDayClick,
 }: {
   anchor: Date;
   eventsByDay: Map<string, Atendimento[]>;
   onSelect: (a: Atendimento) => void;
+  onDayClick: (d: Date) => void;
 }) {
   const weekStart = startOfWeek(anchor, { weekStartsOn: 1 });
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
@@ -492,14 +493,19 @@ function WeekView({
         const evts = eventsByDay.get(key) ?? [];
         return (
           <div key={key} className="bg-card min-h-[120px] p-1">
-            <div className={`text-center text-[10px] uppercase mb-1 ${isToday ? "font-bold text-primary" : "text-muted-foreground"}`}>
-              {format(d, "EEE", { locale: ptBR })}
-            </div>
-            <div className={`text-center text-sm mb-1 ${isToday ? "bg-primary text-primary-foreground w-6 h-6 rounded-full mx-auto flex items-center justify-center font-bold" : ""}`}>
-              {format(d, "d")}
-            </div>
+            <button
+              className="w-full mb-1 hover:opacity-70 transition-opacity"
+              onClick={() => onDayClick(d)}
+            >
+              <div className={`text-center text-[10px] uppercase ${isToday ? "font-bold text-primary" : "text-muted-foreground"}`}>
+                {format(d, "EEE", { locale: ptBR })}
+              </div>
+              <div className={`text-center text-sm ${isToday ? "bg-primary text-primary-foreground w-6 h-6 rounded-full mx-auto flex items-center justify-center font-bold" : ""}`}>
+                {format(d, "d")}
+              </div>
+            </button>
             <div className="space-y-0.5">
-              {evts.slice(0, 4).map((e) => (
+              {evts.map((e) => (
                 <button
                   key={e.id}
                   onClick={() => onSelect(e)}
@@ -509,9 +515,6 @@ function WeekView({
                   {format(new Date(e.data_inicio), "HH:mm")} {displayName(e)}
                 </button>
               ))}
-              {evts.length > 4 && (
-                <p className="text-[10px] text-muted-foreground text-center">+{evts.length - 4}</p>
-              )}
             </div>
           </div>
         );
