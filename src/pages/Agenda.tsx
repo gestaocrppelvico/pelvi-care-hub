@@ -143,7 +143,11 @@ export default function Agenda() {
     if (isFisio && !isAdmin && !isSecretaria && myProfissionalId) {
       body.profissional_id = myProfissionalId;
     }
-    const { error } = await supabase.functions.invoke("gcal-pull", { body });
+    const { data: { session } } = await supabase.auth.getSession();
+    const { error } = await supabase.functions.invoke("gcal-pull", {
+      body,
+      headers: session ? { Authorization: `Bearer ${session.access_token}` } : {},
+    });
     if (error && !silent) toast.error("Falha ao sincronizar: " + error.message);
     await reload(silent);
     if (!silent) { setSyncing(false); toast.success("Agenda atualizada"); }
