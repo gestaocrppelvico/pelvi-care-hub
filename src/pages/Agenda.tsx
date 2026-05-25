@@ -41,12 +41,16 @@ const statusLabel: Record<string, string> = {
   em_andamento: "Em andamento",
   realizado: "Realizado",
   cancelado: "Cancelado",
+  faltou: "Faltou",
+  faltou_sem_aviso: "Faltou s/ aviso",
 };
 const statusColor: Record<string, string> = {
   agendado: "secondary",
   em_andamento: "default",
   realizado: "default",
   cancelado: "destructive",
+  faltou: "destructive",
+  faltou_sem_aviso: "destructive",
 };
 
 const HOURS = Array.from({ length: 14 }, (_, i) => i + 7);
@@ -69,6 +73,8 @@ function statusBadgeBg(a: Atendimento): string {
     em_andamento: "bg-blue-500/80",
     realizado: "bg-green-500/80",
     cancelado: "bg-red-500/80",
+    faltou: "bg-red-400/80",
+    faltou_sem_aviso: "bg-orange-500/80",
   };
   return map[a.status] ?? "bg-gray-400/80";
 }
@@ -128,7 +134,7 @@ export default function Agenda() {
       .select("id, data_inicio, data_fim, status, tipo, paciente_id, nome_paciente_livre, telefone_contato, profissional_id, google_event_id, paciente:pacientes(nome, telefone), profissional:profissionais(nome, cor_agenda)")
       .gte("data_inicio", range.start.toISOString())
       .lte("data_inicio", range.end.toISOString())
-      .neq("status", "cancelado")
+      .not("status", "in", '("cancelado","faltou","faltou_sem_aviso")')
       .order("data_inicio");
     setList((data as any) ?? []);
     if (!silent) setLoading(false);
@@ -379,6 +385,20 @@ export default function Agenda() {
                 {selected.status !== "cancelado" && selected.paciente_id && (
                   <Button size="sm" variant="ghost" asChild>
                     <Link to={`/atendimentos/${selected.id}/prontuario`}><FileText className="w-3 h-3 mr-1" />Prontuário</Link>
+                  </Button>
+                )}
+
+                {/* FALTOU */}
+                {selected.status === "agendado" && (
+                  <Button size="sm" variant="outline" className="text-red-600 border-red-200" onClick={() => mudarStatus(selected.id, "faltou")}>
+                    Faltou
+                  </Button>
+                )}
+
+                {/* FALTOU SEM AVISO (admin/secretaria only) */}
+                {selected.status === "agendado" && (isAdmin || isSecretaria) && (
+                  <Button size="sm" variant="outline" className="text-orange-600 border-orange-200" onClick={() => mudarStatus(selected.id, "faltou_sem_aviso")}>
+                    Faltou s/ aviso
                   </Button>
                 )}
 
