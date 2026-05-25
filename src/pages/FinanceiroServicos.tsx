@@ -140,8 +140,8 @@ export default function FinanceiroServicos() {
               <div><Label>Nome</Label><Input value={editServ.nome ?? ""} onChange={(e) => setEditServ({ ...editServ, nome: e.target.value })} /></div>
               <div><Label>Descrição</Label><Textarea value={editServ.descricao ?? ""} onChange={(e) => setEditServ({ ...editServ, descricao: e.target.value })} /></div>
               <div className="grid grid-cols-2 gap-2">
-                <div><Label>Preço (R$)</Label><Input type="number" step="0.01" value={editServ.preco ?? 0} onChange={(e) => setEditServ({ ...editServ, preco: Number(e.target.value) })} /></div>
-                <div><Label>Duração (min)</Label><Input type="number" value={editServ.duracao_minutos ?? 40} onChange={(e) => setEditServ({ ...editServ, duracao_minutos: Number(e.target.value) })} /></div>
+                <div><Label>Preço (R$)</Label><Input type="number" step="0.01" min="0" value={editServ.preco ?? 0} onFocus={(e) => e.target.select()} onChange={(e) => setEditServ({ ...editServ, preco: Number(e.target.value) || 0 })} /></div>
+                <div><Label>Duração (min)</Label><Input type="number" min="1" value={editServ.duracao_minutos ?? 40} onFocus={(e) => e.target.select()} onChange={(e) => setEditServ({ ...editServ, duracao_minutos: Number(e.target.value) || 40 })} /></div>
               </div>
               <div><Label>Plano (opcional)</Label><Input value={editServ.plano ?? ""} onChange={(e) => setEditServ({ ...editServ, plano: e.target.value })} placeholder="Particular, Unimed, Bradesco..." /></div>
               <div className="flex items-center gap-2"><Switch checked={editServ.ativo ?? true} onCheckedChange={(v) => setEditServ({ ...editServ, ativo: v })} /><Label>Ativo</Label></div>
@@ -196,8 +196,8 @@ export default function FinanceiroServicos() {
                 </Select>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <div><Label>Nº de sessões</Label><Input type="number" min={2} value={editPac.numero_sessoes ?? 5} onChange={(e) => setEditPac({ ...editPac, numero_sessoes: Number(e.target.value) })} /></div>
-                <div><Label>Preço total (R$)</Label><Input type="number" step="0.01" value={editPac.preco_total ?? 0} onChange={(e) => setEditPac({ ...editPac, preco_total: Number(e.target.value) })} /></div>
+                <div><Label>Nº de sessões</Label><Input type="number" min={2} value={editPac.numero_sessoes ?? 5} onFocus={(e) => e.target.select()} onChange={(e) => setEditPac({ ...editPac, numero_sessoes: Number(e.target.value) || 2 })} /></div>
+                <div><Label>Preço total (R$)</Label><Input type="number" step="0.01" min="0" value={editPac.preco_total ?? 0} onFocus={(e) => e.target.select()} onChange={(e) => setEditPac({ ...editPac, preco_total: Number(e.target.value) || 0 })} /></div>
               </div>
               <div><Label>Validade (dias, opcional)</Label><Input type="number" value={editPac.validade_dias ?? ""} onChange={(e) => setEditPac({ ...editPac, validade_dias: e.target.value ? Number(e.target.value) : null })} /></div>
               <div className="flex items-center gap-2"><Switch checked={editPac.ativo ?? true} onCheckedChange={(v) => setEditPac({ ...editPac, ativo: v })} /><Label>Ativo</Label></div>
