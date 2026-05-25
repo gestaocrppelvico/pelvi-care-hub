@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { z } from "zod";
-import { Heart } from "lucide-react";
+import { Heart, Eye, EyeOff } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,8 @@ export default function Auth() {
   const [busy, setBusy] = useState(false);
   const [forgotOpen, setForgotOpen] = useState(false);
   const [forgotEmail, setForgotEmail] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showPasswordS, setShowPasswordS] = useState(false);
 
   if (!loading && user) return <Navigate to="/" replace />;
 
@@ -121,7 +123,12 @@ export default function Auth() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="password">Senha</Label>
-                  <Input id="password" name="password" type="password" required autoComplete="current-password" />
+                  <div className="relative">
+                    <Input id="password" name="password" type={showPassword ? "text" : "password"} required autoComplete="current-password" className="pr-10" />
+                    <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
                 <Button type="submit" className="w-full h-12 text-base" disabled={busy}>
                   {busy ? "Entrando..." : "Entrar"}
@@ -163,7 +170,12 @@ export default function Auth() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="password-s">Senha</Label>
-                  <Input id="password-s" name="password" type="password" required minLength={6} autoComplete="new-password" />
+                  <div className="relative">
+                    <Input id="password-s" name="password" type={showPasswordS ? "text" : "password"} required minLength={6} autoComplete="new-password" className="pr-10" />
+                    <button type="button" onClick={() => setShowPasswordS(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                      {showPasswordS ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
                 <Button type="submit" className="w-full h-12 text-base" disabled={busy}>
                   {busy ? "Criando..." : "Criar conta"}
