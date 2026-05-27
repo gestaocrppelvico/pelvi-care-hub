@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, AlertCircle } from "lucide-react";
 import { z } from "zod";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -26,27 +26,69 @@ export default function PacienteNovo() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [busy, setBusy] = useState(false);
+  
+  // Pegamos os valores da URL (caso venham da Agenda)
   const preNome = searchParams.get("nome") ?? "";
   const preTelefone = searchParams.get("telefone") ?? "";
+
+  // Novos Estados para controlar a digitação e as sugestões
+  const [nomeBusca, setNomeBusca] = useState(preNome);
+  const [sugestoes, setSugestoes] = useState<{ id: string; nome: string; telefone: string | null }[]>([]);
+
+  // ─── LÓGICA DE BUSCA DE DUPLICATAS (Debounce) ───
+  useEffect(() => {
+    // Cria um temporizador. Só executa se o usuário parar de digitar por 600ms
+    const timeoutId = setTimeout(async () => {
+      // Pega apenas o primeiro nome e remove letras 'h' ou 'H' para pegar erros de digitação comuns
+      const primeiroNome = nomeBusca.trim().split(" ")[0].replace(/[hH]/g, "");
+
+      // Só busca se tiver pelo menos 3 letras
+      if (primeiroNome.length >= 3) {
+        const { data, error } = await supabase
+          .from("pacientes")
+          .select("id, nome, telefone")
+          .ilike("nome", `%${primeiroNome}%`) // Busca nomes que contenham essa parte
+          .limit(3); // Traz no máximo 3 sugestões para não poluir a tela
+
+        if (!error && data) {
+          // Filtra para não mostrar caso o nome seja exatamente igual e o único na lista 
+          // (evita mostrar sugestão se a pessoa já encontrou o que queria)
+          setSugestoes(data);
+        }
+      } else {
+        setSugestoes([]);
+      }
+    }, 600);
+
+    // Limpa o temporizador se o usuário voltar a digitar antes dos 600ms
+    return () => clearTimeout(timeoutId);
+  }, [nomeBusca]);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
     const parsed = schema.safeParse(Object.fromEntries(fd));
+    
     if (!parsed.success) {
       toast.error(parsed.error.errors[0].message);
       return;
     }
+    
     setBusy(true);
+    
     const payload = Object.fromEntries(
       Object.entries(parsed.data).map(([k, v]) => [k, v === "" ? null : v])
     ) as any;
+    
     const { error } = await supabase.from("pacientes").insert(payload);
+    
     setBusy(false);
+    
     if (error) {
       toast.error(error.message);
       return;
     }
+    
     toast.success("Paciente cadastrado!");
     navigate("/pacientes");
   }
@@ -60,7 +102,40 @@ export default function PacienteNovo() {
 
       <Card className="p-4">
         <form onSubmit={onSubmit} className="space-y-4">
-          <Field label="Nome completo *" name="nome" required defaultValue={preNome} />
+          
+          {/* CAMPO NOME MODIFICADO PARA BUSCA INTELIGENTE */}
+          <div className="space-y-2">
+            <Label htmlFor="nome">Nome completo *</Label>
+            <Input 
+              id="nome" 
+              name="nome" 
+              required 
+              value={nomeBusca} 
+              onChange={(e) => setNomeBusca(e.target.value)} 
+              placeholder="Ex: Talita Silva"
+            />
+            
+            {/* ALERTA DE SUGESTÕES */}
+            {sugestoes.length > 0 && (
+              <div className="p-3 mt-2 bg-amber-50 border border-amber-200 rounded-md animate-in fade-in slide-in-from-top-2">
+                <div className="flex items-center gap-2 text-amber-800 font-semibold text-sm mb-1">
+                  <AlertCircle className="w-4 h-4" />
+                  <span>Atenção! Já existem pacientes com nomes parecidos:</span>
+                </div>
+                <ul className="text-sm text-amber-700 list-disc list-inside space-y-1">
+                  {sugestoes.map(s => (
+                    <li key={s.id}>
+                      <strong>{s.nome}</strong> {s.telefone ? `- Tel: ${s.telefone}` : ''}
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-xs text-amber-600 mt-2">
+                  Se for a mesma pessoa, cancele este cadastro e busque na lista de pacientes.
+                </p>
+              </div>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <Field label="CPF" name="cpf" />
             <Field label="Nascimento" name="data_nascimento" type="date" />
@@ -87,6 +162,7 @@ export default function PacienteNovo() {
   );
 }
 
+// Componente auxiliar mantido intacto para os outros campos
 function Field({ label, name, type = "text", required, defaultValue }: { label: string; name: string; type?: string; required?: boolean; defaultValue?: string }) {
   return (
     <div className="space-y-2">
