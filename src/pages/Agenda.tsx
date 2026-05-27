@@ -14,8 +14,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
-  Clock, FileText, RefreshCw, Play, UserPlus, CheckCircle, Undo2,
-  ChevronLeft, ChevronRight, MessageCircle, StopCircle,
+  Clock, FileText, RefreshCw, UserPlus, CheckCircle, Undo2,
+  ChevronLeft, ChevronRight, MessageCircle,
 } from "lucide-react";
 
 /* ───── types ───── */
@@ -62,12 +62,14 @@ function displayName(a: Atendimento) {
 function eventColor(a: Atendimento) {
   return a.profissional?.cor_agenda ?? "#9CA3AF";
 }
+
+// Retorna sempre o status real do banco de dados
 function statusBadge(a: Atendimento) {
-  if (!a.paciente_id && a.nome_paciente_livre) return "Aguardando Cadastro";
   return statusLabel[a.status] ?? a.status;
 }
+
+// Retorna a cor baseada no status real
 function statusBadgeBg(a: Atendimento): string {
-  if (!a.paciente_id && a.nome_paciente_livre) return "bg-amber-500/80";
   const map: Record<string, string> = {
     agendado: "bg-gray-400/80",
     em_andamento: "bg-blue-500/80",
@@ -78,6 +80,7 @@ function statusBadgeBg(a: Atendimento): string {
   };
   return map[a.status] ?? "bg-gray-400/80";
 }
+
 function cadastrarUrl(a: Atendimento) {
   const params = new URLSearchParams();
   if (a.nome_paciente_livre) params.set("nome", a.nome_paciente_livre);
@@ -85,10 +88,10 @@ function cadastrarUrl(a: Atendimento) {
   return `/pacientes/novo?${params.toString()}`;
 }
 
-/* previous status for undo */
+/* previous status for undo (Ajustado para o novo fluxo) */
 const prevStatus: Record<string, string> = {
   em_andamento: "agendado",
-  realizado: "em_andamento",
+  realizado: "agendado", // Se desfazer o check-in, volta para agendado
   cancelado: "agendado",
 };
 
@@ -200,16 +203,13 @@ export default function Agenda() {
     reload();
   }
 
-  async function iniciarSessao(a: Atendimento) {
-    await mudarStatus(a.id, "em_andamento");
-  }
-
-  async function terminarSessao(a: Atendimento) {
-    if (!confirm("Confirma que a sessão foi finalizada?")) return;
+  // Novo Check-in: Atualiza direto para realizado (contabiliza a sessão)
+  async function fazerCheckin(a: Atendimento) {
+    if (!confirm("Confirmar check-in? A sessão será contabilizada como realizada.")) return;
     const { error } = await supabase.from("atendimentos").update({ status: "realizado" as any }).eq("id", a.id);
     if (error) { toast.error(error.message); return; }
-    // The trigger processar_atendimento_realizado handles package deductions
-    toast.success("Sessão finalizada");
+    // O trigger no banco cuidará do desconto do pacote
+    toast.success("Check-in realizado com sucesso!");
     setSelected(null);
     reload();
   }
@@ -223,13 +223,9 @@ export default function Agenda() {
     if (error) { toast.error(error.message); return; }
 
     // If reverting from realizado, the trigger won't auto-undo the package deduction.
-    // We need to manually revert sessoes_restantes +1 if there's a paciente_pacote_id.
     if (a.status === "realizado") {
-      // Fetch full atendimento to check paciente_pacote_id
       const { data: full } = await supabase.from("atendimentos").select("paciente_pacote_id").eq("id", a.id).maybeSingle();
       if (full?.paciente_pacote_id) {
-        // We can't do direct SQL, so increment via RPC or manual update
-        // For now, use a raw increment approach
         const { data: pkg } = await supabase.from("paciente_pacotes").select("sessoes_restantes").eq("id", full.paciente_pacote_id).maybeSingle();
         if (pkg) {
           await supabase.from("paciente_pacotes").update({ sessoes_restantes: (pkg.sessoes_restantes ?? 0) + 1 }).eq("id", full.paciente_pacote_id);
@@ -338,32 +334,33 @@ export default function Agenda() {
                   <strong>Status:</strong>
                   <Badge variant={statusColor[selected.status] as any}>{statusBadge(selected)}</Badge>
                 </div>
-                {!selected.paciente_id && selected.nome_paciente_livre && (
-                  <Badge variant="outline" className="text-xs bg-amber-100 text-amber-800">⚠ Aguardando Cadastro</Badge>
+                
+                {/* Lógica de Tags de Cadastro */}
+                {!selected.paciente_id ? (
+                  <Badge variant="outline" className="text-xs bg-amber-100 text-amber-800 border-amber-300">
+                    ⚠ Aguardando Cadastro
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-xs bg-green-100 text-green-800 border-green-300">
+                    ✅ Paciente Cadastrado
+                  </Badge>
                 )}
               </div>
 
               <div className="flex flex-wrap gap-2">
-                {/* INICIAR SESSÃO */}
+                {/* FAZER CHECK-IN */}
                 {selected.status === "agendado" && (
-                  <Button size="sm" onClick={() => iniciarSessao(selected)}>
-                    <Play className="w-3 h-3 mr-1" />Iniciar Sessão
+                  <Button size="sm" onClick={() => fazerCheckin(selected)}>
+                    <CheckCircle className="w-3 h-3 mr-1" />Check-in
                   </Button>
                 )}
 
-                {/* EVOLUIR */}
-                {selected.status === "em_andamento" && (
+                {/* PRONTUÁRIO / EVOLUIR (Disponível se tiver paciente_id e não for cancelado) */}
+                {selected.status !== "cancelado" && selected.paciente_id && (
                   <Button size="sm" variant="outline" asChild>
                     <Link to={`/atendimentos/${selected.id}/prontuario`}>
-                      <FileText className="w-3 h-3 mr-1" />Evoluir
+                      <FileText className="w-3 h-3 mr-1" />Evoluir / Prontuário
                     </Link>
-                  </Button>
-                )}
-
-                {/* TERMINAR SESSÃO */}
-                {selected.status === "em_andamento" && (
-                  <Button size="sm" onClick={() => terminarSessao(selected)}>
-                    <StopCircle className="w-3 h-3 mr-1" />Terminar Sessão
                   </Button>
                 )}
 
@@ -378,13 +375,6 @@ export default function Agenda() {
                 {(selected.paciente?.telefone || selected.telefone_contato) && (
                   <Button size="sm" variant="outline" onClick={() => enviarWhatsapp(selected)}>
                     <MessageCircle className="w-3 h-3 mr-1" />WhatsApp
-                  </Button>
-                )}
-
-                {/* PRONTUÁRIO (any active status) */}
-                {selected.status !== "cancelado" && selected.paciente_id && (
-                  <Button size="sm" variant="ghost" asChild>
-                    <Link to={`/atendimentos/${selected.id}/prontuario`}><FileText className="w-3 h-3 mr-1" />Prontuário</Link>
                   </Button>
                 )}
 
@@ -419,7 +409,6 @@ export default function Agenda() {
 
 /* ═══════════════════ DAY VIEW ═══════════════════ */
 function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: Atendimento) => void }) {
-  // Calcula colunas para eventos sobrepostos
   const columns = useMemo(() => {
     const sorted = [...events].sort((a, b) =>
       new Date(a.data_inicio).getTime() - new Date(b.data_inicio).getTime()
@@ -443,16 +432,13 @@ function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: At
       }
       if (!placed) cols.push([evt]);
     });
-    // Mapeia cada evento para sua coluna e total de colunas no grupo
     const map = new Map<string, { col: number; total: number }>();
-    // Para cada evento, descobre quantas colunas coexistem no mesmo instante
     sorted.forEach((evt) => {
       const evtStart = new Date(evt.data_inicio).getTime();
       const evtEnd = evt.data_fim
         ? new Date(evt.data_fim).getTime()
         : evtStart + 40 * 60_000;
       const colIdx = cols.findIndex((c) => c.includes(evt));
-      // Conta colunas que têm algum evento sobreposto com este
       let maxCols = 1;
       cols.forEach((col, ci) => {
         if (ci === colIdx) return;
@@ -509,7 +495,6 @@ function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: At
     </div>
   );
 }
-
 
 /* ═══════════════════ WEEK VIEW ═══════════════════ */
 function WeekView({
