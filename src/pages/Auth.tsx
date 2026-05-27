@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { z } from "zod";
-import { Heart, Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -100,12 +100,17 @@ export default function Auth() {
   return (
     <div className="min-h-screen gradient-subtle flex items-center justify-center p-4 safe-top safe-bottom">
       <div className="w-full max-w-md">
+        
+        {/* CABEÇALHO PERSONALIZADO */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl gradient-primary shadow-elegant mb-4">
-            <Heart className="w-8 h-8 text-primary-foreground" />
-          </div>
+          {/* Logo do projeto */}
+          <img 
+            src="/logo.png" 
+            alt="Logo CRPPélvico" 
+            className="w-32 h-auto mx-auto mb-4 drop-shadow-md"
+          />
           <h1 className="text-3xl font-bold text-foreground">CRPPélvico</h1>
-          <p className="text-muted-foreground mt-1">Gestão clínica integrada</p>
+          <p className="text-muted-foreground mt-1">Centro de Reabilitação Perineal e Pélvico</p>
         </div>
 
         <Card className="p-6 shadow-elegant">
