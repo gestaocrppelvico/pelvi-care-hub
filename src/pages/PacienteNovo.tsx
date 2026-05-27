@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, AlertCircle } from "lucide-react";
+import { useNavigate, useSearchParams, Link } from "react-router-dom"; // Adicionado o Link aqui!
+import { ArrowLeft, AlertCircle, ExternalLink } from "lucide-react"; // Adicionado o ícone ExternalLink
 import { z } from "zod";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -37,22 +37,17 @@ export default function PacienteNovo() {
 
   // ─── LÓGICA DE BUSCA DE DUPLICATAS (Debounce) ───
   useEffect(() => {
-    // Cria um temporizador. Só executa se o usuário parar de digitar por 600ms
     const timeoutId = setTimeout(async () => {
-      // Pega apenas o primeiro nome e remove letras 'h' ou 'H' para pegar erros de digitação comuns
       const primeiroNome = nomeBusca.trim().split(" ")[0].replace(/[hH]/g, "");
 
-      // Só busca se tiver pelo menos 3 letras
       if (primeiroNome.length >= 3) {
         const { data, error } = await supabase
           .from("pacientes")
           .select("id, nome, telefone")
-          .ilike("nome", `%${primeiroNome}%`) // Busca nomes que contenham essa parte
-          .limit(3); // Traz no máximo 3 sugestões para não poluir a tela
+          .ilike("nome", `%${primeiroNome}%`)
+          .limit(3); 
 
         if (!error && data) {
-          // Filtra para não mostrar caso o nome seja exatamente igual e o único na lista 
-          // (evita mostrar sugestão se a pessoa já encontrou o que queria)
           setSugestoes(data);
         }
       } else {
@@ -60,7 +55,6 @@ export default function PacienteNovo() {
       }
     }, 600);
 
-    // Limpa o temporizador se o usuário voltar a digitar antes dos 600ms
     return () => clearTimeout(timeoutId);
   }, [nomeBusca]);
 
@@ -115,22 +109,34 @@ export default function PacienteNovo() {
               placeholder="Ex: Talita Silva"
             />
             
-            {/* ALERTA DE SUGESTÕES */}
+            {/* ALERTA DE SUGESTÕES COM BOTÃO DE ATALHO */}
             {sugestoes.length > 0 && (
               <div className="p-3 mt-2 bg-amber-50 border border-amber-200 rounded-md animate-in fade-in slide-in-from-top-2">
-                <div className="flex items-center gap-2 text-amber-800 font-semibold text-sm mb-1">
+                <div className="flex items-center gap-2 text-amber-800 font-semibold text-sm mb-2">
                   <AlertCircle className="w-4 h-4" />
                   <span>Atenção! Já existem pacientes com nomes parecidos:</span>
                 </div>
-                <ul className="text-sm text-amber-700 list-disc list-inside space-y-1">
+                
+                <ul className="space-y-2">
                   {sugestoes.map(s => (
-                    <li key={s.id}>
-                      <strong>{s.nome}</strong> {s.telefone ? `- Tel: ${s.telefone}` : ''}
+                    <li key={s.id} className="flex items-center justify-between bg-white/60 p-2 rounded border border-amber-100">
+                      <span className="text-sm text-amber-900">
+                        <strong>{s.nome}</strong> {s.telefone ? `- Tel: ${s.telefone}` : ''}
+                      </span>
+                      
+                      {/* O NOSSO NOVO BOTÃO DE ATALHO */}
+                      <Button variant="outline" size="sm" className="h-7 text-xs border-amber-300 text-amber-800 hover:bg-amber-200" asChild>
+                        <Link to={`/pacientes/${s.id}`}>
+                          <ExternalLink className="w-3 h-3 mr-1" />
+                          Ver Ficha
+                        </Link>
+                      </Button>
                     </li>
                   ))}
                 </ul>
-                <p className="text-xs text-amber-600 mt-2">
-                  Se for a mesma pessoa, cancele este cadastro e busque na lista de pacientes.
+                
+                <p className="text-xs text-amber-600 mt-3 font-medium">
+                  Se for a mesma pessoa, você pode acessar a ficha dela ou cancelar este cadastro.
                 </p>
               </div>
             )}
@@ -162,7 +168,7 @@ export default function PacienteNovo() {
   );
 }
 
-// Componente auxiliar mantido intacto para os outros campos
+// Componente auxiliar mantido intacto
 function Field({ label, name, type = "text", required, defaultValue }: { label: string; name: string; type?: string; required?: boolean; defaultValue?: string }) {
   return (
     <div className="space-y-2">
