@@ -12,10 +12,12 @@ import { useAuth } from "@/hooks/useAuth";
 import { abrirWhatsapp } from "@/lib/crm";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
   Clock, FileText, RefreshCw, UserPlus, CheckCircle, Undo2,
-  ChevronLeft, ChevronRight, MessageCircle,
+  ChevronLeft, ChevronRight, MessageCircle, ClipboardList
 } from "lucide-react";
 
 /* ───── types ───── */
@@ -62,13 +64,9 @@ function displayName(a: Atendimento) {
 function eventColor(a: Atendimento) {
   return a.profissional?.cor_agenda ?? "#9CA3AF";
 }
-
-// Retorna sempre o status real do banco de dados
 function statusBadge(a: Atendimento) {
   return statusLabel[a.status] ?? a.status;
 }
-
-// Retorna a cor baseada no status real
 function statusBadgeBg(a: Atendimento): string {
   const map: Record<string, string> = {
     agendado: "bg-gray-400/80",
@@ -81,17 +79,9 @@ function statusBadgeBg(a: Atendimento): string {
   return map[a.status] ?? "bg-gray-400/80";
 }
 
-function cadastrarUrl(a: Atendimento) {
-  const params = new URLSearchParams();
-  if (a.nome_paciente_livre) params.set("nome", a.nome_paciente_livre);
-  if (a.telefone_contato) params.set("telefone", a.telefone_contato);
-  return `/pacientes/novo?${params.toString()}`;
-}
-
-/* previous status for undo (Ajustado para o novo fluxo) */
 const prevStatus: Record<string, string> = {
   em_andamento: "agendado",
-  realizado: "agendado", // Se desfazer o check-in, volta para agendado
+  realizado: "agendado", 
   cancelado: "agendado",
 };
 
@@ -117,6 +107,11 @@ export default function Agenda() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Atendimento | null>(null);
   const [syncing, setSyncing] = useState(false);
+  
+  // Estado para controlar a exibição do formulário rápido na aba lateral
+  const [modoCadastroRapido, setModoCadastroRapido] = useState(false);
+  const [tipoPacoteRascunho, setTipoPacoteRascunho] = useState<"Plano" | "Particular">("Particular");
+
   const pollRef = useRef<ReturnType<typeof setInterval>>();
 
   /* ── computed range ── */
@@ -145,7 +140,7 @@ export default function Agenda() {
 
   useEffect(() => { reload(); }, [reload]);
 
-  /* ── sync from GCal then reload ── */
+  /* ── sync from GCal ── */
   const syncNow = useCallback(async (silent = false) => {
     if (!silent) setSyncing(true);
     const body: Record<string, unknown> = {};
@@ -177,14 +172,13 @@ export default function Agenda() {
     if (!silent) { setSyncing(false); toast.success("Agenda atualizada"); }
   }, [isFisio, isAdmin, isSecretaria, myProfissionalId, reload]);
 
-  /* ── initial sync + polling every 5 min ── */
   useEffect(() => {
     syncNow(true);
     pollRef.current = setInterval(() => syncNow(true), 5 * 60 * 1000);
     return () => clearInterval(pollRef.current);
   }, [syncNow]);
 
-  /* ── navigation ── */
+  /* ── actions ── */
   function nav(dir: -1 | 1) {
     setAnchor((prev) => {
       if (view === "day") return addDays(prev, dir);
@@ -194,7 +188,6 @@ export default function Agenda() {
   }
   function goToday() { setAnchor(new Date()); }
 
-  /* ── status changes ── */
   async function mudarStatus(id: string, novoStatus: string) {
     const { error } = await supabase.from("atendimentos").update({ status: novoStatus as any }).eq("id", id);
     if (error) { toast.error(error.message); return; }
@@ -203,15 +196,78 @@ export default function Agenda() {
     reload();
   }
 
-  // Novo Check-in: Atualiza direto para realizado (contabiliza a sessão)
   async function fazerCheckin(a: Atendimento) {
     if (!confirm("Confirmar check-in? A sessão será contabilizada como realizada.")) return;
     const { error } = await supabase.from("atendimentos").update({ status: "realizado" as any }).eq("id", a.id);
     if (error) { toast.error(error.message); return; }
-    // O trigger no banco cuidará do desconto do pacote
     toast.success("Check-in realizado com sucesso!");
     setSelected(null);
     reload();
+  }
+
+  // ─── MAGIA DO CADASTRO RÁPIDO COM BASE NAS SUAS TABELAS ───
+  async function salvarCadastroRapido(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!selected) return;
+
+    const fd = new FormData(e.currentTarget);
+    const nome = fd.get("nome") as string;
+    const telefone = fd.get("telefone") as string;
+    const qtdSessoes = parseInt(fd.get("qtdSessoes") as string || "1");
+    
+    const numeroGuia = fd.get("numeroGuia") as string;
+    const valorTotal = fd.get("valorTotal") ? parseFloat(fd.get("valorTotal") as string) : 0;
+
+    try {
+      // 1. Cria o Paciente na tabela 'pacientes'
+      const { data: novoPaciente, error: errPaciente } = await supabase
+        .from("pacientes")
+        .insert({ nome, telefone: telefone || null })
+        .select()
+        .single();
+      
+      if (errPaciente) throw new Error("Erro ao criar paciente: " + errPaciente.message);
+
+      // 2. Cria o Pacote na tabela 'paciente_pacotes' usando suas colunas exatas
+      const { data: novoPacote, error: errPacote } = await supabase
+        .from("paciente_pacotes")
+        .insert({
+          paciente_id: novoPaciente.id,
+          sessoes_totais: qtdSessoes,
+          sessoes_restantes: qtdSessoes, 
+          preco_pago: valorTotal,
+          status_pagamento: "pendente" // Deixando como pendente para o financeiro cobrar depois
+        })
+        .select()
+        .single();
+
+      if (errPacote) throw new Error("Erro ao criar pacote: " + errPacote.message);
+
+      // 3. Prepara a anotação da guia para salvar no atendimento
+      const obsGuia = numeroGuia ? `Guia do Plano: ${numeroGuia}` : null;
+
+      // 4. Atualiza o Agendamento (Vincula tudo e faz Check-in)
+      const { error: errAtendimento } = await supabase
+        .from("atendimentos")
+        .update({ 
+          paciente_id: novoPaciente.id,
+          paciente_pacote_id: novoPacote.id,
+          status: "realizado" as any,
+          tipo: tipoPacoteRascunho, // Atualiza para Plano ou Particular
+          observacoes: obsGuia 
+        })
+        .eq("id", selected.id);
+
+      if (errAtendimento) throw new Error("Erro ao atualizar agenda: " + errAtendimento.message);
+
+      toast.success("Paciente cadastrado, serviço lançado e Check-in realizado!");
+      setModoCadastroRapido(false);
+      setSelected(null);
+      reload();
+
+    } catch (error: any) {
+      toast.error(error.message);
+    }
   }
 
   async function desfazer(a: Atendimento) {
@@ -222,7 +278,6 @@ export default function Agenda() {
     const { error } = await supabase.from("atendimentos").update({ status: prev as any }).eq("id", a.id);
     if (error) { toast.error(error.message); return; }
 
-    // If reverting from realizado, the trigger won't auto-undo the package deduction.
     if (a.status === "realizado") {
       const { data: full } = await supabase.from("atendimentos").select("paciente_pacote_id").eq("id", a.id).maybeSingle();
       if (full?.paciente_pacote_id) {
@@ -232,20 +287,17 @@ export default function Agenda() {
         }
       }
     }
-
     toast.success(`Status revertido para "${statusLabel[prev]}"`);
     setSelected(null);
     reload();
   }
 
-  /* ── whatsapp ── */
   function enviarWhatsapp(a: Atendimento) {
     const tel = a.paciente?.telefone ?? a.telefone_contato;
     const msg = `Olá ${displayName(a)}, confirmando seu atendimento em ${format(new Date(a.data_inicio), "dd/MM/yyyy 'às' HH:mm")}.`;
     if (!abrirWhatsapp(tel, msg, isSecretaria)) toast.error("Telefone não disponível");
   }
 
-  /* ── title ── */
   const title = useMemo(() => {
     if (view === "day") return format(anchor, "dd 'de' MMMM, yyyy", { locale: ptBR });
     if (view === "week") {
@@ -278,7 +330,6 @@ export default function Agenda() {
         </Button>
       </div>
 
-      {/* VIEW SELECTOR */}
       <div className="flex gap-1 bg-muted rounded-lg p-1">
         {(["day", "week", "month"] as ViewMode[]).map((v) => (
           <button
@@ -293,7 +344,6 @@ export default function Agenda() {
         ))}
       </div>
 
-      {/* NAV */}
       <div className="flex items-center justify-between">
         <Button variant="ghost" size="icon" onClick={() => nav(-1)}><ChevronLeft className="w-5 h-5" /></Button>
         <button onClick={goToday} className="text-sm font-semibold capitalize">{title}</button>
@@ -304,16 +354,18 @@ export default function Agenda() {
         <p className="text-muted-foreground text-center py-12">Carregando...</p>
       ) : (
         <>
-          {view === "day" && <DayView events={list} onSelect={setSelected} />}
-          {view === "week" && <WeekView anchor={anchor} eventsByDay={eventsByDay} onSelect={setSelected} onDayClick={(d) => { setAnchor(d); setView("day"); }} />}
+          {view === "day" && <DayView events={list} onSelect={(a) => { setSelected(a); setModoCadastroRapido(false); }} />}
+          {view === "week" && <WeekView anchor={anchor} eventsByDay={eventsByDay} onSelect={(a) => { setSelected(a); setModoCadastroRapido(false); }} onDayClick={(d) => { setAnchor(d); setView("day"); }} />}
           {view === "month" && <MonthView anchor={anchor} eventsByDay={eventsByDay} onDayClick={(d) => { setAnchor(d); setView("day"); }} />}
         </>
       )}
 
       {/* DETAIL SHEET */}
-      <Sheet open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
-        <SheetContent side="bottom" className="max-h-[80vh] rounded-t-2xl">
-          {selected && (
+      <Sheet open={!!selected} onOpenChange={(o) => {
+        if (!o) { setSelected(null); setModoCadastroRapido(false); }
+      }}>
+        <SheetContent side="bottom" className="max-h-[90vh] overflow-y-auto rounded-t-2xl">
+          {selected && !modoCadastroRapido && (
             <div className="space-y-4 pb-6">
               <SheetHeader>
                 <SheetTitle className="flex items-center gap-2">
@@ -335,7 +387,6 @@ export default function Agenda() {
                   <Badge variant={statusColor[selected.status] as any}>{statusBadge(selected)}</Badge>
                 </div>
                 
-                {/* Lógica de Tags de Cadastro */}
                 {!selected.paciente_id ? (
                   <Badge variant="outline" className="text-xs bg-amber-100 text-amber-800 border-amber-300">
                     ⚠ Aguardando Cadastro
@@ -347,15 +398,21 @@ export default function Agenda() {
                 )}
               </div>
 
-              <div className="flex flex-wrap gap-2">
-                {/* FAZER CHECK-IN */}
+              <div className="flex flex-wrap gap-2 pt-2">
+                
+                {/* LÓGICA DE CHECK-IN OU CADASTRO RÁPIDO */}
                 {selected.status === "agendado" && (
-                  <Button size="sm" onClick={() => fazerCheckin(selected)}>
-                    <CheckCircle className="w-3 h-3 mr-1" />Check-in
-                  </Button>
+                  selected.paciente_id ? (
+                    <Button size="sm" onClick={() => fazerCheckin(selected)}>
+                      <CheckCircle className="w-3 h-3 mr-1" />Check-in
+                    </Button>
+                  ) : (
+                    <Button size="sm" className="bg-primary text-primary-foreground" onClick={() => setModoCadastroRapido(true)}>
+                      <ClipboardList className="w-3 h-3 mr-1" />Completar Cadastro e Iniciar
+                    </Button>
+                  )
                 )}
 
-                {/* PRONTUÁRIO / EVOLUIR (Disponível se tiver paciente_id e não for cancelado) */}
                 {selected.status !== "cancelado" && selected.paciente_id && (
                   <Button size="sm" variant="outline" asChild>
                     <Link to={`/atendimentos/${selected.id}/prontuario`}>
@@ -364,41 +421,85 @@ export default function Agenda() {
                   </Button>
                 )}
 
-                {/* CADASTRAR PACIENTE */}
-                {!selected.paciente_id && selected.nome_paciente_livre && (
-                  <Button size="sm" variant="outline" asChild>
-                    <Link to={cadastrarUrl(selected)}><UserPlus className="w-3 h-3 mr-1" />Cadastrar Paciente</Link>
-                  </Button>
-                )}
-
-                {/* WHATSAPP */}
                 {(selected.paciente?.telefone || selected.telefone_contato) && (
                   <Button size="sm" variant="outline" onClick={() => enviarWhatsapp(selected)}>
                     <MessageCircle className="w-3 h-3 mr-1" />WhatsApp
                   </Button>
                 )}
 
-                {/* FALTOU */}
                 {selected.status === "agendado" && (
                   <Button size="sm" variant="outline" className="text-red-600 border-red-200" onClick={() => mudarStatus(selected.id, "faltou")}>
                     Faltou
                   </Button>
                 )}
 
-                {/* FALTOU SEM AVISO (admin/secretaria only) */}
                 {selected.status === "agendado" && (isAdmin || isSecretaria) && (
                   <Button size="sm" variant="outline" className="text-orange-600 border-orange-200" onClick={() => mudarStatus(selected.id, "faltou_sem_aviso")}>
                     Faltou s/ aviso
                   </Button>
                 )}
 
-                {/* DESFAZER (admin/secretária only) */}
                 {(isAdmin || isSecretaria) && selected.status !== "agendado" && (
                   <Button size="sm" variant="ghost" className="text-amber-600" onClick={() => desfazer(selected)}>
                     <Undo2 className="w-3 h-3 mr-1" />Desfazer
                   </Button>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* NOVO FORMULÁRIO RÁPIDO */}
+          {selected && modoCadastroRapido && (
+            <div className="space-y-4 pb-6">
+              <SheetHeader>
+                <SheetTitle className="text-lg">Completar Cadastro e Lançar Serviço</SheetTitle>
+                <p className="text-sm text-muted-foreground">Preencha os dados básicos para realizar o check-in.</p>
+              </SheetHeader>
+
+              <form onSubmit={salvarCadastroRapido} className="space-y-4 mt-4">
+                <div className="space-y-2">
+                  <Label>Nome da Paciente</Label>
+                  <Input name="nome" defaultValue={selected.nome_paciente_livre || ""} required />
+                </div>
+                
+                <div className="space-y-2">
+                  <Label>Telefone (opcional)</Label>
+                  <Input name="telefone" defaultValue={selected.telefone_contato || ""} />
+                </div>
+
+                <div className="flex gap-2 p-1 bg-muted rounded-md mt-4">
+                  <button type="button" onClick={() => setTipoPacoteRascunho("Particular")} className={`flex-1 text-sm py-1 rounded-sm ${tipoPacoteRascunho === "Particular" ? "bg-background shadow-sm font-medium" : "text-muted-foreground"}`}>Particular</button>
+                  <button type="button" onClick={() => setTipoPacoteRascunho("Plano")} className={`flex-1 text-sm py-1 rounded-sm ${tipoPacoteRascunho === "Plano" ? "bg-background shadow-sm font-medium" : "text-muted-foreground"}`}>Plano de Saúde</button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Nº de Sessões</Label>
+                    <Input name="qtdSessoes" type="number" defaultValue="1" min="1" required />
+                  </div>
+                  
+                  {tipoPacoteRascunho === "Particular" ? (
+                    <div className="space-y-2">
+                      <Label>Valor Total (R$)</Label>
+                      <Input name="valorTotal" type="number" step="0.01" placeholder="Ex: 150.00" required />
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Label>Número da Guia</Label>
+                      <Input name="numeroGuia" placeholder="Opcional" />
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-2 pt-4">
+                  <Button type="button" variant="outline" className="flex-1" onClick={() => setModoCadastroRapido(false)}>
+                    Voltar
+                  </Button>
+                  <Button type="submit" className="flex-1 bg-primary">
+                    Salvar e Fazer Check-in
+                  </Button>
+                </div>
+              </form>
             </div>
           )}
         </SheetContent>
@@ -496,7 +597,6 @@ function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: At
   );
 }
 
-/* ═══════════════════ WEEK VIEW ═══════════════════ */
 function WeekView({
   anchor, eventsByDay, onSelect, onDayClick,
 }: {
@@ -547,7 +647,6 @@ function WeekView({
   );
 }
 
-/* ═══════════════════ MONTH VIEW ═══════════════════ */
 function MonthView({
   anchor, eventsByDay, onDayClick,
 }: {
