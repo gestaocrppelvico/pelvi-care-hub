@@ -36,6 +36,19 @@ interface Atendimento {
   google_event_id: string | null;
 }
 
+interface PacoteCatalogo {
+  id: string;
+  nome: string;
+  numero_sessoes: number;
+  preco_total: number;
+}
+
+interface ServicoCatalogo {
+  id: string;
+  nome: string;
+  preco: number;
+}
+
 type ViewMode = "day" | "week" | "month";
 
 const statusLabel: Record<string, string> = {
@@ -109,9 +122,18 @@ export default function Agenda() {
   const [selected, setSelected] = useState<Atendimento | null>(null);
   const [syncing, setSyncing] = useState(false);
   
-  // Estados para controlar a exibição do formulário rápido na aba lateral
+  // Estados do Modo Cadastro Rápido e Faturamento Dinâmico
   const [modoCadastroRapido, setModoCadastroRapido] = useState(false);
-  const [tipoPacoteRascunho, setTipoPacoteRascunho] = useState<"Plano" | "Particular">("Particular");
+  const [tipoAtendimentoRascunho, setTipoAtendimentoRascunho] = useState<"Plano" | "Particular">("Particular");
+  const [itemTipo, setItemTipo] = useState<"servico" | "pacote">("servico");
+  
+  // Catálogos carregados das tabelas do banco de dados
+  const [listaPacotes, setListaPacotes] = useState<PacoteCatalogo[]>([]);
+  const [listaServicos, setListaServicos] = useState<ServicoCatalogo[]>([]);
+  
+  // Valores calculados em tempo real na interface
+  const [qtdSessoesAuto, setQtdSessoesAuto] = useState<string>("1");
+  const [valorTotalAuto, setValorTotalAuto] = useState<string>("");
 
   const pollRef = useRef<ReturnType<typeof setInterval>>();
 
@@ -124,6 +146,30 @@ export default function Agenda() {
     }
     return { start: startOfDay(startOfMonth(anchor)), end: endOfDay(endOfMonth(anchor)) };
   }, [view, anchor]);
+
+  /* ── fetch catálogos (Serviços e Pacotes) ── */
+  const carregarCatalogos = useCallback(async () => {
+    try {
+      const { data: pacotesData } = await supabase
+        .from("pacotes")
+        .select("id, nome, numero_sessoes, preco_total")
+        .eq("ativo", true);
+        
+      const { data: servicosData } = await supabase
+        .from("servicos")
+        .select("id, nome, preco")
+        .eq("ativo", true);
+
+      setListaPacotes((pacotesData as any[]) ?? []);
+      setListaServicos((servicosData as any[]) ?? []);
+    } catch (err) {
+      console.error("Erro ao carregar os itens de catálogo das tabelas:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    carregarCatalogos();
+  }, [carregarCatalogos]);
 
   /* ── fetch atendimentos ── */
   const reload = useCallback(async (silent = false) => {
@@ -170,7 +216,7 @@ export default function Agenda() {
     }
     if (syncError && !silent) toast.error("Falha ao sincronizar: " + syncError);
     await reload(silent);
-    if (!silent) { setSyncing(false); toast.success("Agenda atualizada"); }
+    if (!silent) { setSyncing(false); toast.success("Agenda updated"); }
   }, [isFisio, isAdmin, isSecretaria, myProfissionalId, reload]);
 
   useEffect(() => {
@@ -206,7 +252,24 @@ export default function Agenda() {
     reload();
   }
 
-  // Lógica de Cadastro Rápido + Lançamento de Pacote baseado nas suas colunas reais do Supabase
+  // Monitora a seleção do Dropdown do catálogo para aplicar a automação
+  function handleCatalogoSelectChange(idSelecionado: string) {
+    if (itemTipo === "servico") {
+      const servico = listaServicos.find(s => s.id === idSelecionado);
+      if (servico) {
+        setQtdSessoesAuto("1");
+        setValorTotalAuto(servico.preco.toString());
+      }
+    } else {
+      const pacote = listaPacotes.find(p => p.id === idSelecionado);
+      if (pacote) {
+        setQtdSessoesAuto(pacote.numero_sessoes.toString());
+        setValorTotalAuto(pacote.preco_total.toString());
+      }
+    }
+  }
+
+  /* ── submissão do faturamento estruturado ── */
   async function salvarCadastroRapido(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!selected) return;
@@ -214,13 +277,13 @@ export default function Agenda() {
     const fd = new FormData(e.currentTarget);
     const nome = fd.get("nome") as string;
     const telefone = fd.get("telefone") as string;
-    const qtdSessoes = parseInt(fd.get("qtdSessoes") as string || "1");
-    
     const numeroGuia = fd.get("numeroGuia") as string;
-    const valorTotal = fd.get("valorTotal") ? parseFloat(fd.get("valorTotal") as string) : 0;
+    
+    const qtdSessoes = parseInt(qtdSessoesAuto || "1");
+    const valorTotal = valorTotalAuto ? parseFloat(valorTotalAuto) : 0;
 
     try {
-      // 1. Cadastra na tabela 'pacientes'
+      // 1. Cria a linha base do paciente
       const { data: novoPaciente, error: errPaciente } = await supabase
         .from("pacientes")
         .insert({ nome, telefone: telefone || null })
@@ -229,7 +292,7 @@ export default function Agenda() {
       
       if (errPaciente) throw new Error("Erro ao criar paciente: " + errPaciente.message);
 
-      // 2. Cria o Pacote em 'paciente_pacotes' com suas colunas exatas do banco
+      // 2. Cria o contrato financeiro em paciente_pacotes
       const { data: novoPacote, error: errPacote } = await supabase
         .from("paciente_pacotes")
         .insert({
@@ -237,7 +300,8 @@ export default function Agenda() {
           sessoes_totais: qtdSessoes,
           sessoes_restantes: qtdSessoes, 
           preco_pago: valorTotal,
-          status_pagamento: "pendente"
+          status_pagamento: "pendente",
+          tipo_atendimento: tipoAtendimentoRascunho
         })
         .select()
         .single();
@@ -246,21 +310,21 @@ export default function Agenda() {
 
       const obsGuia = numeroGuia ? `Guia do Plano: ${numeroGuia}` : null;
 
-      // 3. Vincula o agendamento ao paciente e ao pacote, atualizando o status para Realizado
+      // 3. Efetua o check-in e amarra as chaves
       const { error: errAtendimento } = await supabase
         .from("atendimentos")
         .update({ 
           paciente_id: novoPaciente.id,
           paciente_pacote_id: novoPacote.id,
           status: "realizado" as any,
-          tipo: tipoPacoteRascunho,
+          tipo: tipoAtendimentoRascunho,
           observacoes: obsGuia 
         })
         .eq("id", selected.id);
 
       if (errAtendimento) throw new Error("Erro ao atualizar agenda: " + errAtendimento.message);
 
-      toast.success("Paciente cadastrado, serviço lançado e Check-in realizado!");
+      toast.success("Paciente cadastrado, item do catálogo faturado e atendimento realizado!");
       setModoCadastroRapido(false);
       setSelected(null);
       reload();
@@ -287,7 +351,7 @@ export default function Agenda() {
         }
       }
     }
-    toast.success(`Status reverted para "${statusLabel[prev]}"`);
+    toast.success(`Status revertido para "${statusLabel[prev]}"`);
     setSelected(null);
     reload();
   }
@@ -318,10 +382,8 @@ export default function Agenda() {
     return map;
   }, [list]);
 
-  /* ═════════════ RENDER ═════════════ */
   return (
     <div className="space-y-3">
-      {/* HEADER */}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold">Agenda</h1>
         <Button variant="outline" size="sm" onClick={() => syncNow()} disabled={syncing}>
@@ -378,28 +440,20 @@ export default function Agenda() {
                 <div className="flex items-center gap-2">
                   <Clock className="w-4 h-4 text-muted-foreground" />
                   {format(new Date(selected.data_inicio), "dd/MM/yyyy HH:mm")}
-                  {selected.data_fim && ` – ${format(new Date(selected.data_fim), "HH:mm")}`}
                 </div>
                 <p><strong>Profissional:</strong> {selected.profissional?.nome ?? "—"}</p>
-                <p><strong>Tipo:</strong> {selected.tipo}</p>
                 <div className="flex items-center gap-2">
                   <strong>Status:</strong>
                   <Badge variant={statusColor[selected.status] as any}>{statusBadge(selected)}</Badge>
                 </div>
-                
-                {!selected.paciente_id ? (
+                {!selected.paciente_id && (
                   <Badge variant="outline" className="text-xs bg-amber-100 text-amber-800 border-amber-300">
                     ⚠ Aguardando Cadastro
-                  </Badge>
-                ) : (
-                  <Badge variant="outline" className="text-xs bg-green-100 text-green-800 border-green-300">
-                    ✅ Paciente Cadastrado
                   </Badge>
                 )}
               </div>
 
               <div className="flex flex-wrap gap-2 pt-2">
-                {/* LÓGICA DE CHECK-IN OU CADASTRO RÁPIDO */}
                 {selected.status === "agendado" && (
                   selected.paciente_id ? (
                     <Button size="sm" onClick={() => fazerCheckin(selected)}>
@@ -432,31 +486,18 @@ export default function Agenda() {
                   </Button>
                 )}
 
-                {selected.status === "agendado" && (isAdmin || isSecretaria) && (
-                  <Button size="sm" variant="outline" className="text-orange-600 border-orange-200" onClick={() => mudarStatus(selected.id, "faltou_sem_aviso")}>
-                    Faltou s/ aviso
-                  </Button>
-                )}
-
-                {(isAdmin || isSecretaria) && selected.status !== "agendado" && (
-                  <Button size="sm" variant="ghost" className="text-amber-600" onClick={() => desfazer(selected)}>
-                    <Undo2 className="w-3 h-3 mr-1" />Desfazer
-                  </Button>
-                )}
-
-                {/* NOVO: BOTÃO DE REMOÇÃO MANUAL EM CASO DE DUPLICIDADE DO GOOGLE */}
                 {podeGerenciar && (
                   <Button 
                     variant="destructive" 
                     size="sm" 
                     className="ml-auto"
                     onClick={async () => {
-                      if (confirm("Tem certeza que deseja excluir permanentemente este horário duplicado da agenda?")) {
+                      if (confirm("Tem certeza que deseja excluir permanentemente este horário da agenda?")) {
                         const { error } = await supabase.from('atendimentos').delete().eq('id', selected.id);
                         if (error) {
                           toast.error("Erro ao deletar: " + error.message);
                         } else {
-                          toast.success("Horário duplicado excluído com sucesso!");
+                          toast.success("Agendamento excluído!");
                           setSelected(null);
                           reload();
                         }
@@ -470,55 +511,97 @@ export default function Agenda() {
             </div>
           )}
 
-          {/* FORMULÁRIO RÁPIDO DO MODO CADASTRO */}
+          {/* NOVO FORMULÁRIO RÁPIDO INTEGRADO COM CATÁLOGO */}
           {selected && modoCadastroRapido && (
             <div className="space-y-4 pb-6">
               <SheetHeader>
                 <SheetTitle className="text-lg">Completar Cadastro e Lançar Serviço</SheetTitle>
-                <p className="text-sm text-muted-foreground">Preencha os dados básicos para realizar o check-in.</p>
+                <p className="text-sm text-muted-foreground">Vincule um plano ou serviço do catálogo institucional.</p>
               </SheetHeader>
 
-              <form onSubmit={salvarCadastroRapido} className="space-y-4 mt-4">
-                <div className="space-y-2">
-                  <Label>Nome da Paciente</Label>
-                  <Input name="nome" defaultValue={selected.nome_paciente_livre || ""} required />
+              <form onSubmit={salvarCadastroRapido} className="space-y-4 mt-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="nome">Nome da Paciente</Label>
+                  <Input id="nome" name="nome" defaultValue={selected.nome_paciente_livre || ""} required />
                 </div>
                 
-                <div className="space-y-2">
-                  <Label>Telefone (opcional)</Label>
-                  <Input name="telefone" defaultValue={selected.telefone_contato || ""} />
+                <div className="space-y-1.5">
+                  <Label htmlFor="telefone">Telefone (opcional)</Label>
+                  <Input id="telefone" name="telefone" defaultValue={selected.telefone_contato || ""} />
                 </div>
 
-                <div className="flex gap-2 p-1 bg-muted rounded-md mt-4">
-                  <button type="button" onClick={() => setTipoPacoteRascunho("Particular")} className={`flex-1 text-sm py-1 rounded-sm ${tipoPacoteRascunho === "Particular" ? "bg-background shadow-sm font-medium" : "text-muted-foreground"}`}>Particular</button>
-                  <button type="button" onClick={() => setTipoPacoteRascunho("Plano")} className={`flex-1 text-sm py-1 rounded-sm ${tipoPacoteRascunho === "Plano" ? "bg-background shadow-sm font-medium" : "text-muted-foreground"}`}>Plano de Saúde</button>
+                {/* Seletor do Tipo Principal de Atendimento */}
+                <div className="flex gap-2 p-1 bg-muted rounded-md mt-2">
+                  <button type="button" onClick={() => setTipoAtendimentoRascunho("Particular")} className={`flex-1 text-xs py-1.5 rounded-sm transition-all ${tipoAtendimentoRascunho === "Particular" ? "bg-background shadow-sm font-semibold" : "text-muted-foreground"}`}>Particular</button>
+                  <button type="button" onClick={() => setTipoAtendimentoRascunho("Plano")} className={`flex-1 text-xs py-1.5 rounded-sm transition-all ${tipoAtendimentoRascunho === "Plano" ? "bg-background shadow-sm font-semibold" : "text-muted-foreground"}`}>Plano de Saúde</button>
                 </div>
 
+                {tipoAtendimentoRascunho === "Particular" ? (
+                  <div className="space-y-3 p-3 border rounded-lg bg-slate-50/50">
+                    {/* Subtítulo de escolha de modalidade */}
+                    <div className="flex gap-4 items-center">
+                      <Label className="text-xs text-muted-foreground">Modalidade do Catálogo:</Label>
+                      <label className="flex items-center gap-1.5 text-xs font-medium cursor-pointer">
+                        <input type="radio" checked={itemTipo === "servico"} onChange={() => { setItemTipo("servico"); setQtdSessoesAuto("1"); setValorTotalAuto(""); }} />
+                        Sessão Avulsa
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs font-medium cursor-pointer">
+                        <input type="radio" checked={itemTipo === "pacote"} onChange={() => { setItemTipo("pacote"); setQtdSessoesAuto("1"); setValorTotalAuto(""); }} />
+                        Pacote Estruturado
+                      </label>
+                    </div>
+
+                    {/* Dropdown alimentado de forma dinâmica pelas tabelas */}
+                    <div className="space-y-1">
+                      <Label className="text-xs">Selecione o Item do Sistema</Label>
+                      <select 
+                        className="w-full bg-background border rounded-md h-9 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                        required
+                        onChange={(e) => handleCatalogoSelectChange(e.target.value)}
+                        defaultValue=""
+                      >
+                        <option value="" disabled>-- Clique para selecionar --</option>
+                        {itemTipo === "servico" 
+                          ? listaServicos.map(s => <option key={s.id} value={s.id}>{s.nome} (R$ {s.preco})</option>)
+                          : listaPacotes.map(p => <option key={p.id} value={p.id}>{p.nome} ({p.numero_sessoes} sessões)</option>)
+                        }
+                      </select>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 p-3 border rounded-lg bg-blue-50/30">
+                    <Label htmlFor="numeroGuia">Número da Guia de Autorização</Label>
+                    <Input id="numeroGuia" name="numeroGuia" placeholder="Digite a guia do convênio (opcional)" />
+                  </div>
+                )}
+
+                {/* Campos bloqueados para edição manual que recebem os valores automáticos do catálogo */}
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <Label>Nº de Sessões</Label>
-                    <Input name="qtdSessoes" type="number" defaultValue="1" min="1" required />
+                    <Input 
+                      value={tipoAtendimentoRascunho === "Plano" ? "1" : qtdSessoesAuto} 
+                      disabled 
+                      className="bg-muted text-muted-foreground font-medium" 
+                    />
                   </div>
                   
-                  {tipoPacoteRascunho === "Particular" ? (
-                    <div className="space-y-2">
-                      <Label>Valor Total (R$)</Label>
-                      <Input name="valorTotal" type="number" step="0.01" placeholder="Ex: 150.00" required />
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <Label>Número da Guia</Label>
-                      <Input name="numeroGuia" placeholder="Opcional" />
-                    </div>
-                  )}
+                  <div className="space-y-1.5">
+                    <Label>Valor Total (R$)</Label>
+                    <Input 
+                      value={tipoAtendimentoRascunho === "Plano" ? "Conveniado" : (valorTotalAuto ? `R$ ${parseFloat(valorTotalAuto).toFixed(2)}` : "—")} 
+                      disabled 
+                      className="bg-muted text-muted-foreground font-semibold" 
+                    />
+                  </div>
                 </div>
 
-                <div className="flex gap-2 pt-4">
+                <div className="flex gap-2 pt-2">
                   <Button type="button" variant="outline" className="flex-1" onClick={() => setModoCadastroRapido(false)}>
                     Voltar
                   </Button>
-                  <Button type="submit" className="flex-1 bg-primary">
-                    Salvar e Fazer Check-in
+                  <Button type="submit" className="flex-1 bg-primary text-white font-medium">
+                    Confirmar e Registrar Atendimento
                   </Button>
                 </div>
               </form>
@@ -539,7 +622,6 @@ function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: At
     const cols: Atendimento[][] = [];
     sorted.forEach((evt) => {
       const start = new Date(evt.data_inicio).getTime();
-      const end = evt.data_fim ? new Date(evt.data_fim).getTime() : start + 40 * 60_000;
       let placed = false;
       for (const col of cols) {
         const lastEnd = col[col.length - 1].data_fim
@@ -708,7 +790,6 @@ function MonthView({
                   {evts.slice(0, 3).map((e) => (
                     <div key={e.id} className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: eventColor(e) }} />
                   ))}
-                  {evts.length > 3 && <span className="text-[8px] text-muted-foreground">+{evts.length - 3}</span>}
                 </div>
               )}
             </button>
