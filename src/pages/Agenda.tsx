@@ -16,8 +16,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
-  Clock, FileText, RefreshCw, UserPlus, CheckCircle, Undo2,
-  ChevronLeft, ChevronRight, MessageCircle, ClipboardList
+  Clock, FileText, RefreshCw, CheckCircle, Undo2,
+  ChevronLeft, ChevronRight, MessageCircle, ClipboardList, Trash2
 } from "lucide-react";
 
 /* ───── types ───── */
@@ -89,6 +89,7 @@ const prevStatus: Record<string, string> = {
 export default function Agenda() {
   const navigate = useNavigate();
   const { isSecretaria, isAdmin, isFisio, user } = useAuth();
+  const podeGerenciar = isAdmin || isSecretaria;
   const [myProfissionalId, setMyProfissionalId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -108,7 +109,7 @@ export default function Agenda() {
   const [selected, setSelected] = useState<Atendimento | null>(null);
   const [syncing, setSyncing] = useState(false);
   
-  // Estado para controlar a exibição do formulário rápido na aba lateral
+  // Estados para controlar a exibição do formulário rápido na aba lateral
   const [modoCadastroRapido, setModoCadastroRapido] = useState(false);
   const [tipoPacoteRascunho, setTipoPacoteRascunho] = useState<"Plano" | "Particular">("Particular");
 
@@ -134,7 +135,7 @@ export default function Agenda() {
       .lte("data_inicio", range.end.toISOString())
       .not("status", "in", '("cancelado","faltou","faltou_sem_aviso")')
       .order("data_inicio");
-    setList((data as any) ?? []);
+    setList((data as any[]) ?? []);
     if (!silent) setLoading(false);
   }, [range]);
 
@@ -205,7 +206,7 @@ export default function Agenda() {
     reload();
   }
 
-  // ─── MAGIA DO CADASTRO RÁPIDO COM BASE NAS SUAS TABELAS ───
+  // Lógica de Cadastro Rápido + Lançamento de Pacote baseado nas suas colunas reais do Supabase
   async function salvarCadastroRapido(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!selected) return;
@@ -219,7 +220,7 @@ export default function Agenda() {
     const valorTotal = fd.get("valorTotal") ? parseFloat(fd.get("valorTotal") as string) : 0;
 
     try {
-      // 1. Cria o Paciente na tabela 'pacientes'
+      // 1. Cadastra na tabela 'pacientes'
       const { data: novoPaciente, error: errPaciente } = await supabase
         .from("pacientes")
         .insert({ nome, telefone: telefone || null })
@@ -228,7 +229,7 @@ export default function Agenda() {
       
       if (errPaciente) throw new Error("Erro ao criar paciente: " + errPaciente.message);
 
-      // 2. Cria o Pacote na tabela 'paciente_pacotes' usando suas colunas exatas
+      // 2. Cria o Pacote em 'paciente_pacotes' com suas colunas exatas do banco
       const { data: novoPacote, error: errPacote } = await supabase
         .from("paciente_pacotes")
         .insert({
@@ -236,24 +237,23 @@ export default function Agenda() {
           sessoes_totais: qtdSessoes,
           sessoes_restantes: qtdSessoes, 
           preco_pago: valorTotal,
-          status_pagamento: "pendente" // Deixando como pendente para o financeiro cobrar depois
+          status_pagamento: "pendente"
         })
         .select()
         .single();
 
       if (errPacote) throw new Error("Erro ao criar pacote: " + errPacote.message);
 
-      // 3. Prepara a anotação da guia para salvar no atendimento
       const obsGuia = numeroGuia ? `Guia do Plano: ${numeroGuia}` : null;
 
-      // 4. Atualiza o Agendamento (Vincula tudo e faz Check-in)
+      // 3. Vincula o agendamento ao paciente e ao pacote, atualizando o status para Realizado
       const { error: errAtendimento } = await supabase
         .from("atendimentos")
         .update({ 
           paciente_id: novoPaciente.id,
           paciente_pacote_id: novoPacote.id,
           status: "realizado" as any,
-          tipo: tipoPacoteRascunho, // Atualiza para Plano ou Particular
+          tipo: tipoPacoteRascunho,
           observacoes: obsGuia 
         })
         .eq("id", selected.id);
@@ -287,7 +287,7 @@ export default function Agenda() {
         }
       }
     }
-    toast.success(`Status revertido para "${statusLabel[prev]}"`);
+    toast.success(`Status reverted para "${statusLabel[prev]}"`);
     setSelected(null);
     reload();
   }
@@ -399,7 +399,6 @@ export default function Agenda() {
               </div>
 
               <div className="flex flex-wrap gap-2 pt-2">
-                
                 {/* LÓGICA DE CHECK-IN OU CADASTRO RÁPIDO */}
                 {selected.status === "agendado" && (
                   selected.paciente_id ? (
@@ -444,11 +443,34 @@ export default function Agenda() {
                     <Undo2 className="w-3 h-3 mr-1" />Desfazer
                   </Button>
                 )}
+
+                {/* NOVO: BOTÃO DE REMOÇÃO MANUAL EM CASO DE DUPLICIDADE DO GOOGLE */}
+                {podeGerenciar && (
+                  <Button 
+                    variant="destructive" 
+                    size="sm" 
+                    className="ml-auto"
+                    onClick={async () => {
+                      if (confirm("Tem certeza que deseja excluir permanentemente este horário duplicado da agenda?")) {
+                        const { error } = await supabase.from('atendimentos').delete().eq('id', selected.id);
+                        if (error) {
+                          toast.error("Erro ao deletar: " + error.message);
+                        } else {
+                          toast.success("Horário duplicado excluído com sucesso!");
+                          setSelected(null);
+                          reload();
+                        }
+                      }
+                    }}
+                  >
+                    <Trash2 className="w-3 h-3 mr-1" /> Remover Agendamento
+                  </Button>
+                )}
               </div>
             </div>
           )}
 
-          {/* NOVO FORMULÁRIO RÁPIDO */}
+          {/* FORMULÁRIO RÁPIDO DO MODO CADASTRO */}
           {selected && modoCadastroRapido && (
             <div className="space-y-4 pb-6">
               <SheetHeader>
@@ -517,9 +539,7 @@ function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: At
     const cols: Atendimento[][] = [];
     sorted.forEach((evt) => {
       const start = new Date(evt.data_inicio).getTime();
-      const end = evt.data_fim
-        ? new Date(evt.data_fim).getTime()
-        : start + 40 * 60_000;
+      const end = evt.data_fim ? new Date(evt.data_fim).getTime() : start + 40 * 60_000;
       let placed = false;
       for (const col of cols) {
         const lastEnd = col[col.length - 1].data_fim
@@ -536,9 +556,7 @@ function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: At
     const map = new Map<string, { col: number; total: number }>();
     sorted.forEach((evt) => {
       const evtStart = new Date(evt.data_inicio).getTime();
-      const evtEnd = evt.data_fim
-        ? new Date(evt.data_fim).getTime()
-        : evtStart + 40 * 60_000;
+      const evtEnd = evt.data_fim ? new Date(evt.data_fim).getTime() : evtStart + 40 * 60_000;
       const colIdx = cols.findIndex((c) => c.includes(evt));
       let maxCols = 1;
       cols.forEach((col, ci) => {
@@ -597,6 +615,7 @@ function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: At
   );
 }
 
+/* ═══════════════════ WEEK VIEW ═══════════════════ */
 function WeekView({
   anchor, eventsByDay, onSelect, onDayClick,
 }: {
@@ -647,6 +666,7 @@ function WeekView({
   );
 }
 
+/* ═══════════════════ MONTH VIEW ═══════════════════ */
 function MonthView({
   anchor, eventsByDay, onDayClick,
 }: {
