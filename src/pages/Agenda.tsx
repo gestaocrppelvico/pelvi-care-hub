@@ -17,7 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
   Clock, FileText, RefreshCw, CheckCircle, Undo2,
-  ChevronLeft, ChevronRight, MessageCircle, ClipboardList, Trash2
+  ChevronLeft, ChevronRight, MessageCircle, ClipboardList, Trash2, Search
 } from "lucide-react";
 
 /* ───── types ───── */
@@ -122,23 +122,72 @@ export default function Agenda() {
   const [selected, setSelected] = useState<Atendimento | null>(null);
   const [syncing, setSyncing] = useState(false);
   
-  // Estados do Modo Cadastro Rápido e Faturamento Dinâmico
+  // ── ESTADOS DE CADASTRO E AUTOCOMPLETAR ──
   const [modoCadastroRapido, setModoCadastroRapido] = useState(false);
+  const [termoBusca, setTermoBusca] = useState("");
+  const [telefoneBusca, setTelefoneBusca] = useState("");
+  const [sugestoesPacientes, setSugestoesPacientes] = useState<any[]>([]);
+  const [pacienteSelecionado, setPacienteSelecionado] = useState<any | null>(null);
+  
+  // ── ESTADOS DE PACOTES EXISTENTES ──
+  const [pacotesAtivosPaciente, setPacotesAtivosPaciente] = useState<any[]>([]);
+  const [usarPacoteExistenteId, setUsarPacoteExistenteId] = useState<string>("");
+
+  // ── ESTADOS DO CATÁLOGO NOVO ──
   const [tipoAtendimentoRascunho, setTipoAtendimentoRascunho] = useState<"Plano" | "Particular">("Particular");
   const [itemTipo, setItemTipo] = useState<"servico" | "pacote">("servico");
-  
-  // Catálogos carregados das tabelas do banco de dados
   const [listaPacotes, setListaPacotes] = useState<PacoteCatalogo[]>([]);
   const [listaServicos, setListaServicos] = useState<ServicoCatalogo[]>([]);
-  
-  // NOVO: Armazena o ID do item selecionado no Dropdown para corrigir a restrição not-null
   const [idItemSelecionado, setIdItemSelecionado] = useState<string>("");
-  
-  // Valores calculados em tempo real na interface
   const [qtdSessoesAuto, setQtdSessoesAuto] = useState<string>("1");
   const [valorTotalAuto, setValorTotalAuto] = useState<string>("");
 
   const pollRef = useRef<ReturnType<typeof setInterval>>();
+
+  // Limpa e prepara os estados ao abrir o formulário
+  useEffect(() => {
+    if (selected && modoCadastroRapido) {
+      setTermoBusca(selected.nome_paciente_livre || "");
+      setTelefoneBusca(selected.telefone_contato || "");
+      setPacienteSelecionado(null);
+      setSugestoesPacientes([]);
+      setPacotesAtivosPaciente([]);
+      setUsarPacoteExistenteId("");
+    }
+  }, [selected, modoCadastroRapido]);
+
+  // Efeito de busca de pacientes (Autocompletar)
+  useEffect(() => {
+    if (termoBusca.length >= 3 && !pacienteSelecionado) {
+      const delay = setTimeout(async () => {
+        const { data } = await supabase
+          .from('pacientes')
+          .select('id, nome, telefone')
+          .ilike('nome', `%${termoBusca}%`)
+          .limit(5);
+        setSugestoesPacientes(data || []);
+      }, 300);
+      return () => clearTimeout(delay);
+    } else {
+      setSugestoesPacientes([]);
+    }
+  }, [termoBusca, pacienteSelecionado]);
+
+  // Busca os pacotes ativos se um paciente existente for selecionado
+  async function buscarPacotesAtivos(pacienteId: string) {
+    const { data } = await supabase.from('paciente_pacotes')
+      .select('id, sessoes_restantes, pacotes(nome)')
+      .eq('paciente_id', pacienteId)
+      .gt('sessoes_restantes', 0)
+      .order('created_at', { ascending: false });
+    
+    setPacotesAtivosPaciente(data || []);
+    if (data && data.length > 0) {
+      setUsarPacoteExistenteId(data[0].id); // Sugere o pacote ativo mais recente
+    } else {
+      setUsarPacoteExistenteId("");
+    }
+  }
 
   /* ── computed range ── */
   const range = useMemo(() => {
@@ -150,19 +199,13 @@ export default function Agenda() {
     return { start: startOfDay(startOfMonth(anchor)), end: endOfDay(endOfMonth(anchor)) };
   }, [view, anchor]);
 
-  /* ── fetch catálogos (Serviços e Pacotes) ── */
+  /* ── fetch catálogos ── */
   const carregarCatalogos = useCallback(async () => {
     try {
-      const { data: pacotesData } = await supabase
-        .from("pacotes")
-        .select("id, nome, numero_sessoes, preco_total")
-        .eq("ativo", true);
-        
-      const { data: servicosData } = await supabase
-        .from("servicos")
-        .select("id, nome, preco")
-        .eq("ativo", true);
-
+      const [{ data: pacotesData }, { data: servicosData }] = await Promise.all([
+        supabase.from("pacotes").select("id, nome, numero_sessoes, preco_total").eq("ativo", true),
+        supabase.from("servicos").select("id, nome, preco").eq("ativo", true)
+      ]);
       setListaPacotes((pacotesData as any[]) ?? []);
       setListaServicos((servicosData as any[]) ?? []);
     } catch (err) {
@@ -170,9 +213,7 @@ export default function Agenda() {
     }
   }, []);
 
-  useEffect(() => {
-    carregarCatalogos();
-  }, [carregarCatalogos]);
+  useEffect(() => { carregarCatalogos(); }, [carregarCatalogos]);
 
   /* ── fetch atendimentos ── */
   const reload = useCallback(async (silent = false) => {
@@ -256,93 +297,91 @@ export default function Agenda() {
   }
 
   function handleCatalogoSelectChange(idSelecionado: string) {
-    setIdItemSelecionado(idSelecionado); // Armazena a chave primária escolhida do dropdown
-
+    setIdItemSelecionado(idSelecionado);
     if (itemTipo === "servico") {
       const servico = listaServicos.find(s => s.id === idSelecionado);
-      if (servico) {
-        setQtdSessoesAuto("1");
-        setValorTotalAuto(servico.preco.toString());
-      }
+      if (servico) { setQtdSessoesAuto("1"); setValorTotalAuto(servico.preco.toString()); }
     } else {
       const pacote = listaPacotes.find(p => p.id === idSelecionado);
-      if (pacote) {
-        setQtdSessoesAuto(pacote.numero_sessoes.toString());
-        setValorTotalAuto(pacote.preco_total.toString());
-      }
+      if (pacote) { setQtdSessoesAuto(pacote.numero_sessoes.toString()); setValorTotalAuto(pacote.preco_total.toString()); }
     }
   }
 
-  /* ── submissão corrigida e validada contra valores nulos ── */
+  /* ── Salvamento Misto (Novo vs Existente) ── */
   async function salvarCadastroRapido(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!selected) return;
 
     const fd = new FormData(e.currentTarget);
-    const nome = fd.get("nome") as string;
-    const telefone = fd.get("telefone") as string;
     const numeroGuia = fd.get("numeroGuia") as string;
-    
-    const qtdSessoes = parseInt(qtdSessoesAuto || "1");
-    const valorTotal = valorTotalAuto ? parseFloat(valorTotalAuto) : 0;
 
-    if (tipoAtendimentoRascunho === "Particular" && !idItemSelecionado) {
-      toast.error("Por favor, selecione um item do catálogo do sistema antes de confirmar.");
+    // Se optou por cadastrar um pacote novo particular, precisa escolher o item do catálogo
+    if (!usarPacoteExistenteId && tipoAtendimentoRascunho === "Particular" && !idItemSelecionado) {
+      toast.error("Por favor, selecione um item do catálogo ou um pacote ativo do paciente.");
       return;
     }
 
     try {
-      // 1. Cria o registro base da nova paciente
-      const { data: novoPaciente, error: errPaciente } = await supabase
-        .from("pacientes")
-        .insert({ nome, telefone: telefone || null })
-        .select()
-        .single();
-      
-      if (errPaciente) throw new Error("Erro ao criar paciente: " + errPaciente.message);
-
-      // 2. MONTAGEM DO CONTRATO: Injeta obrigatoriamente a FK 'pacote_id' exigida pelo banco de dados
-      const dadosDoPacote: Record<string, any> = {
-        paciente_id: novoPaciente.id,
-        sessoes_totais: qtdSessoes,
-        sessoes_restantes: qtdSessoes, 
-        preco_pago: valorTotal,
-        status_pagamento: "pendente"
-      };
-
-      // Se for Particular, preenchemos o pacote_id que causava a violação da constraint
-      if (tipoAtendimentoRascunho === "Particular") {
-        dadosDoPacote.pacote_id = idItemSelecionado;
+      // 1. Identificar ou Criar Paciente
+      let finalPacienteId = pacienteSelecionado?.id;
+      if (!finalPacienteId) {
+        const { data: novoPac, error: errPac } = await supabase
+          .from("pacientes")
+          .insert({ nome: termoBusca, telefone: telefoneBusca || null })
+          .select()
+          .single();
+        if (errPac) throw new Error("Erro ao criar paciente: " + errPac.message);
+        finalPacienteId = novoPac.id;
       }
 
-      const { data: novoPacote, error: errPacote } = await supabase
-        .from("paciente_pacotes")
-        .insert(dadosDoPacote)
-        .select()
-        .single();
+      // 2. Identificar ou Criar Pacote Financeiro
+      let finalPacoteId = usarPacoteExistenteId;
+      
+      // Se não escolheu usar um pacote existente, criamos o registro financeiro novo
+      if (!finalPacoteId) {
+        const qtdSessoes = parseInt(qtdSessoesAuto || "1");
+        const valorTotal = valorTotalAuto ? parseFloat(valorTotalAuto) : 0;
+        
+        const dadosDoPacote: Record<string, any> = {
+          paciente_id: finalPacienteId,
+          sessoes_totais: qtdSessoes,
+          sessoes_restantes: qtdSessoes, 
+          preco_pago: valorTotal,
+          status_pagamento: "pendente"
+        };
 
-      if (errPacote) throw new Error("Erro ao criar pacote: " + errPacote.message);
+        if (tipoAtendimentoRascunho === "Particular") {
+          dadosDoPacote.pacote_id = idItemSelecionado;
+        }
 
+        const { data: novoPacote, error: errPacote } = await supabase
+          .from("paciente_pacotes")
+          .insert(dadosDoPacote)
+          .select()
+          .single();
+
+        if (errPacote) throw new Error("Erro ao criar pacote financeiro: " + errPacote.message);
+        finalPacoteId = novoPacote.id;
+      }
+
+      // 3. Efetuar o check-in na agenda e amarrar os IDs
       const obsGuia = numeroGuia ? `Guia do Plano: ${numeroGuia}` : null;
-
-      // 3. Atualiza o atendimento e realiza o check-in na agenda
       const { error: errAtendimento } = await supabase
         .from("atendimentos")
         .update({ 
-          paciente_id: novoPaciente.id,
-          paciente_pacote_id: novoPacote.id,
+          paciente_id: finalPacienteId,
+          paciente_pacote_id: finalPacoteId,
           status: "realizado" as any,
           tipo: tipoAtendimentoRascunho,
           observacoes: obsGuia 
         })
         .eq("id", selected.id);
 
-      if (errAtendimento) throw new Error("Erro ao atualizar agenda: " + errAtendimento.message);
+      if (errAtendimento) throw new Error("Erro ao vincular na agenda: " + errAtendimento.message);
 
-      toast.success("Paciente cadastrado e atendimento realizado com sucesso!");
+      toast.success(usarPacoteExistenteId ? "Sessão descontada do pacote com sucesso!" : "Paciente cadastrado e atendimento faturado!");
       setModoCadastroRapido(false);
       setSelected(null);
-      setIdItemSelecionado(""); // Limpa o estado para o próximo uso
       reload();
 
     } catch (error: any) {
@@ -367,7 +406,7 @@ export default function Agenda() {
         }
       }
     }
-    toast.success(`Status reverted para "${statusLabel[prev]}"`);
+    toast.success(`Status revertido para "${statusLabel[prev]}"`);
     setSelected(null);
     reload();
   }
@@ -464,7 +503,7 @@ export default function Agenda() {
                 </div>
                 {!selected.paciente_id && (
                   <Badge variant="outline" className="text-xs bg-amber-100 text-amber-800 border-amber-300">
-                    ⚠ Aguardando Cadastro
+                    ⚠ Aguardando Cadastro/Associação
                   </Badge>
                 )}
               </div>
@@ -473,7 +512,7 @@ export default function Agenda() {
                 {selected.status === "agendado" && (
                   selected.paciente_id ? (
                     <Button size="sm" onClick={() => fazerCheckin(selected)}>
-                      <CheckCircle className="w-3 h-3 mr-1" />Check-in
+                      <CheckCircle className="w-3 h-3 mr-1" />Check-in Rápido
                     </Button>
                   ) : (
                     <Button size="sm" className="bg-primary text-primary-foreground" onClick={() => setModoCadastroRapido(true)}>
@@ -510,9 +549,7 @@ export default function Agenda() {
                     onClick={async () => {
                       if (confirm("Tem certeza que deseja excluir permanentemente este horário da agenda?")) {
                         const { error } = await supabase.from('atendimentos').delete().eq('id', selected.id);
-                        if (error) {
-                          toast.error("Erro ao deletar: " + error.message);
-                        } else {
+                        if (error) { toast.error("Erro ao deletar: " + error.message); } else {
                           toast.success("Agendamento excluído!");
                           setSelected(null);
                           reload();
@@ -520,100 +557,161 @@ export default function Agenda() {
                       }
                     }}
                   >
-                    <Trash2 className="w-3 h-3 mr-1" /> Remover Agendamento
+                    <Trash2 className="w-3 h-3 mr-1" /> Remover
                   </Button>
                 )}
               </div>
             </div>
           )}
 
-          {/* FORMULÁRIO RÁPIDO DO MODO CADASTRO */}
+          {/* FORMULÁRIO RÁPIDO DO MODO CADASTRO COM AUTOCOMPLETAR */}
           {selected && modoCadastroRapido && (
             <div className="space-y-4 pb-6">
               <SheetHeader>
-                <SheetTitle className="text-lg">Completar Cadastro e Lançar Serviço</SheetTitle>
-                <p className="text-sm text-muted-foreground">Vincule um plano ou serviço do catálogo institucional.</p>
+                <SheetTitle className="text-lg">Registro e Associação de Atendimento</SheetTitle>
+                <p className="text-sm text-muted-foreground">Busque o paciente no sistema ou cadastre um novo.</p>
               </SheetHeader>
 
               <form onSubmit={salvarCadastroRapido} className="space-y-4 mt-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="nome">Nome da Paciente</Label>
-                  <Input id="nome" name="nome" defaultValue={selected.nome_paciente_livre || ""} required />
-                </div>
                 
-                <div className="space-y-1.5">
-                  <Label htmlFor="telefone">Telefone (opcional)</Label>
-                  <Input id="telefone" name="telefone" defaultValue={selected.telefone_contato || ""} />
-                </div>
-
-                <div className="flex gap-2 p-1 bg-muted rounded-md mt-2">
-                  <button type="button" onClick={() => setTipoAtendimentoRascunho("Particular")} className={`flex-1 text-xs py-1.5 rounded-sm transition-all ${tipoAtendimentoRascunho === "Particular" ? "bg-background shadow-sm font-semibold" : "text-muted-foreground"}`}>Particular</button>
-                  <button type="button" onClick={() => setTipoAtendimentoRascunho("Plano")} className={`flex-1 text-xs py-1.5 rounded-sm transition-all ${tipoAtendimentoRascunho === "Plano" ? "bg-background shadow-sm font-semibold" : "text-muted-foreground"}`}>Plano de Saúde</button>
-                </div>
-
-                {tipoAtendimentoRascunho === "Particular" ? (
-                  <div className="space-y-3 p-3 border rounded-lg bg-slate-50/50">
-                    <div className="flex gap-4 items-center">
-                      <Label className="text-xs text-muted-foreground">Modalidade do Catálogo:</Label>
-                      <label className="flex items-center gap-1.5 text-xs font-medium cursor-pointer">
-                        <input type="radio" checked={itemTipo === "servico"} onChange={() => { setItemTipo("servico"); setQtdSessoesAuto("1"); setValorTotalAuto(""); setIdItemSelecionado(""); }} />
-                        Sessão Avulsa
-                      </label>
-                      <label className="flex items-center gap-1.5 text-xs font-medium cursor-pointer">
-                        <input type="radio" checked={itemTipo === "pacote"} onChange={() => { setItemTipo("pacote"); setQtdSessoesAuto("1"); setValorTotalAuto(""); setIdItemSelecionado(""); }} />
-                        Pacote Estruturado
-                      </label>
-                    </div>
-
-                    <div className="space-y-1">
-                      <Label className="text-xs">Selecione o Item do Sistema</Label>
-                      <select 
-                        className="w-full bg-background border rounded-md h-9 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                        required
-                        onChange={(e) => handleCatalogoSelectChange(e.target.value)}
-                        value={idItemSelecionado}
-                      >
-                        <option value="" disabled>-- Clique para selecionar --</option>
-                        {itemTipo === "servico" 
-                          ? listaServicos.map(s => <option key={s.id} value={s.id}>{s.nome} (R$ {s.preco})</option>)
-                          : listaPacotes.map(p => <option key={p.id} value={p.id}>{p.nome} ({p.numero_sessoes} sessões)</option>)
-                        }
-                      </select>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-1.5 p-3 border rounded-lg bg-blue-50/30">
-                    <Label htmlFor="numeroGuia">Número da Guia de Autorização</Label>
-                    <Input id="numeroGuia" name="numeroGuia" placeholder="Digite a guia do convênio (opcional)" />
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label>Nº de Sessões</Label>
+                {/* CAMPO DE BUSCA INTELIGENTE */}
+                <div className="space-y-1.5 relative">
+                  <Label>Nome da Paciente</Label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <Input 
-                      value={tipoAtendimentoRascunho === "Plano" ? "1" : qtdSessoesAuto} 
-                      disabled 
-                      className="bg-muted text-muted-foreground font-medium" 
+                      value={termoBusca}
+                      onChange={(e) => {
+                        setTermoBusca(e.target.value);
+                        setPacienteSelecionado(null);
+                        setPacotesAtivosPaciente([]);
+                        setUsarPacoteExistenteId("");
+                      }}
+                      className="pl-9"
+                      placeholder="Digite para buscar ou registrar..."
+                      required
+                      autoComplete="off"
                     />
                   </div>
                   
-                  <div className="space-y-1.5">
-                    <Label>Valor Total (R$)</Label>
-                    <Input 
-                      value={tipoAtendimentoRascunho === "Plano" ? "Conveniado" : (valorTotalAuto ? `R$ ${parseFloat(valorTotalAuto).toFixed(2)}` : "—")} 
-                      disabled 
-                      className="bg-muted text-muted-foreground font-semibold" 
-                    />
-                  </div>
+                  {/* CAIXA DE SUGESTÕES */}
+                  {sugestoesPacientes.length > 0 && (
+                    <div className="absolute z-20 w-full bg-background border rounded-md shadow-xl mt-1 max-h-48 overflow-y-auto">
+                      {sugestoesPacientes.map((p) => (
+                        <div
+                          key={p.id}
+                          className="p-3 hover:bg-muted cursor-pointer border-b last:border-0 transition-colors"
+                          onClick={() => {
+                            setPacienteSelecionado(p);
+                            setTermoBusca(p.nome);
+                            setTelefoneBusca(p.telefone || "");
+                            setSugestoesPacientes([]);
+                            buscarPacotesAtivos(p.id);
+                          }}
+                        >
+                          <div className="font-medium text-sm">{p.nome}</div>
+                          <div className="text-xs text-muted-foreground mt-0.5">{p.telefone || "Sem telefone cadastrado"}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                
+                <div className="space-y-1.5">
+                  <Label>Telefone (opcional)</Label>
+                  <Input 
+                    value={telefoneBusca}
+                    onChange={(e) => setTelefoneBusca(e.target.value)}
+                    placeholder="DDD + Número"
+                  />
                 </div>
 
-                <div className="flex gap-2 pt-2">
+                {/* SEÇÃO DE PACOTES ATIVOS (APARECE APENAS SE TIVER SALDO) */}
+                {pacotesAtivosPaciente.length > 0 && (
+                  <div className="p-4 border border-green-300 bg-green-50/50 rounded-lg space-y-3 mt-4">
+                    <Label className="text-green-800 font-semibold flex items-center gap-2">
+                      <CheckCircle className="w-4 h-4" />
+                      Pacotes Ativos Encontrados
+                    </Label>
+                    <p className="text-xs text-green-700">Este paciente possui saldo no sistema. Você deseja abater esta sessão do pacote existente?</p>
+                    <select
+                      className="w-full bg-white border border-green-200 rounded-md h-10 px-3 text-sm focus:ring-green-500 focus:border-green-500 outline-none"
+                      value={usarPacoteExistenteId}
+                      onChange={(e) => setUsarPacoteExistenteId(e.target.value)}
+                    >
+                      <option value="">Não, desejo registrar e cobrar um NOVO serviço.</option>
+                      {pacotesAtivosPaciente.map(pkg => (
+                        <option key={pkg.id} value={pkg.id} className="font-medium">
+                          Usar: {pkg.pacotes?.nome || 'Pacote/Serviço'} ({pkg.sessoes_restantes} sessões restantes)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* EXIBE FATURAMENTO NOVO APENAS SE NÃO FOR USAR PACOTE EXISTENTE */}
+                {!usarPacoteExistenteId && (
+                  <>
+                    <div className="flex gap-2 p-1 bg-muted rounded-md mt-4">
+                      <button type="button" onClick={() => setTipoAtendimentoRascunho("Particular")} className={`flex-1 text-xs py-1.5 rounded-sm transition-all ${tipoAtendimentoRascunho === "Particular" ? "bg-background shadow-sm font-semibold" : "text-muted-foreground"}`}>Particular</button>
+                      <button type="button" onClick={() => setTipoAtendimentoRascunho("Plano")} className={`flex-1 text-xs py-1.5 rounded-sm transition-all ${tipoAtendimentoRascunho === "Plano" ? "bg-background shadow-sm font-semibold" : "text-muted-foreground"}`}>Plano de Saúde</button>
+                    </div>
+
+                    {tipoAtendimentoRascunho === "Particular" ? (
+                      <div className="space-y-3 p-3 border rounded-lg bg-slate-50/50">
+                        <div className="flex gap-4 items-center">
+                          <Label className="text-xs text-muted-foreground">Catálogo Institucional:</Label>
+                          <label className="flex items-center gap-1.5 text-xs font-medium cursor-pointer">
+                            <input type="radio" checked={itemTipo === "servico"} onChange={() => { setItemTipo("servico"); setQtdSessoesAuto("1"); setValorTotalAuto(""); setIdItemSelecionado(""); }} />
+                            Sessão Avulsa
+                          </label>
+                          <label className="flex items-center gap-1.5 text-xs font-medium cursor-pointer">
+                            <input type="radio" checked={itemTipo === "pacote"} onChange={() => { setItemTipo("pacote"); setQtdSessoesAuto("1"); setValorTotalAuto(""); setIdItemSelecionado(""); }} />
+                            Pacote Estruturado
+                          </label>
+                        </div>
+
+                        <div className="space-y-1">
+                          <select 
+                            className="w-full bg-background border rounded-md h-9 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                            required
+                            onChange={(e) => handleCatalogoSelectChange(e.target.value)}
+                            value={idItemSelecionado}
+                          >
+                            <option value="" disabled>-- Selecione o item a ser cobrado --</option>
+                            {itemTipo === "servico" 
+                              ? listaServicos.map(s => <option key={s.id} value={s.id}>{s.nome} (R$ {s.preco})</option>)
+                              : listaPacotes.map(p => <option key={p.id} value={p.id}>{p.nome} ({p.numero_sessoes} sessões)</option>)
+                            }
+                          </select>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5 p-3 border rounded-lg bg-blue-50/30">
+                        <Label htmlFor="numeroGuia">Número da Guia de Autorização</Label>
+                        <Input id="numeroGuia" name="numeroGuia" placeholder="Digite a guia do convênio (opcional)" />
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <Label>Nº de Sessões a Faturar</Label>
+                        <Input value={tipoAtendimentoRascunho === "Plano" ? "1" : qtdSessoesAuto} disabled className="bg-muted text-muted-foreground font-medium" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Valor Total (R$)</Label>
+                        <Input value={tipoAtendimentoRascunho === "Plano" ? "Conveniado" : (valorTotalAuto ? `R$ ${parseFloat(valorTotalAuto).toFixed(2)}` : "—")} disabled className="bg-muted text-muted-foreground font-semibold" />
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                <div className="flex gap-2 pt-4">
                   <Button type="button" variant="outline" className="flex-1" onClick={() => setModoCadastroRapido(false)}>
-                    Voltar
+                    Cancelar
                   </Button>
                   <Button type="submit" className="flex-1 bg-primary text-white font-medium">
-                    Confirmar e Registrar Atendimento
+                    Confirmar Check-in
                   </Button>
                 </div>
               </form>
@@ -625,8 +723,7 @@ export default function Agenda() {
   );
 }
 
-/* ═══════════════════ DAY VIEW ═══════════════════ */
-/* ... O restante do código de renderização das visualizações (DayView, WeekView, MonthView) permanece inalterado ... */
+/* ═══════════════════ VIEWS ═══════════════════ */
 function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: Atendimento) => void }) {
   const columns = useMemo(() => {
     const sorted = [...events].sort((a, b) => new Date(a.data_inicio).getTime() - new Date(b.data_inicio).getTime());
