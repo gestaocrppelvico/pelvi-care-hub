@@ -163,7 +163,7 @@ export default function Agenda() {
       setListaPacotes((pacotesData as any[]) ?? []);
       setListaServicos((servicosData as any[]) ?? []);
     } catch (err) {
-      console.error("Erro ao carregar os itens de catálogo das tabelas:", err);
+      console.error("Erro ao carregar os itens de catálogo:", err);
     }
   }, []);
 
@@ -216,7 +216,7 @@ export default function Agenda() {
     }
     if (syncError && !silent) toast.error("Falha ao sincronizar: " + syncError);
     await reload(silent);
-    if (!silent) { setSyncing(false); toast.success("Agenda updated"); }
+    if (!silent) { setSyncing(false); toast.success("Agenda atualizada"); }
   }, [isFisio, isAdmin, isSecretaria, myProfissionalId, reload]);
 
   useEffect(() => {
@@ -252,7 +252,6 @@ export default function Agenda() {
     reload();
   }
 
-  // Monitora a seleção do Dropdown do catálogo para aplicar a automação
   function handleCatalogoSelectChange(idSelecionado: string) {
     if (itemTipo === "servico") {
       const servico = listaServicos.find(s => s.id === idSelecionado);
@@ -269,7 +268,7 @@ export default function Agenda() {
     }
   }
 
-  /* ── submissão do faturamento estruturado ── */
+  /* ── submissão do faturamento estruturado corrigido ── */
   async function salvarCadastroRapido(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!selected) return;
@@ -292,7 +291,7 @@ export default function Agenda() {
       
       if (errPaciente) throw new Error("Erro ao criar paciente: " + errPaciente.message);
 
-      // 2. Cria o contrato financeiro em paciente_pacotes
+      // 2. CORREÇÃO: Removemos 'tipo_atendimento' que gerava o erro do Schema Cache
       const { data: novoPacote, error: errPacote } = await supabase
         .from("paciente_pacotes")
         .insert({
@@ -300,8 +299,7 @@ export default function Agenda() {
           sessoes_totais: qtdSessoes,
           sessoes_restantes: qtdSessoes, 
           preco_pago: valorTotal,
-          status_pagamento: "pendente",
-          tipo_atendimento: tipoAtendimentoRascunho
+          status_pagamento: "pendente"
         })
         .select()
         .single();
@@ -310,21 +308,21 @@ export default function Agenda() {
 
       const obsGuia = numeroGuia ? `Guia do Plano: ${numeroGuia}` : null;
 
-      // 3. Efetua o check-in e amarra as chaves
+      // 3. Atualiza o atendimento injetando o tipo correto para o Trigger processar o repasse
       const { error: errAtendimento } = await supabase
         .from("atendimentos")
         .update({ 
           paciente_id: novoPaciente.id,
           paciente_pacote_id: novoPacote.id,
           status: "realizado" as any,
-          tipo: tipoAtendimentoRascunho,
+          tipo: tipoAtendimentoRascunho, // Grava "Particular" ou "Plano" aqui!
           observacoes: obsGuia 
         })
         .eq("id", selected.id);
 
       if (errAtendimento) throw new Error("Erro ao atualizar agenda: " + errAtendimento.message);
 
-      toast.success("Paciente cadastrado, item do catálogo faturado e atendimento realizado!");
+      toast.success("Paciente cadastrado e atendimento realizado com sucesso!");
       setModoCadastroRapido(false);
       setSelected(null);
       reload();
@@ -351,7 +349,7 @@ export default function Agenda() {
         }
       }
     }
-    toast.success(`Status revertido para "${statusLabel[prev]}"`);
+    toast.success(`Status reverted para "${statusLabel[prev]}"`);
     setSelected(null);
     reload();
   }
@@ -511,7 +509,7 @@ export default function Agenda() {
             </div>
           )}
 
-          {/* NOVO FORMULÁRIO RÁPIDO INTEGRADO COM CATÁLOGO */}
+          {/* FORMULÁRIO RÁPIDO DO MODO CADASTRO */}
           {selected && modoCadastroRapido && (
             <div className="space-y-4 pb-6">
               <SheetHeader>
@@ -530,7 +528,6 @@ export default function Agenda() {
                   <Input id="telefone" name="telefone" defaultValue={selected.telefone_contato || ""} />
                 </div>
 
-                {/* Seletor do Tipo Principal de Atendimento */}
                 <div className="flex gap-2 p-1 bg-muted rounded-md mt-2">
                   <button type="button" onClick={() => setTipoAtendimentoRascunho("Particular")} className={`flex-1 text-xs py-1.5 rounded-sm transition-all ${tipoAtendimentoRascunho === "Particular" ? "bg-background shadow-sm font-semibold" : "text-muted-foreground"}`}>Particular</button>
                   <button type="button" onClick={() => setTipoAtendimentoRascunho("Plano")} className={`flex-1 text-xs py-1.5 rounded-sm transition-all ${tipoAtendimentoRascunho === "Plano" ? "bg-background shadow-sm font-semibold" : "text-muted-foreground"}`}>Plano de Saúde</button>
@@ -538,7 +535,6 @@ export default function Agenda() {
 
                 {tipoAtendimentoRascunho === "Particular" ? (
                   <div className="space-y-3 p-3 border rounded-lg bg-slate-50/50">
-                    {/* Subtítulo de escolha de modalidade */}
                     <div className="flex gap-4 items-center">
                       <Label className="text-xs text-muted-foreground">Modalidade do Catálogo:</Label>
                       <label className="flex items-center gap-1.5 text-xs font-medium cursor-pointer">
@@ -551,7 +547,6 @@ export default function Agenda() {
                       </label>
                     </div>
 
-                    {/* Dropdown alimentado de forma dinâmica pelas tabelas */}
                     <div className="space-y-1">
                       <Label className="text-xs">Selecione o Item do Sistema</Label>
                       <select 
@@ -575,7 +570,6 @@ export default function Agenda() {
                   </div>
                 )}
 
-                {/* Campos bloqueados para edição manual que recebem os valores automáticos do catálogo */}
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label>Nº de Sessões</Label>
