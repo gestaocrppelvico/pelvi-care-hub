@@ -176,7 +176,7 @@ export default function Agenda() {
   // Busca os pacotes ativos se um paciente existente for selecionado
   async function buscarPacotesAtivos(pacienteId: string) {
     const { data } = await supabase.from('paciente_pacotes')
-      .select('id, sessoes_restantes, pacotes(nome)')
+      .select('id, sessoes_restantes, pacotes(nome), servicos(nome)')
       .eq('paciente_id', pacienteId)
       .gt('sessoes_restantes', 0)
       .order('created_at', { ascending: false });
@@ -231,16 +231,27 @@ export default function Agenda() {
 
   useEffect(() => { reload(); }, [reload]);
 
-  /* ── sync from GCal ── */
+  /* ── sync from GCal (Otimizado com Filtro de Tempo) ── */
   const syncNow = useCallback(async (silent = false) => {
     if (!silent) setSyncing(true);
-    const body: Record<string, unknown> = {};
+
+    // OTIMIZAÇÃO: Capturamos as datas visíveis (+/- 1 dia de margem)
+    const dataInicioBusca = addDays(range.start, -1).toISOString();
+    const dataFimBusca = addDays(range.end, 1).toISOString();
+
+    const body: Record<string, unknown> = {
+      timeMin: dataInicioBusca,
+      timeMax: dataFimBusca
+    };
+
     if (isFisio && !isAdmin && !isSecretaria && myProfissionalId) {
       body.profissional_id = myProfissionalId;
     }
+
     const { data: { session } } = await supabase.auth.getSession();
     const token = session?.access_token ?? import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
     let syncError: string | null = null;
+
     try {
       const res = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/gcal-pull`,
@@ -254,14 +265,18 @@ export default function Agenda() {
           body: JSON.stringify(body),
         }
       );
+      
       if (!res.ok) syncError = await res.text();
     } catch (e: any) {
       syncError = e.message;
     }
+
     if (syncError && !silent) toast.error("Falha ao sincronizar: " + syncError);
+    
     await reload(silent);
-    if (!silent) { setSyncing(false); toast.success("Agenda atualizada"); }
-  }, [isFisio, isAdmin, isSecretaria, myProfissionalId, reload]);
+    if (!silent) { setSyncing(false); toast.success("Agenda atualizada mais rapidamente!"); }
+    
+  }, [isFisio, isAdmin, isSecretaria, myProfissionalId, reload, range]);
 
   useEffect(() => {
     syncNow(true);
@@ -513,341 +528,4 @@ export default function Agenda() {
               <div className="flex flex-wrap gap-2 pt-2">
                 {selected.status === "agendado" && (
                   selected.paciente_id ? (
-                    <Button size="sm" onClick={() => fazerCheckin(selected)}>
-                      <CheckCircle className="w-3 h-3 mr-1" />Check-in Rápido
-                    </Button>
-                  ) : (
-                    <Button size="sm" className="bg-primary text-primary-foreground" onClick={() => setModoCadastroRapido(true)}>
-                      <ClipboardList className="w-3 h-3 mr-1" />Completar Cadastro e Iniciar
-                    </Button>
-                  )
-                )}
-
-                {selected.status !== "cancelado" && selected.paciente_id && (
-                  <Button size="sm" variant="outline" asChild>
-                    <Link to={`/atendimentos/${selected.id}/prontuario`}>
-                      <FileText className="w-3 h-3 mr-1" />Evoluir / Prontuário
-                    </Link>
-                  </Button>
-                )}
-
-                {(selected.paciente?.telefone || selected.telefone_contato) && (
-                  <Button size="sm" variant="outline" onClick={() => enviarWhatsapp(selected)}>
-                    <MessageCircle className="w-3 h-3 mr-1" />WhatsApp
-                  </Button>
-                )}
-
-                {selected.status === "agendado" && (
-                  <Button size="sm" variant="outline" className="text-red-600 border-red-200" onClick={() => mudarStatus(selected.id, "faltou")}>
-                    Faltou
-                  </Button>
-                )}
-
-                {podeGerenciar && (
-                  <Button 
-                    variant="destructive" 
-                    size="sm" 
-                    className="ml-auto"
-                    onClick={async () => {
-                      if (confirm("Tem certeza que deseja excluir permanentemente este horário da agenda?")) {
-                        const { error } = await supabase.from('atendimentos').delete().eq('id', selected.id);
-                        if (error) { toast.error("Erro ao deletar: " + error.message); } else {
-                          toast.success("Agendamento excluído!");
-                          setSelected(null);
-                          reload();
-                        }
-                      }
-                    }}
-                  >
-                    <Trash2 className="w-3 h-3 mr-1" /> Remover
-                  </Button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* FORMULÁRIO RÁPIDO DO MODO CADASTRO COM AUTOCOMPLETAR */}
-          {selected && modoCadastroRapido && (
-            <div className="space-y-4 pb-6">
-              <SheetHeader>
-                <SheetTitle className="text-lg">Registro e Associação de Atendimento</SheetTitle>
-                <p className="text-sm text-muted-foreground">Busque o paciente no sistema ou cadastre um novo.</p>
-              </SheetHeader>
-
-              <form onSubmit={salvarCadastroRapido} className="space-y-4 mt-2">
-                
-                {/* CAMPO DE BUSCA INTELIGENTE */}
-                <div className="space-y-1.5 relative">
-                  <Label>Nome da Paciente</Label>
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input 
-                      value={termoBusca}
-                      onChange={(e) => {
-                        setTermoBusca(e.target.value);
-                        setPacienteSelecionado(null);
-                        setPacotesAtivosPaciente([]);
-                        setUsarPacoteExistenteId("");
-                      }}
-                      className="pl-9"
-                      placeholder="Digite para buscar ou registrar..."
-                      required
-                      autoComplete="off"
-                    />
-                  </div>
-                  
-                  {/* CAIXA DE SUGESTÕES */}
-                  {sugestoesPacientes.length > 0 && (
-                    <div className="absolute z-20 w-full bg-background border rounded-md shadow-xl mt-1 max-h-48 overflow-y-auto">
-                      {sugestoesPacientes.map((p) => (
-                        <div
-                          key={p.id}
-                          className="p-3 hover:bg-muted cursor-pointer border-b last:border-0 transition-colors"
-                          onClick={() => {
-                            setPacienteSelecionado(p);
-                            setTermoBusca(p.nome);
-                            setTelefoneBusca(p.telefone || "");
-                            setSugestoesPacientes([]);
-                            buscarPacotesAtivos(p.id);
-                          }}
-                        >
-                          <div className="font-medium text-sm">{p.nome}</div>
-                          <div className="text-xs text-muted-foreground mt-0.5">{p.telefone || "Sem telefone cadastrado"}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                
-                <div className="space-y-1.5">
-                  <Label>Telefone (opcional)</Label>
-                  <Input 
-                    value={telefoneBusca}
-                    onChange={(e) => setTelefoneBusca(e.target.value)}
-                    placeholder="DDD + Número"
-                  />
-                </div>
-
-                {/* SEÇÃO DE PACOTES ATIVOS (APARECE APENAS SE TIVER SALDO) */}
-                {pacotesAtivosPaciente.length > 0 && (
-                  <div className="p-4 border border-green-300 bg-green-50/50 rounded-lg space-y-3 mt-4">
-                    <Label className="text-green-800 font-semibold flex items-center gap-2">
-                      <CheckCircle className="w-4 h-4" />
-                      Pacotes Ativos Encontrados
-                    </Label>
-                    <p className="text-xs text-green-700">Este paciente possui saldo no sistema. Você deseja abater esta sessão do pacote existente?</p>
-                    <select
-                      className="w-full bg-white border border-green-200 rounded-md h-10 px-3 text-sm focus:ring-green-500 focus:border-green-500 outline-none"
-                      value={usarPacoteExistenteId}
-                      onChange={(e) => setUsarPacoteExistenteId(e.target.value)}
-                    >
-                      <option value="">Não, desejo registrar e cobrar um NOVO serviço.</option>
-                      {pacotesAtivosPaciente.map(pkg => (
-                        <option key={pkg.id} value={pkg.id} className="font-medium">
-                          Usar: {pkg.pacotes?.nome || 'Pacote/Serviço'} ({pkg.sessoes_restantes} sessões restantes)
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-
-                {/* EXIBE FATURAMENTO NOVO APENAS SE NÃO FOR USAR PACOTE EXISTENTE */}
-                {!usarPacoteExistenteId && (
-                  <>
-                    <div className="flex gap-2 p-1 bg-muted rounded-md mt-4">
-                      <button type="button" onClick={() => setTipoAtendimentoRascunho("Particular")} className={`flex-1 text-xs py-1.5 rounded-sm transition-all ${tipoAtendimentoRascunho === "Particular" ? "bg-background shadow-sm font-semibold" : "text-muted-foreground"}`}>Particular</button>
-                      <button type="button" onClick={() => setTipoAtendimentoRascunho("Plano")} className={`flex-1 text-xs py-1.5 rounded-sm transition-all ${tipoAtendimentoRascunho === "Plano" ? "bg-background shadow-sm font-semibold" : "text-muted-foreground"}`}>Plano de Saúde</button>
-                    </div>
-
-                    {tipoAtendimentoRascunho === "Particular" ? (
-                      <div className="space-y-3 p-3 border rounded-lg bg-slate-50/50">
-                        <div className="flex gap-4 items-center">
-                          <Label className="text-xs text-muted-foreground">Catálogo Institucional:</Label>
-                          <label className="flex items-center gap-1.5 text-xs font-medium cursor-pointer">
-                            <input type="radio" checked={itemTipo === "servico"} onChange={() => { setItemTipo("servico"); setQtdSessoesAuto("1"); setValorTotalAuto(""); setIdItemSelecionado(""); }} />
-                            Sessão Avulsa
-                          </label>
-                          <label className="flex items-center gap-1.5 text-xs font-medium cursor-pointer">
-                            <input type="radio" checked={itemTipo === "pacote"} onChange={() => { setItemTipo("pacote"); setQtdSessoesAuto("1"); setValorTotalAuto(""); setIdItemSelecionado(""); }} />
-                            Pacote Estruturado
-                          </label>
-                        </div>
-
-                        <div className="space-y-1">
-                          <select 
-                            className="w-full bg-background border rounded-md h-9 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                            required
-                            onChange={(e) => handleCatalogoSelectChange(e.target.value)}
-                            value={idItemSelecionado}
-                          >
-                            <option value="" disabled>-- Selecione o item a ser cobrado --</option>
-                            {itemTipo === "servico" 
-                              ? listaServicos.map(s => <option key={s.id} value={s.id}>{s.nome} (R$ {s.preco})</option>)
-                              : listaPacotes.map(p => <option key={p.id} value={p.id}>{p.nome} ({p.numero_sessoes} sessões)</option>)
-                            }
-                          </select>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="space-y-1.5 p-3 border rounded-lg bg-blue-50/30">
-                        <Label htmlFor="numeroGuia">Número da Guia de Autorização</Label>
-                        <Input id="numeroGuia" name="numeroGuia" placeholder="Digite a guia do convênio (opcional)" />
-                      </div>
-                    )}
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1.5">
-                        <Label>Nº de Sessões a Faturar</Label>
-                        <Input value={tipoAtendimentoRascunho === "Plano" ? "1" : qtdSessoesAuto} disabled className="bg-muted text-muted-foreground font-medium" />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>Valor Total (R$)</Label>
-                        <Input value={tipoAtendimentoRascunho === "Plano" ? "Conveniado" : (valorTotalAuto ? `R$ ${parseFloat(valorTotalAuto).toFixed(2)}` : "—")} disabled className="bg-muted text-muted-foreground font-semibold" />
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                <div className="flex gap-2 pt-4">
-                  <Button type="button" variant="outline" className="flex-1" onClick={() => setModoCadastroRapido(false)}>
-                    Cancelar
-                  </Button>
-                  <Button type="submit" className="flex-1 bg-primary text-white font-medium">
-                    Confirmar Check-in
-                  </Button>
-                </div>
-              </form>
-            </div>
-          )}
-        </SheetContent>
-      </Sheet>
-    </div>
-  );
-}
-
-/* ═══════════════════ VIEWS ═══════════════════ */
-function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: Atendimento) => void }) {
-  const columns = useMemo(() => {
-    const sorted = [...events].sort((a, b) => new Date(a.data_inicio).getTime() - new Date(b.data_inicio).getTime());
-    const cols: Atendimento[][] = [];
-    sorted.forEach((evt) => {
-      const start = new Date(evt.data_inicio).getTime();
-      let placed = false;
-      for (const col of cols) {
-        const lastEnd = col[col.length - 1].data_fim ? new Date(col[col.length - 1].data_fim!).getTime() : new Date(col[col.length - 1].data_inicio).getTime() + 40 * 60_000;
-        if (start >= lastEnd) { col.push(evt); placed = true; break; }
-      }
-      if (!placed) cols.push([evt]);
-    });
-    const map = new Map<string, { col: number; total: number }>();
-    sorted.forEach((evt) => {
-      const evtStart = new Date(evt.data_inicio).getTime();
-      const evtEnd = evt.data_fim ? new Date(evt.data_fim).getTime() : evtStart + 40 * 60_000;
-      const colIdx = cols.findIndex((c) => c.includes(evt));
-      let maxCols = 1;
-      cols.forEach((col, ci) => {
-        if (ci === colIdx) return;
-        const overlaps = col.some((e) => {
-          const s = new Date(e.data_inicio).getTime();
-          const en = e.data_fim ? new Date(e.data_fim).getTime() : s + 40 * 60_000;
-          return s < evtEnd && en > evtStart;
-        });
-        if (overlaps) maxCols = Math.max(maxCols, cols.length);
-      });
-      map.set(evt.id, { col: colIdx, total: cols.length > 1 ? cols.length : 1 });
-    });
-    return map;
-  }, [events]);
-
-  return (
-    <div className="relative border rounded-lg overflow-hidden bg-card">
-      {HOURS.map((h) => (
-        <div key={h} className="flex border-b last:border-b-0" style={{ minHeight: 60 }}>
-          <div className="w-12 flex-shrink-0 text-[10px] text-muted-foreground text-right pr-2 pt-1">{String(h).padStart(2, "0")}:00</div>
-          <div className="flex-1 relative">
-            {events.filter((e) => new Date(e.data_inicio).getHours() === h).map((e) => {
-              const start = new Date(e.data_inicio);
-              const end = e.data_fim ? new Date(e.data_fim) : new Date(start.getTime() + 40 * 60_000);
-              const topOff = (start.getMinutes() / 60) * 60;
-              const height = Math.max((differenceInMinutes(end, start) / 60) * 60, 24);
-              const { col, total } = columns.get(e.id) ?? { col: 0, total: 1 };
-              const width = total > 1 ? `calc(${100 / total}% - 2px)` : "calc(100% - 8px)";
-              const left = total > 1 ? `calc(${(col / total) * 100}%)` : "0px";
-              return (
-                <button key={e.id} onClick={() => onSelect(e)} className="absolute rounded px-1.5 py-0.5 text-[11px] leading-tight text-white truncate text-left shadow-sm hover:brightness-110 transition-all border border-white/40" style={{ top: topOff, height, width, left, backgroundColor: eventColor(e) }}>
-                  <span className="font-medium">{displayName(e)}</span>
-                  <span className="opacity-80 ml-1">{format(start, "HH:mm")}</span>
-                  {height >= 36 && <span className={`block text-[9px] mt-0.5 px-1 rounded-sm w-fit ${statusBadgeBg(e)} text-white`}>{statusBadge(e)}</span>}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function WeekView({ anchor, eventsByDay, onSelect, onDayClick }: { anchor: Date; eventsByDay: Map<string, Atendimento[]>; onSelect: (a: Atendimento) => void; onDayClick: (d: Date) => void }) {
-  const weekStart = startOfWeek(anchor, { weekStartsOn: 1 });
-  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
-  const today = format(new Date(), "yyyy-MM-dd");
-  return (
-    <div className="grid grid-cols-7 gap-px bg-border rounded-lg overflow-hidden">
-      {days.map((d) => {
-        const key = format(d, "yyyy-MM-dd");
-        const isToday = key === today;
-        const evts = eventsByDay.get(key) ?? [];
-        return (
-          <div key={key} className="bg-card min-h-[120px] p-1">
-            <button className="w-full mb-1 hover:opacity-70 transition-opacity" onClick={() => onDayClick(d)}>
-              <div className={`text-center text-[10px] uppercase ${isToday ? "font-bold text-primary" : "text-muted-foreground"}`}>{format(d, "EEE", { locale: ptBR })}</div>
-              <div className={`text-center text-sm ${isToday ? "bg-primary text-primary-foreground w-6 h-6 rounded-full mx-auto flex items-center justify-center font-bold" : ""}`}>{format(d, "d")}</div>
-            </button>
-            <div className="space-y-0.5">
-              {evts.map((e) => (
-                <button key={e.id} onClick={() => onSelect(e)} className="w-full text-left rounded px-1 py-0.5 text-[10px] leading-tight text-white truncate hover:brightness-110 transition-colors border border-white/30" style={{ backgroundColor: eventColor(e) }}>
-                  {format(new Date(e.data_inicio), "HH:mm")} {displayName(e)}
-                </button>
-              ))}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function MonthView({ anchor, eventsByDay, onDayClick }: { anchor: Date; eventsByDay: Map<string, Atendimento[]>; onDayClick: (d: Date) => void }) {
-  const monthStart = startOfMonth(anchor);
-  const monthEnd = endOfMonth(anchor);
-  const calStart = startOfWeek(monthStart, { weekStartsOn: 1 });
-  const calEnd = endOfWeek(monthEnd, { weekStartsOn: 1 });
-  const allDays = eachDayOfInterval({ start: calStart, end: calEnd });
-  const today = format(new Date(), "yyyy-MM-dd");
-  return (
-    <div>
-      <div className="grid grid-cols-7 mb-1">
-        {["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"].map((d) => <div key={d} className="text-center text-[10px] text-muted-foreground uppercase">{d}</div>)}
-      </div>
-      <div className="grid grid-cols-7 gap-px bg-border rounded-lg overflow-hidden">
-        {allDays.map((d) => {
-          const key = format(d, "yyyy-MM-dd");
-          const isToday = key === today;
-          const inMonth = isSameMonth(d, anchor);
-          const evts = eventsByDay.get(key) ?? [];
-          return (
-            <button key={key} onClick={() => onDayClick(d)} className={`bg-card min-h-[52px] p-1 text-left transition-colors hover:bg-accent/50 ${!inMonth ? "opacity-40" : ""}`}>
-              <div className={`text-xs text-center mb-0.5 ${isToday ? "bg-primary text-primary-foreground w-5 h-5 rounded-full mx-auto flex items-center justify-center font-bold text-[10px]" : ""}`}>{format(d, "d")}</div>
-              {evts.length > 0 && (
-                <div className="flex justify-center gap-0.5 flex-wrap">
-                  {evts.slice(0, 3).map((e) => <div key={e.id} className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: eventColor(e) }} />)}
-                </div>
-              )}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
+                    <Button size="sm" onClick={() => fazerCheckin
