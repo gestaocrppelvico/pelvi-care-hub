@@ -315,7 +315,6 @@ export default function Agenda() {
     const fd = new FormData(e.currentTarget);
     const numeroGuia = fd.get("numeroGuia") as string;
 
-    // Se optou por cadastrar um pacote novo particular, precisa escolher o item do catálogo
     if (!usarPacoteExistenteId && tipoAtendimentoRascunho === "Particular" && !idItemSelecionado) {
       toast.error("Por favor, selecione um item do catálogo ou um pacote ativo do paciente.");
       return;
@@ -337,7 +336,6 @@ export default function Agenda() {
       // 2. Identificar ou Criar Pacote Financeiro
       let finalPacoteId = usarPacoteExistenteId;
       
-      // Se não escolheu usar um pacote existente, criamos o registro financeiro novo
       if (!finalPacoteId) {
         const qtdSessoes = parseInt(qtdSessoesAuto || "1");
         const valorTotal = valorTotalAuto ? parseFloat(valorTotalAuto) : 0;
@@ -351,7 +349,11 @@ export default function Agenda() {
         };
 
         if (tipoAtendimentoRascunho === "Particular") {
-          dadosDoPacote.pacote_id = idItemSelecionado;
+          if (itemTipo === "pacote") {
+            dadosDoPacote.pacote_id = idItemSelecionado;
+          } else if (itemTipo === "servico") {
+            dadosDoPacote.servico_id = idItemSelecionado;
+          }
         }
 
         const { data: novoPacote, error: errPacote } = await supabase
