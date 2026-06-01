@@ -1,76 +1,140 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { Plus, Search, User } from "lucide-react";
+import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Button } from "@/components/ui/button";
+import { useAuth } from "@/hooks/useAuth";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { AuditoriaFinanceira } from "@/components/AuditoriaFinanceira";
+import { Search, User, Phone, ShieldAlert, Settings } from "lucide-react";
+import { toast } from "sonner";
 
 interface Paciente {
   id: string;
   nome: string;
   telefone: string | null;
-  plano_saude: string | null;
+  created_at: string;
 }
 
 export default function Pacientes() {
-  const [list, setList] = useState<Paciente[]>([]);
-  const [q, setQ] = useState("");
+  const { isAdmin } = useAuth();
+  const [pacientes, setPacientes] = useState<Paciente[]>([]);
+  const [busca, setBusca] = useState("");
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase
-        .from("pacientes")
-        .select("id, nome, telefone, plano_saude")
-        .eq("ativo", true)
-        .order("nome");
-      setList(data ?? []);
-      setLoading(false);
-    })();
-  }, []);
+  // Estados de controlo do painel de auditoria manual
+  const [auditoriaOpen, setAuditoriaOpen] = useState(false);
+  const [pacienteSelecionado, setPacienteSelecionado] = useState<{ id: string; nome: string } | null>(null);
 
-  const filtered = list.filter((p) => p.nome.toLowerCase().includes(q.toLowerCase()));
+  const carregarPacientes = async () => {
+    setLoading(true);
+    let query = supabase
+      .from("pacientes")
+      .select("id, nome, telefone, created_at")
+      .order("nome", { ascending: true });
+
+    if (busca.trim().length > 0) {
+      query = query.ilike("nome", `%${busca}%`);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      toast.error("Erro ao carregar lista de pacientes: " + error.message);
+    } else {
+      setPacientes(data || []);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    const delayDebounce = setTimeout(() => {
+      carregarPacientes();
+    }, 300);
+
+    return () => clearTimeout(delayDebounce);
+  }, [busca]);
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Pacientes</h1>
-        <Button asChild size="sm">
-          <Link to="/pacientes/novo"><Plus className="w-4 h-4 mr-1" /> Novo</Link>
-        </Button>
+        <h1 className="text-xl font-bold">Pacientes Cadastrados</h1>
+        <Badge variant="outline" className="bg-slate-50">Total: {pacientes.length}</Badge>
       </div>
 
+      {/* BARRA DE PESQUISA */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar paciente..." className="pl-9 h-12" />
+        <Input
+          value={busca}
+          onChange={(e) => setBusca(e.target.value)}
+          className="pl-9"
+          placeholder="Buscar paciente pelo nome..."
+        />
       </div>
 
+      {/* LISTA DE PACIENTES */}
       {loading ? (
-        <p className="text-muted-foreground text-center py-8">Carregando...</p>
-      ) : filtered.length === 0 ? (
-        <Card className="p-8 text-center">
-          <User className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
-          <p className="text-muted-foreground">Nenhum paciente encontrado.</p>
-        </Card>
+        <p className="text-center text-sm text-muted-foreground py-8">A carregar pacientes...</p>
+      ) : pacientes.length === 0 ? (
+        <p className="text-center text-sm text-muted-foreground py-8">Nenhum paciente encontrado.</p>
       ) : (
-        <div className="space-y-2">
-          {filtered.map((p) => (
-            <Link key={p.id} to={`/pacientes/${p.id}`}>
-              <Card className="p-4 shadow-card hover:shadow-elegant transition-shadow flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center text-primary font-semibold">
-                  {p.nome.charAt(0).toUpperCase()}
+        <div className="grid gap-3">
+          {pacientes.map((paciente) => (
+            <Card key={paciente.id} className="p-4 flex items-center justify-between shadow-sm">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <User className="w-4 h-4 text-primary" />
+                  <span className="font-semibold text-sm text-foreground">{paciente.nome}</span>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="font-semibold truncate">{p.nome}</div>
-                  <div className="text-xs text-muted-foreground truncate">
-                    {p.plano_saude ?? "Particular"} {p.telefone ? `• ${p.telefone}` : ""}
-                  </div>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Phone className="w-3.5 h-3.5" />
+                  <span>{paciente.telefone || "Sem telefone cadastrado"}</span>
                 </div>
-              </Card>
-            </Link>
+              </div>
+
+              {/* BOTÃO EXCLUSIVO DO ADM PARA ENCONTRO DE CONTAS E AUDITORIA */}
+              {isAdmin ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-amber-200 bg-amber-50/50 hover:bg-amber-100/70 text-amber-800 font-medium text-xs h-8"
+                  onClick={() => {
+                    setPacienteSelecionado({ id: paciente.id, nome: paciente.nome });
+                    setAuditoriaOpen(true);
+                  }}
+                >
+                  <Settings className="w-3.5 h-3.5 mr-1" />
+                  Auditoria / Saldo
+                </Button>
+              ) : (
+                <Badge variant="ghost" className="text-[10px] text-muted-foreground">Profissional</Badge>
+              )}
+            </Card>
           ))}
         </div>
+      )}
+
+      {/* NOTA EXPLICATIVA SOBRE MIGRAÇÃO DE DADOS */}
+      {isAdmin && (
+        <div className="p-3 border border-dashed rounded-lg bg-slate-50 flex gap-2 items-start text-xs text-muted-foreground mt-6">
+          <ShieldAlert className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+          <p>
+            <strong>Área de Migração:</strong> Utilize o painel de Auditoria acima para injetar históricos ou alterar manualmente o saldo de sessões de contratos antigos que vieram da sua operação anterior.
+          </p>
+        </div>
+      )}
+
+      {/* INSTÂNCIA DO PAINEL LATERAL DE AUDITORIA */}
+      {pacienteSelecionado && (
+        <AuditoriaFinanceira
+          isOpen={auditoriaOpen}
+          onClose={() => {
+            setAuditoriaOpen(false);
+            carregarPacientes(); // Recarrega para refletir qualquer mudança imediata
+          }}
+          pacienteId={pacienteSelecionado.id}
+          nomePaciente={pacienteSelecionado.nome}
+        />
       )}
     </div>
   );
