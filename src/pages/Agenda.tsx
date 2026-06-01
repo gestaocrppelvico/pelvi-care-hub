@@ -131,6 +131,9 @@ export default function Agenda() {
   const [listaPacotes, setListaPacotes] = useState<PacoteCatalogo[]>([]);
   const [listaServicos, setListaServicos] = useState<ServicoCatalogo[]>([]);
   
+  // NOVO: Armazena o ID do item selecionado no Dropdown para corrigir a restrição not-null
+  const [idItemSelecionado, setIdItemSelecionado] = useState<string>("");
+  
   // Valores calculados em tempo real na interface
   const [qtdSessoesAuto, setQtdSessoesAuto] = useState<string>("1");
   const [valorTotalAuto, setValorTotalAuto] = useState<string>("");
@@ -253,6 +256,8 @@ export default function Agenda() {
   }
 
   function handleCatalogoSelectChange(idSelecionado: string) {
+    setIdItemSelecionado(idSelecionado); // Armazena a chave primária escolhida do dropdown
+
     if (itemTipo === "servico") {
       const servico = listaServicos.find(s => s.id === idSelecionado);
       if (servico) {
@@ -268,7 +273,7 @@ export default function Agenda() {
     }
   }
 
-  /* ── submissão do faturamento estruturado corrigido ── */
+  /* ── submissão corrigida e validada contra valores nulos ── */
   async function salvarCadastroRapido(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!selected) return;
@@ -281,8 +286,13 @@ export default function Agenda() {
     const qtdSessoes = parseInt(qtdSessoesAuto || "1");
     const valorTotal = valorTotalAuto ? parseFloat(valorTotalAuto) : 0;
 
+    if (tipoAtendimentoRascunho === "Particular" && !idItemSelecionado) {
+      toast.error("Por favor, selecione um item do catálogo do sistema antes de confirmar.");
+      return;
+    }
+
     try {
-      // 1. Cria a linha base do paciente
+      // 1. Cria o registro base da nova paciente
       const { data: novoPaciente, error: errPaciente } = await supabase
         .from("pacientes")
         .insert({ nome, telefone: telefone || null })
@@ -291,16 +301,23 @@ export default function Agenda() {
       
       if (errPaciente) throw new Error("Erro ao criar paciente: " + errPaciente.message);
 
-      // 2. CORREÇÃO: Removemos 'tipo_atendimento' que gerava o erro do Schema Cache
+      // 2. MONTAGEM DO CONTRATO: Injeta obrigatoriamente a FK 'pacote_id' exigida pelo banco de dados
+      const dadosDoPacote: Record<string, any> = {
+        paciente_id: novoPaciente.id,
+        sessoes_totais: qtdSessoes,
+        sessoes_restantes: qtdSessoes, 
+        preco_pago: valorTotal,
+        status_pagamento: "pendente"
+      };
+
+      // Se for Particular, preenchemos o pacote_id que causava a violação da constraint
+      if (tipoAtendimentoRascunho === "Particular") {
+        dadosDoPacote.pacote_id = idItemSelecionado;
+      }
+
       const { data: novoPacote, error: errPacote } = await supabase
         .from("paciente_pacotes")
-        .insert({
-          paciente_id: novoPaciente.id,
-          sessoes_totais: qtdSessoes,
-          sessoes_restantes: qtdSessoes, 
-          preco_pago: valorTotal,
-          status_pagamento: "pendente"
-        })
+        .insert(dadosDoPacote)
         .select()
         .single();
 
@@ -308,14 +325,14 @@ export default function Agenda() {
 
       const obsGuia = numeroGuia ? `Guia do Plano: ${numeroGuia}` : null;
 
-      // 3. Atualiza o atendimento injetando o tipo correto para o Trigger processar o repasse
+      // 3. Atualiza o atendimento e realiza o check-in na agenda
       const { error: errAtendimento } = await supabase
         .from("atendimentos")
         .update({ 
           paciente_id: novoPaciente.id,
           paciente_pacote_id: novoPacote.id,
           status: "realizado" as any,
-          tipo: tipoAtendimentoRascunho, // Grava "Particular" ou "Plano" aqui!
+          tipo: tipoAtendimentoRascunho,
           observacoes: obsGuia 
         })
         .eq("id", selected.id);
@@ -325,6 +342,7 @@ export default function Agenda() {
       toast.success("Paciente cadastrado e atendimento realizado com sucesso!");
       setModoCadastroRapido(false);
       setSelected(null);
+      setIdItemSelecionado(""); // Limpa o estado para o próximo uso
       reload();
 
     } catch (error: any) {
@@ -538,11 +556,11 @@ export default function Agenda() {
                     <div className="flex gap-4 items-center">
                       <Label className="text-xs text-muted-foreground">Modalidade do Catálogo:</Label>
                       <label className="flex items-center gap-1.5 text-xs font-medium cursor-pointer">
-                        <input type="radio" checked={itemTipo === "servico"} onChange={() => { setItemTipo("servico"); setQtdSessoesAuto("1"); setValorTotalAuto(""); }} />
+                        <input type="radio" checked={itemTipo === "servico"} onChange={() => { setItemTipo("servico"); setQtdSessoesAuto("1"); setValorTotalAuto(""); setIdItemSelecionado(""); }} />
                         Sessão Avulsa
                       </label>
                       <label className="flex items-center gap-1.5 text-xs font-medium cursor-pointer">
-                        <input type="radio" checked={itemTipo === "pacote"} onChange={() => { setItemTipo("pacote"); setQtdSessoesAuto("1"); setValorTotalAuto(""); }} />
+                        <input type="radio" checked={itemTipo === "pacote"} onChange={() => { setItemTipo("pacote"); setQtdSessoesAuto("1"); setValorTotalAuto(""); setIdItemSelecionado(""); }} />
                         Pacote Estruturado
                       </label>
                     </div>
@@ -553,7 +571,7 @@ export default function Agenda() {
                         className="w-full bg-background border rounded-md h-9 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                         required
                         onChange={(e) => handleCatalogoSelectChange(e.target.value)}
-                        defaultValue=""
+                        value={idItemSelecionado}
                       >
                         <option value="" disabled>-- Clique para selecionar --</option>
                         {itemTipo === "servico" 
@@ -608,24 +626,17 @@ export default function Agenda() {
 }
 
 /* ═══════════════════ DAY VIEW ═══════════════════ */
+/* ... O restante do código de renderização das visualizações (DayView, WeekView, MonthView) permanece inalterado ... */
 function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: Atendimento) => void }) {
   const columns = useMemo(() => {
-    const sorted = [...events].sort((a, b) =>
-      new Date(a.data_inicio).getTime() - new Date(b.data_inicio).getTime()
-    );
+    const sorted = [...events].sort((a, b) => new Date(a.data_inicio).getTime() - new Date(b.data_inicio).getTime());
     const cols: Atendimento[][] = [];
     sorted.forEach((evt) => {
       const start = new Date(evt.data_inicio).getTime();
       let placed = false;
       for (const col of cols) {
-        const lastEnd = col[col.length - 1].data_fim
-          ? new Date(col[col.length - 1].data_fim!).getTime()
-          : new Date(col[col.length - 1].data_inicio).getTime() + 40 * 60_000;
-        if (start >= lastEnd) {
-          col.push(evt);
-          placed = true;
-          break;
-        }
+        const lastEnd = col[col.length - 1].data_fim ? new Date(col[col.length - 1].data_fim!).getTime() : new Date(col[col.length - 1].data_inicio).getTime() + 40 * 60_000;
+        if (start >= lastEnd) { col.push(evt); placed = true; break; }
       }
       if (!placed) cols.push([evt]);
     });
@@ -653,37 +664,24 @@ function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: At
     <div className="relative border rounded-lg overflow-hidden bg-card">
       {HOURS.map((h) => (
         <div key={h} className="flex border-b last:border-b-0" style={{ minHeight: 60 }}>
-          <div className="w-12 flex-shrink-0 text-[10px] text-muted-foreground text-right pr-2 pt-1">
-            {String(h).padStart(2, "0")}:00
-          </div>
+          <div className="w-12 flex-shrink-0 text-[10px] text-muted-foreground text-right pr-2 pt-1">{String(h).padStart(2, "0")}:00</div>
           <div className="flex-1 relative">
-            {events
-              .filter((e) => new Date(e.data_inicio).getHours() === h)
-              .map((e) => {
-                const start = new Date(e.data_inicio);
-                const end = e.data_fim ? new Date(e.data_fim) : new Date(start.getTime() + 40 * 60_000);
-                const topOff = (start.getMinutes() / 60) * 60;
-                const height = Math.max((differenceInMinutes(end, start) / 60) * 60, 24);
-                const { col, total } = columns.get(e.id) ?? { col: 0, total: 1 };
-                const width = total > 1 ? `calc(${100 / total}% - 2px)` : "calc(100% - 8px)";
-                const left = total > 1 ? `calc(${(col / total) * 100}%)` : "0px";
-                return (
-                  <button
-                    key={e.id}
-                    onClick={() => onSelect(e)}
-                    className="absolute rounded px-1.5 py-0.5 text-[11px] leading-tight text-white truncate text-left shadow-sm hover:brightness-110 transition-all border border-white/40"
-                    style={{ top: topOff, height, width, left, backgroundColor: eventColor(e) }}
-                  >
-                    <span className="font-medium">{displayName(e)}</span>
-                    <span className="opacity-80 ml-1">{format(start, "HH:mm")}</span>
-                    {height >= 36 && (
-                      <span className={`block text-[9px] mt-0.5 px-1 rounded-sm w-fit ${statusBadgeBg(e)} text-white`}>
-                        {statusBadge(e)}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
+            {events.filter((e) => new Date(e.data_inicio).getHours() === h).map((e) => {
+              const start = new Date(e.data_inicio);
+              const end = e.data_fim ? new Date(e.data_fim) : new Date(start.getTime() + 40 * 60_000);
+              const topOff = (start.getMinutes() / 60) * 60;
+              const height = Math.max((differenceInMinutes(end, start) / 60) * 60, 24);
+              const { col, total } = columns.get(e.id) ?? { col: 0, total: 1 };
+              const width = total > 1 ? `calc(${100 / total}% - 2px)` : "calc(100% - 8px)";
+              const left = total > 1 ? `calc(${(col / total) * 100}%)` : "0px";
+              return (
+                <button key={e.id} onClick={() => onSelect(e)} className="absolute rounded px-1.5 py-0.5 text-[11px] leading-tight text-white truncate text-left shadow-sm hover:brightness-110 transition-all border border-white/40" style={{ top: topOff, height, width, left, backgroundColor: eventColor(e) }}>
+                  <span className="font-medium">{displayName(e)}</span>
+                  <span className="opacity-80 ml-1">{format(start, "HH:mm")}</span>
+                  {height >= 36 && <span className={`block text-[9px] mt-0.5 px-1 rounded-sm w-fit ${statusBadgeBg(e)} text-white`}>{statusBadge(e)}</span>}
+                </button>
+              );
+            })}
           </div>
         </div>
       ))}
@@ -691,19 +689,10 @@ function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: At
   );
 }
 
-/* ═══════════════════ WEEK VIEW ═══════════════════ */
-function WeekView({
-  anchor, eventsByDay, onSelect, onDayClick,
-}: {
-  anchor: Date;
-  eventsByDay: Map<string, Atendimento[]>;
-  onSelect: (a: Atendimento) => void;
-  onDayClick: (d: Date) => void;
-}) {
+function WeekView({ anchor, eventsByDay, onSelect, onDayClick }: { anchor: Date; eventsByDay: Map<string, Atendimento[]>; onSelect: (a: Atendimento) => void; onDayClick: (d: Date) => void }) {
   const weekStart = startOfWeek(anchor, { weekStartsOn: 1 });
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   const today = format(new Date(), "yyyy-MM-dd");
-
   return (
     <div className="grid grid-cols-7 gap-px bg-border rounded-lg overflow-hidden">
       {days.map((d) => {
@@ -712,25 +701,13 @@ function WeekView({
         const evts = eventsByDay.get(key) ?? [];
         return (
           <div key={key} className="bg-card min-h-[120px] p-1">
-            <button
-              className="w-full mb-1 hover:opacity-70 transition-opacity"
-              onClick={() => onDayClick(d)}
-            >
-              <div className={`text-center text-[10px] uppercase ${isToday ? "font-bold text-primary" : "text-muted-foreground"}`}>
-                {format(d, "EEE", { locale: ptBR })}
-              </div>
-              <div className={`text-center text-sm ${isToday ? "bg-primary text-primary-foreground w-6 h-6 rounded-full mx-auto flex items-center justify-center font-bold" : ""}`}>
-                {format(d, "d")}
-              </div>
+            <button className="w-full mb-1 hover:opacity-70 transition-opacity" onClick={() => onDayClick(d)}>
+              <div className={`text-center text-[10px] uppercase ${isToday ? "font-bold text-primary" : "text-muted-foreground"}`}>{format(d, "EEE", { locale: ptBR })}</div>
+              <div className={`text-center text-sm ${isToday ? "bg-primary text-primary-foreground w-6 h-6 rounded-full mx-auto flex items-center justify-center font-bold" : ""}`}>{format(d, "d")}</div>
             </button>
             <div className="space-y-0.5">
               {evts.map((e) => (
-                <button
-                  key={e.id}
-                  onClick={() => onSelect(e)}
-                  className="w-full text-left rounded px-1 py-0.5 text-[10px] leading-tight text-white truncate hover:brightness-110 transition-colors border border-white/30"
-                  style={{ backgroundColor: eventColor(e) }}
-                >
+                <button key={e.id} onClick={() => onSelect(e)} className="w-full text-left rounded px-1 py-0.5 text-[10px] leading-tight text-white truncate hover:brightness-110 transition-colors border border-white/30" style={{ backgroundColor: eventColor(e) }}>
                   {format(new Date(e.data_inicio), "HH:mm")} {displayName(e)}
                 </button>
               ))}
@@ -742,27 +719,17 @@ function WeekView({
   );
 }
 
-/* ═══════════════════ MONTH VIEW ═══════════════════ */
-function MonthView({
-  anchor, eventsByDay, onDayClick,
-}: {
-  anchor: Date;
-  eventsByDay: Map<string, Atendimento[]>;
-  onDayClick: (d: Date) => void;
-}) {
+function MonthView({ anchor, eventsByDay, onDayClick }: { anchor: Date; eventsByDay: Map<string, Atendimento[]>; onDayClick: (d: Date) => void }) {
   const monthStart = startOfMonth(anchor);
   const monthEnd = endOfMonth(anchor);
   const calStart = startOfWeek(monthStart, { weekStartsOn: 1 });
   const calEnd = endOfWeek(monthEnd, { weekStartsOn: 1 });
   const allDays = eachDayOfInterval({ start: calStart, end: calEnd });
   const today = format(new Date(), "yyyy-MM-dd");
-
   return (
     <div>
       <div className="grid grid-cols-7 mb-1">
-        {["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"].map((d) => (
-          <div key={d} className="text-center text-[10px] text-muted-foreground uppercase">{d}</div>
-        ))}
+        {["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"].map((d) => <div key={d} className="text-center text-[10px] text-muted-foreground uppercase">{d}</div>)}
       </div>
       <div className="grid grid-cols-7 gap-px bg-border rounded-lg overflow-hidden">
         {allDays.map((d) => {
@@ -771,19 +738,11 @@ function MonthView({
           const inMonth = isSameMonth(d, anchor);
           const evts = eventsByDay.get(key) ?? [];
           return (
-            <button
-              key={key}
-              onClick={() => onDayClick(d)}
-              className={`bg-card min-h-[52px] p-1 text-left transition-colors hover:bg-accent/50 ${!inMonth ? "opacity-40" : ""}`}
-            >
-              <div className={`text-xs text-center mb-0.5 ${isToday ? "bg-primary text-primary-foreground w-5 h-5 rounded-full mx-auto flex items-center justify-center font-bold text-[10px]" : ""}`}>
-                {format(d, "d")}
-              </div>
+            <button key={key} onClick={() => onDayClick(d)} className={`bg-card min-h-[52px] p-1 text-left transition-colors hover:bg-accent/50 ${!inMonth ? "opacity-40" : ""}`}>
+              <div className={`text-xs text-center mb-0.5 ${isToday ? "bg-primary text-primary-foreground w-5 h-5 rounded-full mx-auto flex items-center justify-center font-bold text-[10px]" : ""}`}>{format(d, "d")}</div>
               {evts.length > 0 && (
                 <div className="flex justify-center gap-0.5 flex-wrap">
-                  {evts.slice(0, 3).map((e) => (
-                    <div key={e.id} className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: eventColor(e) }} />
-                  ))}
+                  {evts.slice(0, 3).map((e) => <div key={e.id} className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: eventColor(e) }} />)}
                 </div>
               )}
             </button>
