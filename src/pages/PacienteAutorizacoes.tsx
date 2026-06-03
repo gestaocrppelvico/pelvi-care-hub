@@ -18,8 +18,8 @@ interface Autorizacao {
   id: string;
   plano: string;
   numero_guia: string | null;
-  sessoes_autorizadas: number;
-  sessoes_realizadas: number;
+  sessoes_totais: number;       // ATUALIZADO
+  sessoes_restantes: number;    // ATUALIZADO
   data_emissao: string | null;
   data_validade: string | null;
   status: StatusAutorizacao;
@@ -37,11 +37,11 @@ const STATUS_COLORS: Record<StatusAutorizacao, string> = {
 const EMPTY: Omit<Autorizacao, "id" | "created_at"> = {
   plano: "",
   numero_guia: "",
-  sessoes_autorizadas: 10,
-  sessoes_realizadas: 0,
+  sessoes_totais: 10,       // ATUALIZADO
+  sessoes_restantes: 10,    // ATUALIZADO
   data_emissao: "",
   data_validade: "",
-  status: "pendente",
+  status: "ativa",          // Mudamos o padrão para "ativa" para facilitar
   observacoes: "",
 };
 
@@ -79,8 +79,8 @@ export default function PacienteAutorizacoes() {
     setForm({
       plano: a.plano,
       numero_guia: a.numero_guia ?? "",
-      sessoes_autorizadas: a.sessoes_autorizadas,
-      sessoes_realizadas: a.sessoes_realizadas,
+      sessoes_totais: a.sessoes_totais ?? 0,          // Lendo as novas colunas
+      sessoes_restantes: a.sessoes_restantes ?? 0,    // Lendo as novas colunas
       data_emissao: a.data_emissao ?? "",
       data_validade: a.data_validade ?? "",
       status: a.status,
@@ -98,8 +98,8 @@ export default function PacienteAutorizacoes() {
       paciente_id: id!,
       plano: form.plano,
       numero_guia: form.numero_guia || null,
-      sessoes_autorizadas: form.sessoes_autorizadas,
-      sessoes_realizadas: form.sessoes_realizadas,
+      sessoes_totais: form.sessoes_totais,          // Gravando as novas colunas
+      sessoes_restantes: form.sessoes_restantes,    // Gravando as novas colunas
       data_emissao: form.data_emissao || null,
       data_validade: form.data_validade || null,
       status: form.status as StatusAutorizacao,
@@ -145,9 +145,11 @@ export default function PacienteAutorizacoes() {
       ) : (
         <div className="space-y-2">
           {autorizacoes.map((a) => {
-            const restantes = a.sessoes_autorizadas - a.sessoes_realizadas;
-            const pctUsado = a.sessoes_autorizadas > 0
-              ? Math.round((a.sessoes_realizadas / a.sessoes_autorizadas) * 100)
+            // Recálculo da lógica visual usando sessoes_totais e sessoes_restantes
+            const sessoesRealizadas = (a.sessoes_totais ?? 0) - (a.sessoes_restantes ?? 0);
+            const restantes = a.sessoes_restantes ?? 0;
+            const pctUsado = a.sessoes_totais > 0
+              ? Math.round((sessoesRealizadas / a.sessoes_totais) * 100)
               : 0;
             const vencida = a.data_validade && new Date(a.data_validade) < new Date();
 
@@ -176,8 +178,8 @@ export default function PacienteAutorizacoes() {
 
                 <div className="space-y-1">
                   <div className="flex justify-between text-xs">
-                    <span>Sessões: {a.sessoes_realizadas}/{a.sessoes_autorizadas}</span>
-                    <span className={restantes <= 2 && restantes > 0 ? "text-yellow-600 font-medium" : restantes === 0 ? "text-destructive font-medium" : ""}>
+                    <span>Sessões: {sessoesRealizadas}/{a.sessoes_totais}</span>
+                    <span className={restantes <= 2 && restantes > 0 ? "text-yellow-600 font-medium" : restantes <= 0 ? "text-destructive font-medium" : ""}>
                       {restantes > 0 ? `${restantes} restantes` : "Esgotado"}
                     </span>
                   </div>
@@ -220,21 +222,26 @@ export default function PacienteAutorizacoes() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-sm font-medium">Sessões autorizadas</label>
+                <label className="text-sm font-medium">Sessões Autorizadas (Total)</label>
                 <Input
                   type="number"
                   min={0}
-                  value={form.sessoes_autorizadas}
-                  onChange={(e) => setForm({ ...form, sessoes_autorizadas: parseInt(e.target.value) || 0 })}
+                  value={form.sessoes_totais}
+                  onChange={(e) => {
+                    const total = parseInt(e.target.value) || 0;
+                    // Ao criar uma guia nova, o restante é igual ao total. Ao editar, mantemos o restante atual se fizer sentido.
+                    const restante = editando ? form.sessoes_restantes : total;
+                    setForm({ ...form, sessoes_totais: total, sessoes_restantes: restante });
+                  }}
                 />
               </div>
               <div>
-                <label className="text-sm font-medium">Sessões realizadas</label>
+                <label className="text-sm font-medium">Sessões Restantes</label>
                 <Input
                   type="number"
                   min={0}
-                  value={form.sessoes_realizadas}
-                  onChange={(e) => setForm({ ...form, sessoes_realizadas: parseInt(e.target.value) || 0 })}
+                  value={form.sessoes_restantes}
+                  onChange={(e) => setForm({ ...form, sessoes_restantes: parseInt(e.target.value) || 0 })}
                 />
               </div>
             </div>
