@@ -116,18 +116,15 @@ export default function Agenda() {
   const [selected, setSelected] = useState<Atendimento | null>(null);
   const [syncing, setSyncing] = useState(false);
   
-  // ── ESTADOS DE CADASTRO E AUTOCOMPLETAR ──
   const [modoCadastroRapido, setModoCadastroRapido] = useState(false);
   const [termoBusca, setTermoBusca] = useState("");
   const [telefoneBusca, setTelefoneBusca] = useState("");
   const [sugestoesPacientes, setSugestoesPacientes] = useState<any[]>([]);
   const [pacienteSelecionado, setPacienteSelecionado] = useState<any | null>(null);
   
-  // ── ESTADOS DE PACOTES EXISTENTES ──
   const [pacotesAtivosPaciente, setPacotesAtivosPaciente] = useState<any[]>([]);
   const [usarPacoteExistenteId, setUsarPacoteExistenteId] = useState<string>("");
 
-  // ── ESTADOS DO CATÁLOGO NOVO ──
   const [tipoAtendimentoRascunho, setTipoAtendimentoRascunho] = useState<"Plano" | "Particular">("Particular");
   const [itemTipo, setItemTipo] = useState<"servico" | "pacote">("servico");
   const [listaPacotes, setListaPacotes] = useState<PacoteCatalogo[]>([]);
@@ -138,7 +135,6 @@ export default function Agenda() {
 
   const pollRef = useRef<ReturnType<typeof setInterval>>();
 
-  // Limpa e prepara os estados ao abrir o formulário
   useEffect(() => {
     if (selected && modoCadastroRapido) {
       setTermoBusca(selected.nome_paciente_livre || "");
@@ -150,7 +146,6 @@ export default function Agenda() {
     }
   }, [selected, modoCadastroRapido]);
 
-  // Efeito de busca de pacientes (Autocompletar)
   useEffect(() => {
     if (termoBusca.length >= 3 && !pacienteSelecionado) {
       const delay = setTimeout(async () => {
@@ -167,23 +162,22 @@ export default function Agenda() {
     }
   }, [termoBusca, pacienteSelecionado]);
 
-  // Busca os pacotes ativos se um paciente existente for selecionado
   async function buscarPacotesAtivos(pacienteId: string) {
+    // 💡 ATUALIZAÇÃO: Agora o sistema busca também as informações da Guia Autorizada linkada!
     const { data } = await supabase.from('paciente_pacotes')
-      .select('id, sessoes_restantes, pacotes(nome), servicos(nome)')
+      .select('id, sessoes_restantes, pacotes(nome), servicos(nome), autorizacoes(plano, numero_guia)')
       .eq('paciente_id', pacienteId)
       .gt('sessoes_restantes', 0)
       .order('created_at', { ascending: false });
     
     setPacotesAtivosPaciente(data || []);
     if (data && data.length > 0) {
-      setUsarPacoteExistenteId(data[0].id); // Sugere o pacote ativo mais recente
+      setUsarPacoteExistenteId(data[0].id);
     } else {
       setUsarPacoteExistenteId("");
     }
   }
 
-  /* ── computed range ── */
   const range = useMemo(() => {
     if (view === "day") return { start: startOfDay(anchor), end: endOfDay(anchor) };
     if (view === "week") {
@@ -193,7 +187,6 @@ export default function Agenda() {
     return { start: startOfDay(startOfMonth(anchor)), end: endOfDay(endOfMonth(anchor)) };
   }, [view, anchor]);
 
-  /* ── fetch catálogos ── */
   const carregarCatalogos = useCallback(async () => {
     try {
       const [{ data: pacotesData }, { data: servicosData }] = await Promise.all([
@@ -209,7 +202,6 @@ export default function Agenda() {
 
   useEffect(() => { carregarCatalogos(); }, [carregarCatalogos]);
 
-  /* ── fetch atendimentos ── */
   const reload = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     const { data } = await supabase
@@ -225,19 +217,14 @@ export default function Agenda() {
 
   useEffect(() => { reload(); }, [reload]);
 
-  /* ── sync from GCal (Otimizado: Janela de 30 dias) ── */
   const syncNow = useCallback(async (silent = false) => {
     if (!silent) setSyncing(true);
     
-    // OTIMIZAÇÃO: 1 dia para trás e 30 dias para a frente (Corta sobrecarga de servidor)
     const hoje = new Date();
     const timeMin = addDays(hoje, -1).toISOString();
     const timeMax = addDays(hoje, 30).toISOString();
 
-    const body: Record<string, unknown> = {
-      timeMin,
-      timeMax
-    };
+    const body: Record<string, unknown> = { timeMin, timeMax };
 
     if (isFisio && !isAdmin && !isSecretaria && myProfissionalId) {
       body.profissional_id = myProfissionalId;
@@ -252,11 +239,7 @@ export default function Agenda() {
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/gcal-pull`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`,
-            "apikey": import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-          },
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}`, "apikey": import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY },
           body: JSON.stringify(body),
         }
       );
@@ -276,7 +259,6 @@ export default function Agenda() {
     return () => clearInterval(pollRef.current);
   }, [syncNow]);
 
-  /* ── actions ── */
   function nav(dir: -1 | 1) {
     setAnchor((prev) => {
       if (view === "day") return addDays(prev, dir);
@@ -314,20 +296,20 @@ export default function Agenda() {
     }
   }
 
-  /* ── Salvamento Misto (Novo vs Existente) ── */
+  /* ── Salvamento com Automação de Guias ── */
   async function salvarCadastroRapido(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!selected) return;
 
     const fd = new FormData(e.currentTarget);
-    const numeroGuia = fd.get("numeroGuia") as string;
-
+    
     if (!usarPacoteExistenteId && tipoAtendimentoRascunho === "Particular" && !idItemSelecionado) {
       toast.error("Por favor, selecione um item do catálogo ou um pacote ativo do paciente.");
       return;
     }
 
     try {
+      // 1. Identifica ou Cria o Paciente
       let finalPacienteId = pacienteSelecionado?.id;
       if (!finalPacienteId) {
         const { data: novoPac, error: errPac } = await supabase
@@ -339,53 +321,85 @@ export default function Agenda() {
         finalPacienteId = novoPac.id;
       }
 
+      // 2. Identifica ou Cria as Estruturas Financeiras e de Guias
       let finalPacoteId = usarPacoteExistenteId;
       
       if (!finalPacoteId) {
-        const qtdSessoes = parseInt(qtdSessoesAuto || "1");
-        const valorTotal = valorTotalAuto ? parseFloat(valorTotalAuto) : 0;
         
-        const dadosDoPacote: Record<string, any> = {
-          paciente_id: finalPacienteId,
-          sessoes_totais: qtdSessoes,
-          sessoes_restantes: qtdSessoes, 
-          preco_pago: valorTotal,
-          status_pagamento: "pendente"
-        };
+        if (tipoAtendimentoRascunho === "Plano") {
+          // 💡 LÓGICA NOVA: Cria a Autorização E o Pacote interligados
+          const nomePlano = fd.get("nomePlano") as string;
+          const numeroGuia = fd.get("numeroGuia") as string;
+          const qtdSessoesPlano = parseInt((fd.get("qtdSessoesPlano") as string) || "10");
 
-        if (tipoAtendimentoRascunho === "Particular") {
-          if (itemTipo === "pacote") {
-            dadosDoPacote.pacote_id = idItemSelecionado;
-          } else if (itemTipo === "servico") {
-            dadosDoPacote.servico_id = idItemSelecionado;
-          }
+          // A) Cria a Autorização
+          const { data: novaAut, error: errAut } = await supabase
+            .from("autorizacoes")
+            .insert({
+              paciente_id: finalPacienteId,
+              plano: nomePlano,
+              numero_guia: numeroGuia,
+              sessoes_totais: qtdSessoesPlano,
+              sessoes_restantes: qtdSessoesPlano
+            })
+            .select().single();
+          
+          if (errAut) throw new Error("Erro ao registrar guia: " + errAut.message);
+
+          // B) Cria o Pacote Zerado Amarrado à Autorização
+          const { data: novoPacotePlano, error: errPacPlano } = await supabase
+            .from("paciente_pacotes")
+            .insert({
+              paciente_id: finalPacienteId,
+              autorizacao_id: novaAut.id, // 🔗 O ELO VITAL AQUI!
+              sessoes_totais: qtdSessoesPlano,
+              sessoes_restantes: qtdSessoesPlano,
+              preco_pago: 0,
+              status_pagamento: "pago"
+            })
+            .select().single();
+
+          if (errPacPlano) throw new Error("Erro ao criar repasse: " + errPacPlano.message);
+          finalPacoteId = novoPacotePlano.id;
+
+        } else {
+          // Lógica Clássica para Particular
+          const qtdSessoes = parseInt(qtdSessoesAuto || "1");
+          const valorTotal = valorTotalAuto ? parseFloat(valorTotalAuto) : 0;
+          
+          const dadosDoPacote: Record<string, any> = {
+            paciente_id: finalPacienteId,
+            sessoes_totais: qtdSessoes,
+            sessoes_restantes: qtdSessoes, 
+            preco_pago: valorTotal,
+            status_pagamento: "pendente"
+          };
+
+          if (itemTipo === "pacote") dadosDoPacote.pacote_id = idItemSelecionado;
+          else if (itemTipo === "servico") dadosDoPacote.servico_id = idItemSelecionado;
+
+          const { data: novoPacote, error: errPacote } = await supabase
+            .from("paciente_pacotes").insert(dadosDoPacote).select().single();
+
+          if (errPacote) throw new Error("Erro ao criar pacote financeiro: " + errPacote.message);
+          finalPacoteId = novoPacote.id;
         }
-
-        const { data: novoPacote, error: errPacote } = await supabase
-          .from("paciente_pacotes")
-          .insert(dadosDoPacote)
-          .select()
-          .single();
-
-        if (errPacote) throw new Error("Erro ao criar pacote financeiro: " + errPacote.message);
-        finalPacoteId = novoPacote.id;
       }
 
-      const obsGuia = numeroGuia ? `Guia do Plano: ${numeroGuia}` : null;
+      // 3. Efetua o check-in (o gatilho no banco se encarregará de descontar as sessões)
       const { error: errAtendimento } = await supabase
         .from("atendimentos")
         .update({ 
           paciente_id: finalPacienteId,
           paciente_pacote_id: finalPacoteId,
           status: "realizado" as any,
-          tipo: tipoAtendimentoRascunho,
-          observacoes: obsGuia 
+          tipo: tipoAtendimentoRascunho
         })
         .eq("id", selected.id);
 
       if (errAtendimento) throw new Error("Erro ao vincular na agenda: " + errAtendimento.message);
 
-      toast.success(usarPacoteExistenteId ? "Sessão descontada do pacote com sucesso!" : "Paciente cadastrado e atendimento faturado!");
+      toast.success(usarPacoteExistenteId ? "Sessão descontada com sucesso!" : "Cadastro, Guia e Check-in concluídos!");
       setModoCadastroRapido(false);
       setSelected(null);
       reload();
@@ -426,7 +440,6 @@ export default function Agenda() {
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold">Agenda</h1>
         <div className="flex items-center gap-2">
-          {/* BOTÃO E MODAL PARA NOVO AGENDAMENTO MANUAL */}
           <Sheet>
             <SheetTrigger asChild>
               <Button size="sm" className="bg-primary text-white">
@@ -446,7 +459,6 @@ export default function Agenda() {
             </SheetContent>
           </Sheet>
 
-          {/* BOTÃO ATUALIZAR */}
           <Button variant="outline" size="sm" onClick={() => syncNow()} disabled={syncing}>
             <RefreshCw className={`w-4 h-4 mr-1 ${syncing ? "animate-spin" : ""}`} />
             Atualizar
@@ -581,7 +593,6 @@ export default function Agenda() {
 
               <form onSubmit={salvarCadastroRapido} className="space-y-4 mt-2">
                 
-                {/* CAMPO DE BUSCA INTELIGENTE */}
                 <div className="space-y-1.5 relative">
                   <Label>Nome da Paciente</Label>
                   <div className="relative">
@@ -601,7 +612,6 @@ export default function Agenda() {
                     />
                   </div>
                   
-                  {/* CAIXA DE SUGESTÕES */}
                   {sugestoesPacientes.length > 0 && (
                     <div className="absolute z-20 w-full bg-background border rounded-md shadow-xl mt-1 max-h-48 overflow-y-auto">
                       {sugestoesPacientes.map((p) => (
@@ -633,30 +643,37 @@ export default function Agenda() {
                   />
                 </div>
 
-                {/* SEÇÃO DE PACOTES ATIVOS (APARECE APENAS SE TIVER SALDO) */}
+                {/* MENU INTELIGENTE DE PACOTES E GUIAS */}
                 {pacotesAtivosPaciente.length > 0 && (
                   <div className="p-4 border border-green-300 bg-green-50/50 rounded-lg space-y-3 mt-4">
                     <Label className="text-green-800 font-semibold flex items-center gap-2">
                       <CheckCircle className="w-4 h-4" />
-                      Pacotes Ativos Encontrados
+                      Saldos e Guias Encontradas
                     </Label>
-                    <p className="text-xs text-green-700">Este paciente possui saldo no sistema. Você deseja abater esta sessão do pacote existente?</p>
+                    <p className="text-xs text-green-700">Este paciente possui saldo ativo. Deseja abater desta guia/pacote?</p>
                     <select
                       className="w-full bg-white border border-green-200 rounded-md h-10 px-3 text-sm focus:ring-green-500 focus:border-green-500 outline-none"
                       value={usarPacoteExistenteId}
                       onChange={(e) => setUsarPacoteExistenteId(e.target.value)}
                     >
-                      <option value="">Não, desejo registrar e cobrar um NOVO serviço.</option>
-                      {pacotesAtivosPaciente.map(pkg => (
-                        <option key={pkg.id} value={pkg.id} className="font-medium">
-                          Usar: {pkg.pacotes?.nome || pkg.servicos?.nome || 'Pacote/Serviço'} ({pkg.sessoes_restantes} sessões restantes)
-                        </option>
-                      ))}
+                      <option value="">Não, registrar e cobrar um NOVO serviço ou guia.</option>
+                      {pacotesAtivosPaciente.map(pkg => {
+                        // Se houver uma autorização atrelada, o texto fica mais inteligente:
+                        const texto = pkg.autorizacoes 
+                          ? `Guia: ${pkg.autorizacoes.plano} (Nº ${pkg.autorizacoes.numero_guia})`
+                          : (pkg.pacotes?.nome || pkg.servicos?.nome || 'Pacote/Serviço');
+                        
+                        return (
+                          <option key={pkg.id} value={pkg.id} className="font-medium">
+                            Usar: {texto} - {pkg.sessoes_restantes} sessões restantes
+                          </option>
+                        );
+                      })}
                     </select>
                   </div>
                 )}
 
-                {/* EXIBE FATURAMENTO NOVO APENAS SE NÃO FOR USAR PACOTE EXISTENTE */}
+                {/* FORMULÁRIO DE NOVA GUIA / NOVO SERVIÇO */}
                 {!usarPacoteExistenteId && (
                   <>
                     <div className="flex gap-2 p-1 bg-muted rounded-md mt-4">
@@ -694,16 +711,28 @@ export default function Agenda() {
                         </div>
                       </div>
                     ) : (
-                      <div className="space-y-1.5 p-3 border rounded-lg bg-blue-50/30">
-                        <Label htmlFor="numeroGuia">Número da Guia de Autorização</Label>
-                        <Input id="numeroGuia" name="numeroGuia" placeholder="Digite a guia do convênio (opcional)" />
+                      <div className="space-y-3 p-3 border rounded-lg bg-blue-50/30">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="nomePlano">Nome do Plano de Saúde</Label>
+                          <Input id="nomePlano" name="nomePlano" placeholder="Ex: Luminar Fachesf, SulAmérica..." required />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1.5">
+                            <Label htmlFor="numeroGuia">Número da Guia</Label>
+                            <Input id="numeroGuia" name="numeroGuia" placeholder="Ex: 454115..." required />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label htmlFor="qtdSessoesPlano">Sessões Autorizadas</Label>
+                            <Input id="qtdSessoesPlano" name="qtdSessoesPlano" type="number" defaultValue="5" min="1" required />
+                          </div>
+                        </div>
                       </div>
                     )}
 
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-2 gap-3 mt-4">
                       <div className="space-y-1.5">
-                        <Label>Nº de Sessões a Faturar</Label>
-                        <Input value={tipoAtendimentoRascunho === "Plano" ? "1" : qtdSessoesAuto} disabled className="bg-muted text-muted-foreground font-medium" />
+                        <Label>Sessões a Faturar</Label>
+                        <Input value={tipoAtendimentoRascunho === "Plano" ? "Ver formulário" : qtdSessoesAuto} disabled className="bg-muted text-muted-foreground font-medium" />
                       </div>
                       <div className="space-y-1.5">
                         <Label>Valor Total (R$)</Label>
