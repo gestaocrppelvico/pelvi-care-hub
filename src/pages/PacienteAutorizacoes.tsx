@@ -6,13 +6,12 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { ArrowLeft, ShieldCheck, Plus, Pencil, AlertTriangle } from "lucide-react";
 import { format } from "date-fns";
 
-type StatusAutorizacao = "pendente" | "ativa" | "esgotada" | "expirada";
+type StatusAutorizacao = "ativa" | "esgotada" | "expirada";
 
 interface Autorizacao {
   id: string;
@@ -22,28 +21,37 @@ interface Autorizacao {
   sessoes_realizadas: number;
   data_emissao: string | null;
   data_validade: string | null;
-  status: StatusAutorizacao;
+  status: string; // Mantemos por compatibilidade com o banco, mas ignoramos na interface
   observacoes: string | null;
   created_at: string;
 }
 
 const STATUS_COLORS: Record<StatusAutorizacao, string> = {
-  pendente: "bg-yellow-100 text-yellow-800",
   ativa: "bg-green-100 text-green-800",
   esgotada: "bg-red-100 text-red-800",
   expirada: "bg-gray-100 text-gray-800",
 };
 
-const EMPTY: Omit<Autorizacao, "id" | "created_at"> = {
+const EMPTY: Omit<Autorizacao, "id" | "created_at" | "status"> = {
   plano: "",
   numero_guia: "",
   sessoes_autorizadas: 10,
   sessoes_realizadas: 0,
   data_emissao: "",
   data_validade: "",
-  status: "ativa",
   observacoes: "",
 };
+
+// 🧠 A MÁGICA DA AUTOMAÇÃO: Função que calcula o status matematicamente
+function calcularStatus(a: Autorizacao): StatusAutorizacao {
+  if (a.sessoes_autorizadas > 0 && a.sessoes_realizadas >= a.sessoes_autorizadas) {
+    return "esgotada";
+  }
+  if (a.data_validade && new Date(a.data_validade) < new Date(new Date().setHours(0, 0, 0, 0))) {
+    return "expirada";
+  }
+  return "ativa";
+}
 
 export default function PacienteAutorizacoes() {
   const { id } = useParams<{ id: string }>();
@@ -83,7 +91,6 @@ export default function PacienteAutorizacoes() {
       sessoes_realizadas: a.sessoes_realizadas,
       data_emissao: a.data_emissao ?? "",
       data_validade: a.data_validade ?? "",
-      status: a.status,
       observacoes: a.observacoes ?? "",
     });
     setOpen(true);
@@ -94,6 +101,8 @@ export default function PacienteAutorizacoes() {
       toast.error("Informe o plano de saúde");
       return;
     }
+    
+    // O status real é forçado a "ativa" no banco, pois a interface calcula o resto
     const payload = {
       paciente_id: id!,
       plano: form.plano,
@@ -102,7 +111,7 @@ export default function PacienteAutorizacoes() {
       sessoes_realizadas: form.sessoes_realizadas,
       data_emissao: form.data_emissao || null,
       data_validade: form.data_validade || null,
-      status: form.status as StatusAutorizacao,
+      status: "ativa", 
       observacoes: form.observacoes || null,
     };
 
@@ -111,11 +120,10 @@ export default function PacienteAutorizacoes() {
       if (error) { toast.error(error.message); return; }
       toast.success("Autorização atualizada");
     } else {
-      // Cria a autorização no sistema
       const { data: novaAut, error } = await supabase.from("autorizacoes").insert(payload).select().single();
       if (error) { toast.error(error.message); return; }
       
-      // MÁGICA: Cria o pacote financeiro atrelado instantaneamente!
+      // Cria o pacote financeiro
       if (novaAut) {
         await supabase.from("paciente_pacotes").insert({
           paciente_id: id!,
@@ -126,7 +134,7 @@ export default function PacienteAutorizacoes() {
           status_pagamento: "pago"
         });
       }
-      toast.success("Guia e Pacote Financeiro criados com sucesso!");
+      toast.success("Guia e Pacote Financeiro criados!");
     }
     setOpen(false);
     carregar();
@@ -162,23 +170,24 @@ export default function PacienteAutorizacoes() {
             const pctUsado = a.sessoes_autorizadas > 0
               ? Math.round((a.sessoes_realizadas / a.sessoes_autorizadas) * 100)
               : 0;
-            const vencida = a.data_validade && new Date(a.data_validade) < new Date();
+            
+            // 🧠 Aplica a função de cálculo automático aqui
+            const statusCalculado = calcularStatus(a);
+            const vencida = statusCalculado === "expirada";
 
             return (
               <Card
                 key={a.id}
-                className="p-4 space-y-3 cursor-pointer hover:bg-accent/50 transition-colors"
+                className={`p-4 space-y-3 cursor-pointer hover:bg-accent/50 transition-colors ${statusCalculado === "esgotada" ? "opacity-75" : ""}`}
                 onClick={() => abrirEditar(a)}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-sm">{a.plano}</span>
-                    <Badge className={`text-[10px] ${STATUS_COLORS[a.status]}`}>
-                      {a.status}
+                    <Badge className={`text-[10px] uppercase ${STATUS_COLORS[statusCalculado]}`}>
+                      {statusCalculado}
                     </Badge>
-                    {vencida && a.status === "ativa" && (
-                      <AlertTriangle className="w-4 h-4 text-destructive" />
-                    )}
+                    {vencida && <AlertTriangle className="w-4 h-4 text-destructive" />}
                   </div>
                   <Pencil className="w-4 h-4 text-muted-foreground" />
                 </div>
@@ -205,7 +214,7 @@ export default function PacienteAutorizacoes() {
                 <div className="flex gap-4 text-[11px] text-muted-foreground">
                   {a.data_emissao && <span>Emissão: {format(new Date(a.data_emissao), "dd/MM/yy")}</span>}
                   {a.data_validade && (
-                    <span className={vencida ? "text-destructive" : ""}>
+                    <span className={vencida ? "text-destructive font-semibold" : ""}>
                       Validade: {format(new Date(a.data_validade), "dd/MM/yy")}
                     </span>
                   )}
@@ -225,7 +234,7 @@ export default function PacienteAutorizacoes() {
           <div className="space-y-4 pt-2">
             <div>
               <label className="text-sm font-medium">Plano de saúde *</label>
-              <Input value={form.plano} onChange={(e) => setForm({ ...form, plano: e.target.value })} placeholder="Ex: Unimed" />
+              <Input value={form.plano} onChange={(e) => setForm({ ...form, plano: e.target.value })} placeholder="Ex: SulAmérica" />
             </div>
             <div>
               <label className="text-sm font-medium">Número da guia</label>
@@ -260,18 +269,6 @@ export default function PacienteAutorizacoes() {
                 <label className="text-sm font-medium">Data validade</label>
                 <Input type="date" value={form.data_validade ?? ""} onChange={(e) => setForm({ ...form, data_validade: e.target.value })} />
               </div>
-            </div>
-            <div>
-              <label className="text-sm font-medium">Status</label>
-              <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v as StatusAutorizacao })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="pendente">Pendente</SelectItem>
-                  <SelectItem value="ativa">Ativa</SelectItem>
-                  <SelectItem value="esgotada">Esgotada</SelectItem>
-                  <SelectItem value="expirada">Expirada</SelectItem>
-                </SelectContent>
-              </Select>
             </div>
             <div>
               <label className="text-sm font-medium">Observações</label>
