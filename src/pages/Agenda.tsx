@@ -324,7 +324,7 @@ export default function Agenda() {
           const numeroGuia = fd.get("numeroGuia") as string;
           const qtdSessoesPlano = parseInt((fd.get("qtdSessoesPlano") as string) || "10");
 
-          // A) Cria a Autorização com Nomes Corrigidos
+          // A) Cria a Autorização
           const { data: novaAut, error: errAut } = await supabase
             .from("autorizacoes")
             .insert({
@@ -588,7 +588,7 @@ export default function Agenda() {
                       value={termoBusca}
                       onChange={(e) => {
                         setTermoBusca(e.target.value);
-                        setPacienteSelecionado(null); // Reseta a seleção se ele apagar/mudar
+                        setPacienteSelecionado(null);
                         setPacotesAtivosPaciente([]);
                         setUsarPacoteExistenteId("");
                       }}
@@ -599,7 +599,6 @@ export default function Agenda() {
                     />
                   </div>
                   
-                  {/* Caixa de Autocompletar */}
                   {sugestoesPacientes.length > 0 && !pacienteSelecionado && (
                     <div className="absolute z-20 w-full bg-background border rounded-md shadow-xl mt-1 max-h-48 overflow-y-auto">
                       <div className="p-2 text-xs font-semibold text-primary bg-primary/10 border-b">
@@ -614,7 +613,7 @@ export default function Agenda() {
                             setTermoBusca(p.nome);
                             setTelefoneBusca(p.telefone || "");
                             setSugestoesPacientes([]);
-                            buscarPacotesAtivos(p.id); // Puxa as guias aqui!
+                            buscarPacotesAtivos(p.id);
                           }}
                         >
                           <div className="font-medium text-sm">{p.nome}</div>
@@ -624,13 +623,11 @@ export default function Agenda() {
                     </div>
                   )}
                   
-                  {/* Aviso de Confirmação Visual */}
                   {pacienteSelecionado && (
                     <p className="text-xs text-green-600 font-medium flex items-center gap-1 mt-1">
                       <CheckCircle className="w-3 h-3" /> Paciente vinculado com sucesso!
                     </p>
                   )}
-                  {/* Alerta se ele digitou e não clicou */}
                   {!pacienteSelecionado && termoBusca.length > 2 && sugestoesPacientes.length === 0 && (
                     <p className="text-xs text-blue-600 flex items-center gap-1 mt-1">
                       <Plus className="w-3 h-3" /> Paciente novo será cadastrado.
@@ -750,7 +747,6 @@ export default function Agenda() {
                   <Button 
                     type="submit" 
                     className="flex-1 bg-primary text-white font-medium"
-                    // Evita o erro bloqueando o envio se ele digitar um nome existente mas não clicar nele
                     disabled={termoBusca.length > 2 && sugestoesPacientes.length > 0 && !pacienteSelecionado}
                   >
                     Confirmar Check-in
