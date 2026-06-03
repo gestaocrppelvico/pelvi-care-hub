@@ -588,19 +588,23 @@ export default function Agenda() {
                       value={termoBusca}
                       onChange={(e) => {
                         setTermoBusca(e.target.value);
-                        setPacienteSelecionado(null);
+                        setPacienteSelecionado(null); // Reseta a seleção se ele apagar/mudar
                         setPacotesAtivosPaciente([]);
                         setUsarPacoteExistenteId("");
                       }}
-                      className="pl-9"
+                      className={`pl-9 ${pacienteSelecionado ? "border-green-500 bg-green-50/30 text-green-900 font-semibold" : ""}`}
                       placeholder="Digite para buscar ou registrar..."
                       required
                       autoComplete="off"
                     />
                   </div>
                   
-                  {sugestoesPacientes.length > 0 && (
+                  {/* Caixa de Autocompletar */}
+                  {sugestoesPacientes.length > 0 && !pacienteSelecionado && (
                     <div className="absolute z-20 w-full bg-background border rounded-md shadow-xl mt-1 max-h-48 overflow-y-auto">
+                      <div className="p-2 text-xs font-semibold text-primary bg-primary/10 border-b">
+                        👆 Clique num nome abaixo para carregar as guias!
+                      </div>
                       {sugestoesPacientes.map((p) => (
                         <div
                           key={p.id}
@@ -610,7 +614,7 @@ export default function Agenda() {
                             setTermoBusca(p.nome);
                             setTelefoneBusca(p.telefone || "");
                             setSugestoesPacientes([]);
-                            buscarPacotesAtivos(p.id);
+                            buscarPacotesAtivos(p.id); // Puxa as guias aqui!
                           }}
                         >
                           <div className="font-medium text-sm">{p.nome}</div>
@@ -618,6 +622,19 @@ export default function Agenda() {
                         </div>
                       ))}
                     </div>
+                  )}
+                  
+                  {/* Aviso de Confirmação Visual */}
+                  {pacienteSelecionado && (
+                    <p className="text-xs text-green-600 font-medium flex items-center gap-1 mt-1">
+                      <CheckCircle className="w-3 h-3" /> Paciente vinculado com sucesso!
+                    </p>
+                  )}
+                  {/* Alerta se ele digitou e não clicou */}
+                  {!pacienteSelecionado && termoBusca.length > 2 && sugestoesPacientes.length === 0 && (
+                    <p className="text-xs text-blue-600 flex items-center gap-1 mt-1">
+                      <Plus className="w-3 h-3" /> Paciente novo será cadastrado.
+                    </p>
                   )}
                 </div>
                 
@@ -730,7 +747,12 @@ export default function Agenda() {
                   <Button type="button" variant="outline" className="flex-1" onClick={() => setModoCadastroRapido(false)}>
                     Cancelar
                   </Button>
-                  <Button type="submit" className="flex-1 bg-primary text-white font-medium">
+                  <Button 
+                    type="submit" 
+                    className="flex-1 bg-primary text-white font-medium"
+                    // Evita o erro bloqueando o envio se ele digitar um nome existente mas não clicar nele
+                    disabled={termoBusca.length > 2 && sugestoesPacientes.length > 0 && !pacienteSelecionado}
+                  >
                     Confirmar Check-in
                   </Button>
                 </div>
