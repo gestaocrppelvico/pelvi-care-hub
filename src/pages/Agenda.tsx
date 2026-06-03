@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import {
   format, addDays, addWeeks, addMonths, startOfDay, endOfDay,
   startOfWeek, endOfWeek, startOfMonth, endOfMonth, isSameMonth,
@@ -14,10 +14,10 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import {
-  Clock, FileText, RefreshCw, CheckCircle, Undo2,
-  ChevronLeft, ChevronRight, MessageCircle, ClipboardList, Trash2, Search
+  Clock, FileText, RefreshCw, CheckCircle,
+  ChevronLeft, ChevronRight, MessageCircle, ClipboardList, Trash2, Search, Plus
 } from "lucide-react";
 
 /* ───── types ───── */
@@ -59,6 +59,7 @@ const statusLabel: Record<string, string> = {
   faltou: "Faltou",
   faltou_sem_aviso: "Faltou s/ aviso",
 };
+
 const statusColor: Record<string, string> = {
   agendado: "secondary",
   em_andamento: "default",
@@ -92,15 +93,8 @@ function statusBadgeBg(a: Atendimento): string {
   return map[a.status] ?? "bg-gray-400/80";
 }
 
-const prevStatus: Record<string, string> = {
-  em_andamento: "agendado",
-  realizado: "agendado", 
-  cancelado: "agendado",
-};
-
 /* ═══════════════════ Component ═══════════════════ */
 export default function Agenda() {
-  const navigate = useNavigate();
   const { isSecretaria, isAdmin, isFisio, user } = useAuth();
   const podeGerenciar = isAdmin || isSecretaria;
   const [myProfissionalId, setMyProfissionalId] = useState<string | null>(null);
@@ -176,7 +170,7 @@ export default function Agenda() {
   // Busca os pacotes ativos se um paciente existente for selecionado
   async function buscarPacotesAtivos(pacienteId: string) {
     const { data } = await supabase.from('paciente_pacotes')
-      .select('id, sessoes_restantes, pacotes(nome)')
+      .select('id, sessoes_restantes, pacotes(nome), servicos(nome)')
       .eq('paciente_id', pacienteId)
       .gt('sessoes_restantes', 0)
       .order('created_at', { ascending: false });
@@ -231,16 +225,28 @@ export default function Agenda() {
 
   useEffect(() => { reload(); }, [reload]);
 
-  /* ── sync from GCal ── */
+  /* ── sync from GCal (Otimizado: Janela de 30 dias) ── */
   const syncNow = useCallback(async (silent = false) => {
     if (!silent) setSyncing(true);
-    const body: Record<string, unknown> = {};
+    
+    // OTIMIZAÇÃO: 1 dia para trás e 30 dias para a frente (Corta sobrecarga de servidor)
+    const hoje = new Date();
+    const timeMin = addDays(hoje, -1).toISOString();
+    const timeMax = addDays(hoje, 30).toISOString();
+
+    const body: Record<string, unknown> = {
+      timeMin,
+      timeMax
+    };
+
     if (isFisio && !isAdmin && !isSecretaria && myProfissionalId) {
       body.profissional_id = myProfissionalId;
     }
+    
     const { data: { session } } = await supabase.auth.getSession();
     const token = session?.access_token ?? import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
     let syncError: string | null = null;
+    
     try {
       const res = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/gcal-pull`,
@@ -258,9 +264,10 @@ export default function Agenda() {
     } catch (e: any) {
       syncError = e.message;
     }
+    
     if (syncError && !silent) toast.error("Falha ao sincronizar: " + syncError);
     await reload(silent);
-    if (!silent) { setSyncing(false); toast.success("Agenda atualizada"); }
+    if (!silent) { setSyncing(false); toast.success("Agenda atualizada!"); }
   }, [isFisio, isAdmin, isSecretaria, myProfissionalId, reload]);
 
   useEffect(() => {
@@ -321,7 +328,6 @@ export default function Agenda() {
     }
 
     try {
-      // 1. Identificar ou Criar Paciente
       let finalPacienteId = pacienteSelecionado?.id;
       if (!finalPacienteId) {
         const { data: novoPac, error: errPac } = await supabase
@@ -333,7 +339,6 @@ export default function Agenda() {
         finalPacienteId = novoPac.id;
       }
 
-      // 2. Identificar ou Criar Pacote Financeiro
       let finalPacoteId = usarPacoteExistenteId;
       
       if (!finalPacoteId) {
@@ -366,7 +371,6 @@ export default function Agenda() {
         finalPacoteId = novoPacote.id;
       }
 
-      // 3. Efetuar o check-in na agenda e amarrar os IDs
       const obsGuia = numeroGuia ? `Guia do Plano: ${numeroGuia}` : null;
       const { error: errAtendimento } = await supabase
         .from("atendimentos")
@@ -389,28 +393,6 @@ export default function Agenda() {
     } catch (error: any) {
       toast.error(error.message);
     }
-  }
-
-  async function desfazer(a: Atendimento) {
-    const prev = prevStatus[a.status];
-    if (!prev) { toast.error("Não é possível desfazer este status"); return; }
-    if (!confirm(`Reverter de "${statusLabel[a.status]}" para "${statusLabel[prev]}"?`)) return;
-
-    const { error } = await supabase.from("atendimentos").update({ status: prev as any }).eq("id", a.id);
-    if (error) { toast.error(error.message); return; }
-
-    if (a.status === "realizado") {
-      const { data: full } = await supabase.from("atendimentos").select("paciente_pacote_id").eq("id", a.id).maybeSingle();
-      if (full?.paciente_pacote_id) {
-        const { data: pkg } = await supabase.from("paciente_pacotes").select("sessoes_restantes").eq("id", full.paciente_pacote_id).maybeSingle();
-        if (pkg) {
-          await supabase.from("paciente_pacotes").update({ sessoes_restantes: (pkg.sessoes_restantes ?? 0) + 1 }).eq("id", full.paciente_pacote_id);
-        }
-      }
-    }
-    toast.success(`Status revertido para "${statusLabel[prev]}"`);
-    setSelected(null);
-    reload();
   }
 
   function enviarWhatsapp(a: Atendimento) {
@@ -443,10 +425,33 @@ export default function Agenda() {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold">Agenda</h1>
-        <Button variant="outline" size="sm" onClick={() => syncNow()} disabled={syncing}>
-          <RefreshCw className={`w-4 h-4 mr-1 ${syncing ? "animate-spin" : ""}`} />
-          Atualizar
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* BOTÃO E MODAL PARA NOVO AGENDAMENTO MANUAL */}
+          <Sheet>
+            <SheetTrigger asChild>
+              <Button size="sm" className="bg-primary text-white">
+                <Plus className="w-4 h-4 mr-1" /> Novo
+              </Button>
+            </SheetTrigger>
+            <SheetContent>
+              <SheetHeader>
+                <SheetTitle>Criar Novo Agendamento</SheetTitle>
+              </SheetHeader>
+              <div className="space-y-4 pt-4">
+                <p className="text-sm text-muted-foreground">
+                  (Este módulo de criação manual será desenvolvido em seguida caso necessário. 
+                  Por enquanto, utilize o Google Calendar para adicionar eventos).
+                </p>
+              </div>
+            </SheetContent>
+          </Sheet>
+
+          {/* BOTÃO ATUALIZAR */}
+          <Button variant="outline" size="sm" onClick={() => syncNow()} disabled={syncing}>
+            <RefreshCw className={`w-4 h-4 mr-1 ${syncing ? "animate-spin" : ""}`} />
+            Atualizar
+          </Button>
+        </div>
       </div>
 
       <div className="flex gap-1 bg-muted rounded-lg p-1">
@@ -644,7 +649,7 @@ export default function Agenda() {
                       <option value="">Não, desejo registrar e cobrar um NOVO serviço.</option>
                       {pacotesAtivosPaciente.map(pkg => (
                         <option key={pkg.id} value={pkg.id} className="font-medium">
-                          Usar: {pkg.pacotes?.nome || 'Pacote/Serviço'} ({pkg.sessoes_restantes} sessões restantes)
+                          Usar: {pkg.pacotes?.nome || pkg.servicos?.nome || 'Pacote/Serviço'} ({pkg.sessoes_restantes} sessões restantes)
                         </option>
                       ))}
                     </select>
