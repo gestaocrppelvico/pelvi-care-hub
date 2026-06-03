@@ -20,7 +20,6 @@ import {
   ChevronLeft, ChevronRight, MessageCircle, ClipboardList, Trash2, Search, Plus
 } from "lucide-react";
 
-/* ───── types ───── */
 interface Atendimento {
   id: string;
   data_inicio: string;
@@ -71,7 +70,6 @@ const statusColor: Record<string, string> = {
 
 const HOURS = Array.from({ length: 14 }, (_, i) => i + 7);
 
-/* ───── helpers ───── */
 function displayName(a: Atendimento) {
   return a.paciente?.nome ?? a.nome_paciente_livre ?? "—";
 }
@@ -93,7 +91,6 @@ function statusBadgeBg(a: Atendimento): string {
   return map[a.status] ?? "bg-gray-400/80";
 }
 
-/* ═══════════════════ Component ═══════════════════ */
 export default function Agenda() {
   const { isSecretaria, isAdmin, isFisio, user } = useAuth();
   const podeGerenciar = isAdmin || isSecretaria;
@@ -163,7 +160,6 @@ export default function Agenda() {
   }, [termoBusca, pacienteSelecionado]);
 
   async function buscarPacotesAtivos(pacienteId: string) {
-    // 💡 ATUALIZAÇÃO: Agora o sistema busca também as informações da Guia Autorizada linkada!
     const { data } = await supabase.from('paciente_pacotes')
       .select('id, sessoes_restantes, pacotes(nome), servicos(nome), autorizacoes(plano, numero_guia)')
       .eq('paciente_id', pacienteId)
@@ -296,7 +292,6 @@ export default function Agenda() {
     }
   }
 
-  /* ── Salvamento com Automação de Guias ── */
   async function salvarCadastroRapido(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!selected) return;
@@ -304,12 +299,11 @@ export default function Agenda() {
     const fd = new FormData(e.currentTarget);
     
     if (!usarPacoteExistenteId && tipoAtendimentoRascunho === "Particular" && !idItemSelecionado) {
-      toast.error("Por favor, selecione um item do catálogo ou um pacote ativo do paciente.");
+      toast.error("Por favor, selecione um item ou guia ativa.");
       return;
     }
 
     try {
-      // 1. Identifica ou Cria o Paciente
       let finalPacienteId = pacienteSelecionado?.id;
       if (!finalPacienteId) {
         const { data: novoPac, error: errPac } = await supabase
@@ -321,37 +315,35 @@ export default function Agenda() {
         finalPacienteId = novoPac.id;
       }
 
-      // 2. Identifica ou Cria as Estruturas Financeiras e de Guias
       let finalPacoteId = usarPacoteExistenteId;
       
       if (!finalPacoteId) {
         
         if (tipoAtendimentoRascunho === "Plano") {
-          // 💡 LÓGICA NOVA: Cria a Autorização E o Pacote interligados
           const nomePlano = fd.get("nomePlano") as string;
           const numeroGuia = fd.get("numeroGuia") as string;
           const qtdSessoesPlano = parseInt((fd.get("qtdSessoesPlano") as string) || "10");
 
-          // A) Cria a Autorização
+          // A) Cria a Autorização com Nomes Corrigidos
           const { data: novaAut, error: errAut } = await supabase
             .from("autorizacoes")
             .insert({
               paciente_id: finalPacienteId,
               plano: nomePlano,
               numero_guia: numeroGuia,
-              sessoes_totais: qtdSessoesPlano,
-              sessoes_restantes: qtdSessoesPlano
+              sessoes_autorizadas: qtdSessoesPlano,
+              sessoes_realizadas: 0
             })
             .select().single();
           
           if (errAut) throw new Error("Erro ao registrar guia: " + errAut.message);
 
-          // B) Cria o Pacote Zerado Amarrado à Autorização
+          // B) Cria o Pacote Zerado Amarrado
           const { data: novoPacotePlano, error: errPacPlano } = await supabase
             .from("paciente_pacotes")
             .insert({
               paciente_id: finalPacienteId,
-              autorizacao_id: novaAut.id, // 🔗 O ELO VITAL AQUI!
+              autorizacao_id: novaAut.id,
               sessoes_totais: qtdSessoesPlano,
               sessoes_restantes: qtdSessoesPlano,
               preco_pago: 0,
@@ -363,7 +355,6 @@ export default function Agenda() {
           finalPacoteId = novoPacotePlano.id;
 
         } else {
-          // Lógica Clássica para Particular
           const qtdSessoes = parseInt(qtdSessoesAuto || "1");
           const valorTotal = valorTotalAuto ? parseFloat(valorTotalAuto) : 0;
           
@@ -381,12 +372,11 @@ export default function Agenda() {
           const { data: novoPacote, error: errPacote } = await supabase
             .from("paciente_pacotes").insert(dadosDoPacote).select().single();
 
-          if (errPacote) throw new Error("Erro ao criar pacote financeiro: " + errPacote.message);
+          if (errPacote) throw new Error("Erro ao criar pacote: " + errPacote.message);
           finalPacoteId = novoPacote.id;
         }
       }
 
-      // 3. Efetua o check-in (o gatilho no banco se encarregará de descontar as sessões)
       const { error: errAtendimento } = await supabase
         .from("atendimentos")
         .update({ 
@@ -452,8 +442,7 @@ export default function Agenda() {
               </SheetHeader>
               <div className="space-y-4 pt-4">
                 <p className="text-sm text-muted-foreground">
-                  (Este módulo de criação manual será desenvolvido em seguida caso necessário. 
-                  Por enquanto, utilize o Google Calendar para adicionar eventos).
+                  (Utilize o Google Calendar para adicionar eventos).
                 </p>
               </div>
             </SheetContent>
@@ -496,7 +485,6 @@ export default function Agenda() {
         </>
       )}
 
-      {/* DETAIL SHEET */}
       <Sheet open={!!selected} onOpenChange={(o) => {
         if (!o) { setSelected(null); setModoCadastroRapido(false); }
       }}>
@@ -583,7 +571,6 @@ export default function Agenda() {
             </div>
           )}
 
-          {/* FORMULÁRIO RÁPIDO DO MODO CADASTRO COM AUTOCOMPLETAR */}
           {selected && modoCadastroRapido && (
             <div className="space-y-4 pb-6">
               <SheetHeader>
@@ -643,7 +630,6 @@ export default function Agenda() {
                   />
                 </div>
 
-                {/* MENU INTELIGENTE DE PACOTES E GUIAS */}
                 {pacotesAtivosPaciente.length > 0 && (
                   <div className="p-4 border border-green-300 bg-green-50/50 rounded-lg space-y-3 mt-4">
                     <Label className="text-green-800 font-semibold flex items-center gap-2">
@@ -658,7 +644,6 @@ export default function Agenda() {
                     >
                       <option value="">Não, registrar e cobrar um NOVO serviço ou guia.</option>
                       {pacotesAtivosPaciente.map(pkg => {
-                        // Se houver uma autorização atrelada, o texto fica mais inteligente:
                         const texto = pkg.autorizacoes 
                           ? `Guia: ${pkg.autorizacoes.plano} (Nº ${pkg.autorizacoes.numero_guia})`
                           : (pkg.pacotes?.nome || pkg.servicos?.nome || 'Pacote/Serviço');
@@ -673,7 +658,6 @@ export default function Agenda() {
                   </div>
                 )}
 
-                {/* FORMULÁRIO DE NOVA GUIA / NOVO SERVIÇO */}
                 {!usarPacoteExistenteId && (
                   <>
                     <div className="flex gap-2 p-1 bg-muted rounded-md mt-4">
@@ -759,7 +743,6 @@ export default function Agenda() {
   );
 }
 
-/* ═══════════════════ VIEWS ═══════════════════ */
 function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: Atendimento) => void }) {
   const columns = useMemo(() => {
     const sorted = [...events].sort((a, b) => new Date(a.data_inicio).getTime() - new Date(b.data_inicio).getTime());
