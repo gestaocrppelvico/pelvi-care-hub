@@ -126,12 +126,10 @@ export default function Agenda() {
   const [tipoAtendimentoRascunho, setTipoAtendimentoRascunho] = useState<"Plano" | "Particular">("Particular");
   const [itemTipo, setItemTipo] = useState<"servico" | "pacote">("servico");
   
-  // ESTADOS DO CATÁLOGO E PLANOS
   const [listaPacotes, setListaPacotes] = useState<PacoteCatalogo[]>([]);
   const [listaServicos, setListaServicos] = useState<ServicoCatalogo[]>([]);
   const [listaPlanos, setListaPlanos] = useState<{id: string, nome: string}[]>([]);
   
-  // SELEÇÕES DO FORMULÁRIO
   const [idItemSelecionado, setIdItemSelecionado] = useState<string>("");
   const [planoSelecionado, setPlanoSelecionado] = useState<string>("");
   const [pacotePlanoSelecionado, setPacotePlanoSelecionado] = useState<string>("");
@@ -206,7 +204,7 @@ export default function Agenda() {
       setListaServicos((servicosData as any[]) ?? []);
       setListaPlanos((planosData as any[]) ?? []);
     } catch (err) {
-      console.error("Erro ao carregar os itens de catálogo:", err);
+      console.error("Erro ao carregar os itens:", err);
     }
   }, []);
 
@@ -233,7 +231,6 @@ export default function Agenda() {
     const hoje = new Date();
     const timeMin = addDays(hoje, -1).toISOString();
     const timeMax = addDays(hoje, 30).toISOString();
-
     const body: Record<string, unknown> = { timeMin, timeMax };
 
     if (isFisio && !isAdmin && !isSecretaria && myProfissionalId) {
@@ -332,8 +329,6 @@ export default function Agenda() {
       let finalPacoteId = usarPacoteExistenteId;
       
       if (!finalPacoteId) {
-        
-        // --- INÍCIO DA LÓGICA DE PLANO ATUALIZADA ---
         if (tipoAtendimentoRascunho === "Plano") {
           
           if (!planoSelecionado || !pacotePlanoSelecionado) {
@@ -344,11 +339,9 @@ export default function Agenda() {
           const numeroGuia = fd.get("numeroGuia") as string;
           const qtdSessoesPlano = parseInt((fd.get("qtdSessoesPlano") as string) || "10");
 
-          // Busca o preço real do pacote que foi selecionado para repasse
           const pacoteParaPlano = listaPacotes.find(p => p.id === pacotePlanoSelecionado);
           const precoRepasse = pacoteParaPlano ? pacoteParaPlano.preco_total : 0;
 
-          // A) Cria a Autorização
           const { data: novaAut, error: errAut } = await supabase
             .from("autorizacoes")
             .insert({
@@ -362,13 +355,12 @@ export default function Agenda() {
           
           if (errAut) throw new Error("Erro ao registrar guia: " + errAut.message);
 
-          // B) Cria o Pacote Amarrado ao Valor Correto (sem R$ 35,00 fixo!)
           const { data: novoPacotePlano, error: errPacPlano } = await supabase
             .from("paciente_pacotes")
             .insert({
               paciente_id: finalPacienteId,
               autorizacao_id: novaAut.id,
-              pacote_id: pacotePlanoSelecionado, // Vincula à tabela correta de repasses!
+              pacote_id: pacotePlanoSelecionado, 
               sessoes_totais: qtdSessoesPlano,
               sessoes_restantes: qtdSessoesPlano,
               preco_pago: precoRepasse,
@@ -380,7 +372,6 @@ export default function Agenda() {
           finalPacoteId = novoPacotePlano.id;
 
         } else {
-          // Lógica Particular permanece inalterada
           const qtdSessoes = parseInt(qtdSessoesAuto || "1");
           const valorTotal = valorTotalAuto ? parseFloat(valorTotalAuto) : 0;
           
@@ -736,7 +727,6 @@ export default function Agenda() {
                       </div>
                     ) : (
                       <div className="space-y-3 p-3 border rounded-lg bg-blue-50/30">
-                        {/* AQUI ESTÃO OS DROPDOWNS INTEGRADOS CORRETAMENTE */}
                         <div className="space-y-1.5">
                           <Label>Plano de Saúde</Label>
                           <Select value={planoSelecionado} onValueChange={setPlanoSelecionado} required>
@@ -827,3 +817,26 @@ function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: At
       const evtEnd = evt.data_fim ? new Date(evt.data_fim).getTime() : evtStart + 40 * 60_000;
       const colIdx = cols.findIndex((c) => c.includes(evt));
       let maxCols = 1;
+      cols.forEach((col, ci) => {
+        if (ci === colIdx) return;
+        const overlaps = col.some((e) => {
+          const s = new Date(e.data_inicio).getTime();
+          const en = e.data_fim ? new Date(e.data_fim).getTime() : s + 40 * 60_000;
+          return s < evtEnd && en > evtStart;
+        });
+        if (overlaps) maxCols = Math.max(maxCols, cols.length);
+      });
+      map.set(evt.id, { col: colIdx, total: cols.length > 1 ? cols.length : 1 });
+    });
+    return map;
+  }, [events]);
+
+  return (
+    <div className="relative border rounded-lg overflow-hidden bg-card">
+      {HOURS.map((h) => (
+        <div key={h} className="flex border-b last:border-b-0" style={{ minHeight: 60 }}>
+          <div className="w-12 flex-shrink-0 text-[10px] text-muted-foreground text-right pr-2 pt-1">{String(h).padStart(2, "0")}:00</div>
+          <div className="flex-1 relative">
+            {events.filter((e) => new Date(e.data_inicio).getHours() === h).map((e) => {
+              const start = new Date(e.data_inicio);
+              const end =
