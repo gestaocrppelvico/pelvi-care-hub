@@ -60,6 +60,7 @@ const App = () => (
             <Route path="/dashboard" element={<AdminDashboard />} />
             <Route path="/crm" element={<Crm />} />
             <Route path="/crm/templates" element={<CrmTemplates />} />
+            <Route path="/configuracoes/planos" element={<PlanosConfig />} />
             <Route path="/financeiro" element={<Financeiro />} />
             <Route path="/financeiro/relatorios" element={<RelatorioRepasses />} />
             <Route path="/financeiro/servicos" element={<FinanceiroServicos />} />
