@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Wallet, Package, Settings, ChevronRight, CheckCircle2, CheckSquare, Calendar, User as UserIcon } from "lucide-react";
+import { Wallet, Package, Settings, ChevronRight, CheckCircle2, CheckSquare, Calendar, User as UserIcon, Activity } from "lucide-react";
 import { toast } from "sonner";
 import { startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval, parseISO } from "date-fns";
 
@@ -52,7 +52,7 @@ export default function Financeiro() {
         )
       `)
       .order("created_at", { ascending: false })
-      .limit(500); // Aumentamos o limite para garantir que os filtros tenham dados suficientes
+      .limit(500);
       
     setRepasses((data as any[]) ?? []);
     setLoading(false);
@@ -100,7 +100,7 @@ export default function Financeiro() {
     return filtrados;
   }, [repasses, filtroProfissional, filtroPeriodo]);
 
-  // Separação entre Pendentes e Conferidos (mantemos "pago" no banco de dados para segurança)
+  // Separação entre Pendentes e Conferidos
   const pendentes = repassesFiltrados.filter((r) => r.status === "pendente");
   const conferidos = repassesFiltrados.filter((r) => r.status === "pago");
   
@@ -150,8 +150,9 @@ export default function Financeiro() {
         <h1 className="text-2xl font-bold">Financeiro</h1>
       </div>
 
+      {/* AQUI ESTÁ O CÓDIGO ATUALIZADO: Grade com 3 colunas e o botão Relatórios */}
       {podeGerenciar && (
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
           <Link to="/financeiro/servicos">
             <Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full">
               <Package className="w-5 h-5 text-primary" />
@@ -162,15 +163,30 @@ export default function Financeiro() {
               <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
             </Card>
           </Link>
+          
           {isAdmin && (
             <Link to="/financeiro/repasses">
               <Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full">
                 <Settings className="w-5 h-5 text-primary" />
                 <div className="flex-1 min-w-0">
-                  <div className="font-medium text-sm">Repasses</div>
+                  <div className="font-medium text-sm">Regras de Repasse</div>
                   <div className="text-xs text-muted-foreground">Por serviço × fisio</div>
                 </div>
                 <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+              </Card>
+            </Link>
+          )}
+
+          {/* NOVO BOTÃO DE RELATÓRIOS */}
+          {podeGerenciar && (
+            <Link to="/financeiro/relatorios">
+              <Card className="p-3 flex items-center gap-2 hover:bg-emerald-50 transition-colors h-full border-emerald-200">
+                <Activity className="w-5 h-5 text-emerald-600" />
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-sm text-emerald-800">Relatórios</div>
+                  <div className="text-xs text-emerald-600/70">Análise e Margens</div>
+                </div>
+                <ChevronRight className="w-4 h-4 text-emerald-600 shrink-0" />
               </Card>
             </Link>
           )}
@@ -203,7 +219,7 @@ export default function Financeiro() {
               <SelectValue placeholder="Selecione..." />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="todos">Toda a Equipa</SelectItem>
+              <SelectItem value="todos">Toda a Equipe</SelectItem>
               {profissionaisFiltro.map(p => (
                 <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>
               ))}
@@ -212,7 +228,7 @@ export default function Financeiro() {
         </div>
       </div>
 
-      {/* PAINEL DE TOTAIS DINÂMICOS (Refletem os filtros) */}
+      {/* PAINEL DE TOTAIS DINÂMICOS */}
       <div className="grid grid-cols-3 gap-2">
         <Card className="p-3">
           <div className="text-xs text-muted-foreground">Receita</div>
