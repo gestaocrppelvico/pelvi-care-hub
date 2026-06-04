@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { format, startOfMonth, endOfMonth, parseISO } from "date-fns";
-import { ptBR } from "date-fns/locale";
 import { ArrowLeft, Printer, TrendingUp, Calculator, FileText, Activity } from "lucide-react";
 import { toast } from "sonner";
 
@@ -159,7 +158,7 @@ export default function RelatorioRepasses() {
             </Select>
           </div>
           <Button onClick={gerarRelatorio} disabled={loading} className="w-full font-semibold">
-            {loading ? "A processar..." : "Gerar Relatório"}
+            {loading ? "Processando..." : "Gerar Relatório"}
           </Button>
         </div>
       </Card>
