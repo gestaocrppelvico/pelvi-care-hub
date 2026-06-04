@@ -11,7 +11,6 @@ import { Wallet, Package, Settings, ChevronRight, CheckCircle2, CheckSquare, Cal
 import { toast } from "sonner";
 import { startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval, parseISO } from "date-fns";
 
-// Expandimos a interface para receber os dados do paciente e do atendimento
 interface RepasseRow {
   id: string;
   atendimento_id: string;
@@ -34,13 +33,11 @@ export default function Financeiro() {
   const [repasses, setRepasses] = useState<RepasseRow[]>([]);
   const [loading, setLoading] = useState(true);
   
-  // Estados para os nossos novos filtros
   const [filtroProfissional, setFiltroProfissional] = useState<string>("todos");
   const [filtroPeriodo, setFiltroPeriodo] = useState<string>("semana");
 
   async function carregar() {
     setLoading(true);
-    // A MÁGICA DO JOIN: Buscamos os dados aninhados do atendimento e do paciente
     const { data } = await supabase
       .from("repasses_atendimento")
       .select(`
@@ -60,7 +57,6 @@ export default function Financeiro() {
 
   useEffect(() => { carregar(); }, []);
 
-  // Lista única de profissionais para preencher o dropdown de filtros
   const profissionaisFiltro = useMemo(() => {
     const lista = new Map();
     repasses.forEach(r => {
@@ -69,22 +65,19 @@ export default function Financeiro() {
     return Array.from(lista.entries()).map(([id, nome]) => ({ id, nome }));
   }, [repasses]);
 
-  // A MÁGICA DOS FILTROS: Aplicamos as regras de tempo e profissional na lista
   const repassesFiltrados = useMemo(() => {
     let filtrados = repasses;
 
-    // 1. Filtro de Profissional
     if (filtroProfissional !== "todos") {
       filtrados = filtrados.filter(r => r.profissional_id === filtroProfissional);
     }
 
-    // 2. Filtro de Período (Semana ou Mês)
     if (filtroPeriodo !== "todos") {
       const hoje = new Date();
       let start, end;
       
       if (filtroPeriodo === "semana") {
-        start = startOfWeek(hoje, { weekStartsOn: 1 }); // Começa na Segunda-feira
+        start = startOfWeek(hoje, { weekStartsOn: 1 });
         end = endOfWeek(hoje, { weekStartsOn: 1 });
       } else {
         start = startOfMonth(hoje);
@@ -100,16 +93,13 @@ export default function Financeiro() {
     return filtrados;
   }, [repasses, filtroProfissional, filtroPeriodo]);
 
-  // Separação entre Pendentes e Conferidos
   const pendentes = repassesFiltrados.filter((r) => r.status === "pendente");
   const conferidos = repassesFiltrados.filter((r) => r.status === "pago");
   
-  // Totais matemáticos
   const totalPendente = pendentes.reduce((s, r) => s + Number(r.valor_repasse), 0);
   const totalConferido = conferidos.reduce((s, r) => s + Number(r.valor_repasse), 0);
   const totalReceitas = repassesFiltrados.reduce((s, r) => s + Number(r.valor_atendimento), 0);
 
-  // Ação de conferir um único repasse
   async function marcarPago(id: string) {
     const { error } = await supabase
       .from("repasses_atendimento")
@@ -120,15 +110,12 @@ export default function Financeiro() {
     carregar();
   }
 
-  // A MÁGICA DO LOTE: Conferir todos os que estão visíveis no ecrã de uma vez!
   async function conferirVisiveis() {
     if (pendentes.length === 0) return;
     if (!confirm(`Tem certeza que deseja marcar os ${pendentes.length} repasses visíveis como CONFERIDOS?`)) return;
 
-    // Extraímos apenas os IDs da lista que está na tela
     const idsParaAtualizar = pendentes.map(r => r.id);
 
-    // Mandamos um comando .in() para atualizar todos de uma vez
     const { error } = await supabase
       .from("repasses_atendimento")
       .update({ status: "pago", data_pagamento: new Date().toISOString().slice(0, 10) })
@@ -150,7 +137,6 @@ export default function Financeiro() {
         <h1 className="text-2xl font-bold">Financeiro</h1>
       </div>
 
-      {/* AQUI ESTÁ O CÓDIGO ATUALIZADO: Grade com 3 colunas e o botão Relatórios */}
       {podeGerenciar && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
           <Link to="/financeiro/servicos">
@@ -177,8 +163,8 @@ export default function Financeiro() {
             </Link>
           )}
 
-          {/* NOVO BOTÃO DE RELATÓRIOS */}
-          {podeGerenciar && (
+          {/* ESTE BOTÃO AGORA SÓ APARECE PARA ADMIN */}
+          {isAdmin && (
             <Link to="/financeiro/relatorios">
               <Card className="p-3 flex items-center gap-2 hover:bg-emerald-50 transition-colors h-full border-emerald-200">
                 <Activity className="w-5 h-5 text-emerald-600" />
@@ -193,7 +179,6 @@ export default function Financeiro() {
         </div>
       )}
 
-      {/* ÁREA DE FILTROS INTELIGENTES */}
       <div className="flex flex-col sm:flex-row gap-3 p-3 bg-muted/50 rounded-lg border">
         <div className="flex-1">
           <label className="text-xs font-semibold text-muted-foreground mb-1 flex items-center gap-1">
@@ -228,7 +213,6 @@ export default function Financeiro() {
         </div>
       </div>
 
-      {/* PAINEL DE TOTAIS DINÂMICOS */}
       <div className="grid grid-cols-3 gap-2">
         <Card className="p-3">
           <div className="text-xs text-muted-foreground">Receita</div>
@@ -250,7 +234,6 @@ export default function Financeiro() {
           <TabsTrigger value="conferidos" className="flex-1">Conferidos ({conferidos.length})</TabsTrigger>
         </TabsList>
 
-        {/* LISTA DE PENDENTES */}
         <TabsContent value="pendentes" className="space-y-3 mt-3">
           
           {podeGerenciar && pendentes.length > 0 && (
@@ -308,7 +291,6 @@ export default function Financeiro() {
           ))}
         </TabsContent>
 
-        {/* LISTA DE CONFERIDOS */}
         <TabsContent value="conferidos" className="space-y-3 mt-3">
           {conferidos.length === 0 && (
             <Card className="p-6 text-center text-sm text-muted-foreground">Nenhum repasse conferido para os filtros selecionados.</Card>
