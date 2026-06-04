@@ -1,12 +1,14 @@
 import { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth"; // <-- Importamos o hook de autenticação
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { format, startOfMonth, endOfMonth, parseISO } from "date-fns";
-import { ArrowLeft, Printer, TrendingUp, Calculator, FileText, Activity } from "lucide-react";
+import { ptBR } from "date-fns/locale";
+import { ArrowLeft, Printer, TrendingUp, Calculator, FileText, Activity, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 
 interface Repasse {
@@ -21,25 +23,42 @@ interface Repasse {
 
 export default function RelatorioRepasses() {
   const navigate = useNavigate();
+  const { isAdmin } = useAuth(); // <-- Puxamos a permissão do usuário logado
+  
   const [loading, setLoading] = useState(false);
   const [repasses, setRepasses] = useState<Repasse[]>([]);
   
-  // Lista de profissionais para o filtro
   const [profissionaisLista, setProfissionaisLista] = useState<{id: string, nome: string}[]>([]);
 
-  // Estado dos filtros (Padrão: Mês atual)
   const [dataInicio, setDataInicio] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
   const [dataFim, setDataFim] = useState(format(endOfMonth(new Date()), "yyyy-MM-dd"));
   const [filtroFisio, setFiltroFisio] = useState("todos");
 
-  // Busca os profissionais apenas uma vez para montar o menu de filtros
   useEffect(() => {
-    supabase.from("profissionais").select("id, nome").then(({ data }) => {
-      if (data) setProfissionaisLista(data);
-    });
-  }, []);
+    // Só carrega os dados se for admin
+    if (isAdmin) {
+      supabase.from("profissionais").select("id, nome").then(({ data }) => {
+        if (data) setProfissionaisLista(data);
+      });
+    }
+  }, [isAdmin]);
 
-  // Função que vai ao banco de dados buscar os repasses do período selecionado
+  // BLOQUEIO DE SEGURANÇA: Se não for Admin, para tudo e mostra tela de aviso
+  if (!isAdmin) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4 text-center">
+        <ShieldAlert className="w-16 h-16 text-red-500" />
+        <h2 className="text-2xl font-bold text-slate-800">Acesso Restrito</h2>
+        <p className="text-muted-foreground max-w-md">
+          Apenas administradores (Diretoria) possuem permissão para visualizar os relatórios financeiros e de repasses.
+        </p>
+        <Button onClick={() => navigate(-1)} variant="outline" className="mt-4">
+          <ArrowLeft className="w-4 h-4 mr-2" /> Voltar
+        </Button>
+      </div>
+    );
+  }
+
   async function gerarRelatorio() {
     if (!dataInicio || !dataFim) {
       toast.error("Preencha a data de início e fim.");
@@ -73,7 +92,6 @@ export default function RelatorioRepasses() {
     setLoading(false);
   }
 
-  // ---- CÁLCULOS SINTÉTICOS (Resumo Financeiro) ----
   const { totalReceita, totalRepasses, lucroBruto, margemLucro, resumoPorProfissional } = useMemo(() => {
     let rec = 0;
     let rep = 0;
@@ -88,7 +106,6 @@ export default function RelatorioRepasses() {
       rec += valRec;
       rep += valRep;
 
-      // Agrupando para a tabela sintética de profissionais
       const atual = mapaFisio.get(fisioId) || { nome: fisioNome, receita: 0, repasse: 0, qtd: 0 };
       mapaFisio.set(fisioId, {
         nome: fisioNome,
@@ -116,7 +133,6 @@ export default function RelatorioRepasses() {
 
   return (
     <div className="space-y-6 pb-12">
-      {/* CABEÇALHO (Oculto na impressão) */}
       <div className="flex items-center justify-between print:hidden">
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
@@ -132,7 +148,6 @@ export default function RelatorioRepasses() {
         </Button>
       </div>
 
-      {/* ÁREA DE FILTROS (Oculta na impressão) */}
       <Card className="p-4 print:hidden bg-muted/30 border-dashed">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
           <div className="space-y-1.5">
@@ -163,7 +178,6 @@ export default function RelatorioRepasses() {
         </div>
       </Card>
 
-      {/* CABEÇALHO EXCLUSIVO PARA IMPRESSÃO */}
       <div className="hidden print:block text-center mb-8 border-b pb-4">
         <h1 className="text-2xl font-bold uppercase tracking-wider">Relatório de Repasses</h1>
         <p className="text-muted-foreground">Período: {format(parseISO(dataInicio), "dd/MM/yyyy")} a {format(parseISO(dataFim), "dd/MM/yyyy")}</p>
@@ -173,7 +187,6 @@ export default function RelatorioRepasses() {
       {repasses.length > 0 && (
         <div className="space-y-8">
           
-          {/* SESSÃO 1: SINTÉTICO (Resumo Geral) */}
           <section className="space-y-4">
             <h2 className="text-lg font-bold flex items-center gap-2 border-b pb-2">
               <Activity className="w-5 h-5 text-primary" /> Visão Sintética Geral
@@ -198,7 +211,6 @@ export default function RelatorioRepasses() {
               </Card>
             </div>
 
-            {/* Tabela Sintética por Profissional */}
             {filtroFisio === "todos" && (
               <div className="border rounded-lg overflow-hidden mt-6">
                 <table className="w-full text-sm text-left">
@@ -225,7 +237,6 @@ export default function RelatorioRepasses() {
             )}
           </section>
 
-          {/* SESSÃO 2: ANALÍTICO (Linha a linha) */}
           <section className="space-y-4">
             <h2 className="text-lg font-bold flex items-center gap-2 border-b pb-2 mt-8">
               <FileText className="w-5 h-5 text-primary" /> Visão Analítica Detalhada
