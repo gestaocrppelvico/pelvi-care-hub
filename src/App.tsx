@@ -1,3 +1,4 @@
+import RelatorioRepasses from "./pages/RelatorioRepasses";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -60,6 +61,7 @@ const App = () => (
             <Route path="/crm" element={<Crm />} />
             <Route path="/crm/templates" element={<CrmTemplates />} />
             <Route path="/financeiro" element={<Financeiro />} />
+            <Route path="/financeiro/relatorios" element={<RelatorioRepasses />} />
             <Route path="/financeiro/servicos" element={<FinanceiroServicos />} />
             <Route path="/financeiro/repasses" element={<FinanceiroRepasses />} />
             <Route path="/pacientes/:id/financeiro" element={<PacienteFinanceiro />} />
