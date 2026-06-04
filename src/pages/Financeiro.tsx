@@ -35,10 +35,10 @@ export default function Financeiro() {
   
   const [repasses, setRepasses] = useState<RepasseRow[]>([]);
   const [loading, setLoading] = useState(true);
+  
   const [filtroProfissional, setFiltroProfissional] = useState<string>("todos");
   const [filtroPeriodo, setFiltroPeriodo] = useState<string>("semana");
   
-  // Estados para Edição
   const [editando, setEditando] = useState<RepasseRow | null>(null);
   const [valorAtendimento, setValorAtendimento] = useState("");
   const [valorRepasse, setValorRepasse] = useState("");
@@ -97,16 +97,21 @@ export default function Financeiro() {
     carregar();
   }
 
+  async function conferirVisiveis() {
+    if (pendentes.length === 0) return;
+    if (!confirm(`Confirmar todos os ${pendentes.length} repasses visíveis?`)) return;
+    const ids = pendentes.map(r => r.id);
+    const { error } = await supabase.from("repasses_atendimento").update({ status: "pago" }).in("id", ids);
+    if (error) { toast.error("Erro: " + error.message); return; }
+    toast.success("Todos conferidos!");
+    carregar();
+  }
+
   async function salvarEdicao() {
     if (!editando) return;
-    const { error } = await supabase
-      .from("repasses_atendimento")
-      .update({ 
-        valor_atendimento: parseFloat(valorAtendimento), 
-        valor_repasse: parseFloat(valorRepasse) 
-      })
+    const { error } = await supabase.from("repasses_atendimento")
+      .update({ valor_atendimento: parseFloat(valorAtendimento), valor_repasse: parseFloat(valorRepasse) })
       .eq("id", editando.id);
-    
     if (error) { toast.error(error.message); return; }
     toast.success("Valores atualizados!");
     setEditando(null);
@@ -117,61 +122,47 @@ export default function Financeiro() {
 
   return (
     <div className="space-y-4">
-      {/* Botões Superiores e Filtros (Omitido para brevidade, mantenha como estava) */}
-      
-      {/* [INSERIR AQUI BLOCO DE FILTROS E TOTAIS EXISTENTES] */}
+      <div className="flex items-center gap-2"><Wallet className="w-6 h-6 text-primary" /><h1 className="text-2xl font-bold">Financeiro</h1></div>
+
+      {podeGerenciar && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+          <Link to="/financeiro/servicos"><Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full"><Package className="w-5 h-5 text-primary" /><div className="flex-1"><div className="font-medium text-sm">Serviços e Pacotes</div></div></Card></Link>
+          {isAdmin && (<Link to="/financeiro/repasses"><Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full"><Settings className="w-5 h-5 text-primary" /><div className="flex-1"><div className="font-medium text-sm">Regras de Repasse</div></div></Card></Link>)}
+          {isAdmin && (<Link to="/financeiro/relatorios"><Card className="p-3 flex items-center gap-2 hover:bg-emerald-50 transition-colors h-full border-emerald-200"><Activity className="w-5 h-5 text-emerald-600" /><div className="flex-1"><div className="font-medium text-sm text-emerald-800">Relatórios</div></div></Card></Link>)}
+        </div>
+      )}
+
+      <div className="flex flex-col sm:flex-row gap-3 p-3 bg-muted/50 rounded-lg border">
+        <Select value={filtroPeriodo} onValueChange={setFiltroPeriodo}><SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="semana">Esta Semana</SelectItem><SelectItem value="mes">Este Mês</SelectItem><SelectItem value="todos">Tudo</SelectItem></SelectContent></Select>
+        <Select value={filtroProfissional} onValueChange={setFiltroProfissional}><SelectTrigger className="w-full sm:w-[180px]"><SelectValue placeholder="Profissional" /></SelectTrigger><SelectContent><SelectItem value="todos">Todos</SelectItem>{profissionaisFiltro.map(p => <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>)}</SelectContent></Select>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2">
+        <Card className="p-3"><div className="text-xs text-muted-foreground">Receita</div><div className="font-bold">{formatBRL(totalReceitas)}</div></Card>
+        <Card className="p-3"><div className="text-xs text-muted-foreground">Pendentes</div><div className="font-bold text-amber-600">{formatBRL(totalPendente)}</div></Card>
+        <Card className="p-3"><div className="text-xs text-muted-foreground">Conferidos</div><div className="font-bold text-emerald-600">{formatBRL(totalConferido)}</div></Card>
+      </div>
 
       <Tabs defaultValue="pendentes">
-        <TabsList className="w-full">
-          <TabsTrigger value="pendentes" className="flex-1">Pendentes ({pendentes.length})</TabsTrigger>
-          <TabsTrigger value="conferidos" className="flex-1">Conferidos ({conferidos.length})</TabsTrigger>
-        </TabsList>
-
+        <TabsList className="w-full"><TabsTrigger value="pendentes" className="flex-1">Pendentes ({pendentes.length})</TabsTrigger><TabsTrigger value="conferidos" className="flex-1">Conferidos ({conferidos.length})</TabsTrigger></TabsList>
         <TabsContent value="pendentes" className="space-y-3 mt-3">
+          {podeGerenciar && pendentes.length > 0 && <Button onClick={conferirVisiveis} className="w-full bg-emerald-600">Conferir {pendentes.length} visíveis</Button>}
           {pendentes.map((r) => (
             <Card key={r.id} className="p-4 flex items-center gap-4">
-              <div className="flex-1 space-y-1">
-                <div className="font-semibold">{r.profissional?.nome}</div>
-                <div className="text-xs text-muted-foreground">Paciente: {r.atendimento?.paciente?.nome}</div>
-                <div className="font-bold text-amber-600">{formatBRL(Number(r.valor_repasse))}</div>
-              </div>
-              <div className="flex gap-2">
-                <Button size="sm" variant="ghost" onClick={() => { setEditando(r); setValorAtendimento(String(r.valor_atendimento)); setValorRepasse(String(r.valor_repasse)); }}>
-                  <Pencil className="w-4 h-4" />
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => atualizarStatus(r.id, "pago")}>
-                  <CheckCircle2 className="w-4 h-4" />
-                </Button>
-              </div>
+              <div className="flex-1"><div className="font-semibold">{r.profissional?.nome}</div><div className="text-xs text-muted-foreground">Pcte: {r.atendimento?.paciente?.nome}</div><div className="font-bold text-amber-600">{formatBRL(Number(r.valor_repasse))}</div></div>
+              <div className="flex gap-2"><Button size="sm" variant="ghost" onClick={() => { setEditando(r); setValorAtendimento(String(r.valor_atendimento)); setValorRepasse(String(r.valor_repasse)); }}><Pencil className="w-4 h-4" /></Button><Button size="sm" variant="outline" onClick={() => atualizarStatus(r.id, "pago")}><CheckCircle2 className="w-4 h-4" /></Button></div>
             </Card>
           ))}
         </TabsContent>
-
         <TabsContent value="conferidos" className="space-y-3 mt-3">
           {conferidos.map((r) => (
-            <Card key={r.id} className="p-4 flex items-center gap-4 opacity-70">
-              <div className="flex-1 space-y-1">
-                <div className="font-semibold">{r.profissional?.nome}</div>
-                <div className="font-bold text-emerald-600">{formatBRL(Number(r.valor_repasse))}</div>
-              </div>
-              <Button size="sm" variant="ghost" onClick={() => atualizarStatus(r.id, "pendente")}>
-                <Undo2 className="w-4 h-4 text-muted-foreground" />
-              </Button>
-            </Card>
+            <Card key={r.id} className="p-4 flex items-center gap-4 opacity-70"><div className="flex-1"><div className="font-semibold">{r.profissional?.nome}</div><div className="font-bold text-emerald-600">{formatBRL(Number(r.valor_repasse))}</div></div><Button size="sm" variant="ghost" onClick={() => atualizarStatus(r.id, "pendente")}><Undo2 className="w-4 h-4" /></Button></Card>
           ))}
         </TabsContent>
       </Tabs>
 
-      {/* Modal de Edição */}
       <Dialog open={!!editando} onOpenChange={() => setEditando(null)}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Editar Valores</DialogTitle></DialogHeader>
-          <div className="space-y-4">
-            <div><Label>Valor Atendimento</Label><Input value={valorAtendimento} onChange={(e) => setValorAtendimento(e.target.value)} /></div>
-            <div><Label>Valor Repasse</Label><Input value={valorRepasse} onChange={(e) => setValorRepasse(e.target.value)} /></div>
-            <Button onClick={salvarEdicao} className="w-full">Salvar Alterações</Button>
-          </div>
-        </DialogContent>
+        <DialogContent><DialogHeader><DialogTitle>Editar Valores</DialogTitle></DialogHeader><div className="space-y-4"><Label>Valor Atendimento</Label><Input value={valorAtendimento} onChange={(e) => setValorAtendimento(e.target.value)} /><Label>Valor Repasse</Label><Input value={valorRepasse} onChange={(e) => setValorRepasse(e.target.value)} /><Button onClick={salvarEdicao} className="w-full">Salvar</Button></div></DialogContent>
       </Dialog>
     </div>
   );
