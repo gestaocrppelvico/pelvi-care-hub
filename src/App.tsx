@@ -1,3 +1,4 @@
+import PlanosConfig from "./pages/PlanosConfig";
 import RelatorioRepasses from "./pages/RelatorioRepasses";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
