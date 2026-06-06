@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams, Link } from "react-router-dom"; // Adicionado o Link aqui!
-import { ArrowLeft, AlertCircle, ExternalLink } from "lucide-react"; // Adicionado o ícone ExternalLink
+import { useNavigate, useSearchParams, Link } from "react-router-dom";
+import { ArrowLeft, AlertCircle, ExternalLink } from "lucide-react";
 import { z } from "zod";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const schema = z.object({
   nome: z.string().trim().min(2, "Informe o nome").max(120),
@@ -31,9 +32,20 @@ export default function PacienteNovo() {
   const preNome = searchParams.get("nome") ?? "";
   const preTelefone = searchParams.get("telefone") ?? "";
 
-  // Novos Estados para controlar a digitação e as sugestões
+  // Estados para controlar a digitação e as sugestões
   const [nomeBusca, setNomeBusca] = useState(preNome);
   const [sugestoes, setSugestoes] = useState<{ id: string; nome: string; telefone: string | null }[]>([]);
+
+  // Novo estado para guardar a lista oficial de planos do banco e o valor selecionado
+  const [listaPlanos, setListaPlanos] = useState<{id: string, nome: string}[]>([]);
+  const [planoSelecionado, setPlanoSelecionado] = useState<string>("nenhum");
+
+  // Carrega a lista de planos ao abrir a tela
+  useEffect(() => {
+    supabase.from("planos_saude").select("id, nome").eq("ativo", true).then(({ data }) => {
+      if (data) setListaPlanos(data);
+    });
+  }, []);
 
   // ─── LÓGICA DE BUSCA DE DUPLICATAS (Debounce) ───
   useEffect(() => {
@@ -61,7 +73,12 @@ export default function PacienteNovo() {
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
-    const parsed = schema.safeParse(Object.fromEntries(fd));
+    
+    // Anexa manualmente o valor do Select no formulário antes de validar
+    const dadosFormulario = Object.fromEntries(fd);
+    dadosFormulario.plano_saude = planoSelecionado === "nenhum" ? "" : planoSelecionado;
+    
+    const parsed = schema.safeParse(dadosFormulario);
     
     if (!parsed.success) {
       toast.error(parsed.error.errors[0].message);
@@ -124,7 +141,6 @@ export default function PacienteNovo() {
                         <strong>{s.nome}</strong> {s.telefone ? `- Tel: ${s.telefone}` : ''}
                       </span>
                       
-                      {/* O NOSSO NOVO BOTÃO DE ATALHO */}
                       <Button variant="outline" size="sm" className="h-7 text-xs border-amber-300 text-amber-800 hover:bg-amber-200" asChild>
                         <Link to={`/pacientes/${s.id}`}>
                           <ExternalLink className="w-3 h-3 mr-1" />
@@ -152,7 +168,23 @@ export default function PacienteNovo() {
           </div>
           <Field label="Endereço" name="endereco" />
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Plano de saúde" name="plano_saude" />
+            
+            {/* NOVO CAMPO SELECT COM A LISTA DE PLANOS */}
+            <div className="space-y-2">
+              <Label>Plano de saúde</Label>
+              <Select value={planoSelecionado} onValueChange={setPlanoSelecionado}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="nenhum">Nenhum / Particular</SelectItem>
+                  {listaPlanos.map((p) => (
+                    <SelectItem key={p.id} value={p.nome}>{p.nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             <Field label="Carteirinha" name="numero_carteirinha" />
           </div>
           <div className="space-y-2">
