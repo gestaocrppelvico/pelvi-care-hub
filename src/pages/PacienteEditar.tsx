@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const schema = z.object({
   nome: z.string().trim().min(2, "Informe o nome").max(120),
@@ -28,6 +29,16 @@ export default function PacienteEditar() {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<Record<string, string>>({});
+  
+  // Novo estado para guardar a lista oficial de planos do banco
+  const [listaPlanos, setListaPlanos] = useState<{id: string, nome: string}[]>([]);
+
+  useEffect(() => {
+    // Busca os planos de saúde ativos na hora que a tela abre
+    supabase.from("planos_saude").select("id, nome").eq("ativo", true).then(({ data }) => {
+      if (data) setListaPlanos(data);
+    });
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -83,28 +94,53 @@ export default function PacienteEditar() {
       <Card className="p-4">
         <form onSubmit={onSubmit} className="space-y-4">
           <Field label="Nome completo *" value={form.nome} onChange={(v) => setForm({ ...form, nome: v })} />
+          
           <div className="grid grid-cols-2 gap-3">
             <Field label="CPF" value={form.cpf} onChange={(v) => setForm({ ...form, cpf: v })} />
             <Field label="Nascimento" value={form.data_nascimento} onChange={(v) => setForm({ ...form, data_nascimento: v })} type="date" />
           </div>
+          
           <div className="grid grid-cols-2 gap-3">
             <Field label="Telefone" value={form.telefone} onChange={(v) => setForm({ ...form, telefone: v })} />
             <Field label="E-mail" value={form.email} onChange={(v) => setForm({ ...form, email: v })} type="email" />
           </div>
+          
           <Field label="Endereço" value={form.endereco} onChange={(v) => setForm({ ...form, endereco: v })} />
+          
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Plano de saúde" value={form.plano_saude} onChange={(v) => setForm({ ...form, plano_saude: v })} />
+            {/* NOVO CAMPO SELECT COM A LISTA DE PLANOS */}
+            <div className="space-y-2">
+              <Label>Plano de saúde</Label>
+              <Select 
+                value={form.plano_saude || "nenhum"} 
+                onValueChange={(v) => setForm({ ...form, plano_saude: v === "nenhum" ? "" : v })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="nenhum">Nenhum / Particular</SelectItem>
+                  {listaPlanos.map((p) => (
+                    <SelectItem key={p.id} value={p.nome}>{p.nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            
             <Field label="Carteirinha" value={form.numero_carteirinha} onChange={(v) => setForm({ ...form, numero_carteirinha: v })} />
           </div>
+          
           <div className="space-y-2">
             <Label>Observações</Label>
             <Textarea rows={3} value={form.observacoes} onChange={(e) => setForm({ ...form, observacoes: e.target.value })} />
           </div>
+          
           <Button type="submit" className="w-full h-12" disabled={busy}>
             {busy ? "Salvando..." : "Salvar alterações"}
           </Button>
         </form>
       </Card>
+      
       <Button variant="destructive" className="w-full" onClick={onDelete}>
         <Trash2 className="w-4 h-4 mr-2" /> Excluir paciente
       </Button>
