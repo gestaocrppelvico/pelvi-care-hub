@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { ArrowLeft, ShieldCheck, Plus, Pencil, AlertTriangle } from "lucide-react";
 import { format } from "date-fns";
@@ -21,7 +22,7 @@ interface Autorizacao {
   sessoes_realizadas: number;
   data_emissao: string | null;
   data_validade: string | null;
-  status: string; // Mantemos por compatibilidade com o banco, mas ignoramos na interface
+  status: string; 
   observacoes: string | null;
   created_at: string;
 }
@@ -42,7 +43,6 @@ const EMPTY: Omit<Autorizacao, "id" | "created_at" | "status"> = {
   observacoes: "",
 };
 
-// 🧠 A MÁGICA DA AUTOMAÇÃO: Função que calcula o status matematicamente
 function calcularStatus(a: Autorizacao): StatusAutorizacao {
   if (a.sessoes_autorizadas > 0 && a.sessoes_realizadas >= a.sessoes_autorizadas) {
     return "esgotada";
@@ -62,6 +62,16 @@ export default function PacienteAutorizacoes() {
   const [open, setOpen] = useState(false);
   const [editando, setEditando] = useState<Autorizacao | null>(null);
   const [form, setForm] = useState(EMPTY);
+  
+  // Novo estado para carregar os planos cadastrados oficialmente
+  const [listaPlanos, setListaPlanos] = useState<{id: string, nome: string}[]>([]);
+
+  useEffect(() => {
+    // Carrega a lista oficial de planos ativos do Supabase
+    supabase.from("planos_saude").select("id, nome").eq("ativo", true).then(({ data }) => {
+      if (data) setListaPlanos(data);
+    });
+  }, []);
 
   async function carregar() {
     if (!id) return;
@@ -98,11 +108,10 @@ export default function PacienteAutorizacoes() {
 
   async function salvar() {
     if (!form.plano.trim()) {
-      toast.error("Informe o plano de saúde");
+      toast.error("Selecione o plano de saúde");
       return;
     }
     
-    // O status real é forçado a "ativa" no banco, pois a interface calcula o resto
     const payload = {
       paciente_id: id!,
       plano: form.plano,
@@ -123,7 +132,6 @@ export default function PacienteAutorizacoes() {
       const { data: novaAut, error } = await supabase.from("autorizacoes").insert(payload).select().single();
       if (error) { toast.error(error.message); return; }
       
-      // Cria o pacote financeiro
       if (novaAut) {
         await supabase.from("paciente_pacotes").insert({
           paciente_id: id!,
@@ -171,7 +179,6 @@ export default function PacienteAutorizacoes() {
               ? Math.round((a.sessoes_realizadas / a.sessoes_autorizadas) * 100)
               : 0;
             
-            // 🧠 Aplica a função de cálculo automático aqui
             const statusCalculado = calcularStatus(a);
             const vencida = statusCalculado === "expirada";
 
@@ -232,10 +239,25 @@ export default function PacienteAutorizacoes() {
             <DialogTitle>{editando ? "Editar autorização" : "Nova autorização"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 pt-2">
-            <div>
+            
+            {/* O NOVO DROPDOWN OFICIAL DE PLANOS DE SAÚDE INTEGRADO AQUI */}
+            <div className="space-y-1.5">
               <label className="text-sm font-medium">Plano de saúde *</label>
-              <Input value={form.plano} onChange={(e) => setForm({ ...form, plano: e.target.value })} placeholder="Ex: SulAmérica" />
+              <Select 
+                value={form.plano || undefined} 
+                onValueChange={(v) => setForm({ ...form, plano: v })}
+              >
+                <SelectTrigger className="bg-background">
+                  <SelectValue placeholder="Selecione o plano..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {listaPlanos.map((p) => (
+                    <SelectItem key={p.id} value={p.nome}>{p.nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
+
             <div>
               <label className="text-sm font-medium">Número da guia</label>
               <Input value={form.numero_guia ?? ""} onChange={(e) => setForm({ ...form, numero_guia: e.target.value })} placeholder="Opcional" />
