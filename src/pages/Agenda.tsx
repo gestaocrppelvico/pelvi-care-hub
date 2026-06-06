@@ -26,10 +26,6 @@ const HOURS = Array.from({ length: 14 }, (_, i) => i + 7);
 function displayName(a: Atendimento) { return a.paciente?.nome ?? a.nome_paciente_livre ?? "—"; }
 function eventColor(a: Atendimento) { return a.profissional?.cor_agenda ?? "#9CA3AF"; }
 function statusBadge(a: Atendimento) { return statusLabel[a.status] ?? a.status; }
-function statusBadgeBg(a: Atendimento): string {
-  const map: Record<string, string> = { agendado: "bg-gray-400/80", em_andamento: "bg-blue-500/80", realizado: "bg-green-500/80", cancelado: "bg-red-500/80", faltou: "bg-red-400/80", faltou_sem_aviso: "bg-orange-500/80" };
-  return map[a.status] ?? "bg-gray-400/80";
-}
 
 export default function Agenda() {
   const { isSecretaria, isAdmin, isFisio, user } = useAuth();
@@ -63,7 +59,6 @@ export default function Agenda() {
   
   const [idItemSelecionado, setIdItemSelecionado] = useState<string>("");
   const [planoSelecionado, setPlanoSelecionado] = useState<string>("");
-  const [pacotePlanoSelecionado, setPacotePlanoSelecionado] = useState<string>("");
   const [qtdSessoesAuto, setQtdSessoesAuto] = useState<string>("1");
   const [valorTotalAuto, setValorTotalAuto] = useState<string>("");
 
@@ -122,8 +117,6 @@ export default function Agenda() {
     if (!silent) setLoading(false);
   }, [range]);
 
-  useEffect(() => { reload(); }, [reload]);
-
   const syncNow = useCallback(async (silent = false) => {
     if (!silent) setSyncing(true);
     const hoje = new Date(); const timeMin = addDays(hoje, -1).toISOString(); const timeMax = addDays(hoje, 30).toISOString();
@@ -152,71 +145,72 @@ export default function Agenda() {
     toast.success(`Status → "${statusLabel[novoStatus]}"`); setSelected(null); reload();
   }
 
+  // LÓGICA BLINDADA: Check-in identifica se é Guia e força o tipo "Plano"
   async function fazerCheckin(a: Atendimento) {
     if (!confirm("Confirmar check-in?")) return;
-    const { error } = await supabase.from("atendimentos").update({ status: "realizado" as any }).eq("id", a.id);
+    if (!a.paciente_id) { toast.error("Paciente não vinculado!"); return; }
+
+    const { data: pacotes } = await supabase.from("paciente_pacotes")
+      .select("id, autorizacao_id")
+      .eq("paciente_id", a.paciente_id)
+      .gt("sessoes_restantes", 0)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    let payload: any = { status: "realizado" as any };
+    if (pacotes && pacotes.length > 0) {
+      payload.paciente_pacote_id = pacotes[0].id;
+      // Se tiver autorizacao_id, força o tipo para Plano para o gatilho financeiro funcionar
+      if (pacotes[0].autorizacao_id) payload.tipo = "Plano";
+    }
+
+    const { error } = await supabase.from("atendimentos").update(payload).eq("id", a.id);
     if (error) { toast.error(error.message); return; }
     toast.success("Check-in realizado com sucesso!"); setSelected(null); reload();
-  }
-
-  function handleCatalogoSelectChange(idSelecionado: string) {
-    setIdItemSelecionado(idSelecionado);
-    if (itemTipo === "servico") {
-      const servico = listaServicos.find(s => s.id === idSelecionado);
-      if (servico) { setQtdSessoesAuto("1"); setValorTotalAuto(servico.preco.toString()); }
-    } else {
-      const pacote = listaPacotes.find(p => p.id === idSelecionado);
-      if (pacote) { setQtdSessoesAuto(pacote.numero_sessoes.toString()); setValorTotalAuto(pacote.preco_total.toString()); }
-    }
   }
 
   async function salvarCadastroRapido(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!selected) return;
-    const fd = new FormData(e.currentTarget);
-    if (!usarPacoteExistenteId && tipoAtendimentoRascunho === "Particular" && !idItemSelecionado) { toast.error("Selecione um item."); return; }
-
     try {
       let finalPacienteId = pacienteSelecionado?.id;
       if (!finalPacienteId) {
-        const { data: novoPac, error: errPac } = await supabase.from("pacientes").insert({ nome: termoBusca, telefone: telefoneBusca || null }).select().single();
-        if (errPac) throw new Error("Erro paciente: " + errPac.message);
-        finalPacienteId = novoPac.id;
-      }
-
-      let finalPacoteId = usarPacoteExistenteId;
-      if (!finalPacoteId) {
-        if (tipoAtendimentoRascunho === "Plano") {
-          if (!planoSelecionado || !pacotePlanoSelecionado) { toast.error("Selecione Plano e Pacote de Repasse."); return; }
-          const numeroGuia = fd.get("numeroGuia") as string;
-          const qtdSessoesPlano = parseInt((fd.get("qtdSessoesPlano") as string) || "10");
-          const pacoteParaPlano = listaPacotes.find(p => p.id === pacotePlanoSelecionado);
-          const precoRepasse = pacoteParaPlano ? pacoteParaPlano.preco_total : 0;
-
-          const { data: novaAut, error: errAut } = await supabase.from("autorizacoes").insert({ paciente_id: finalPacienteId, plano: planoSelecionado, numero_guia: numeroGuia, sessoes_autorizadas: qtdSessoesPlano, sessoes_realizadas: 0 }).select().single();
-          if (errAut) throw new Error("Erro guia: " + errAut.message);
-
-          const { data: novoPacotePlano, error: errPacPlano } = await supabase.from("paciente_pacotes").insert({ paciente_id: finalPacienteId, autorizacao_id: novaAut.id, pacote_id: pacotePlanoSelecionado, sessoes_totais: qtdSessoesPlano, sessoes_restantes: qtdSessoesPlano, preco_pago: precoRepasse, status_pagamento: "pago" }).select().single();
-          if (errPacPlano) throw new Error("Erro pacote financeiro: " + errPacPlano.message);
-          finalPacoteId = novoPacotePlano.id;
-        } else {
-          const qtdSessoes = parseInt(qtdSessoesAuto || "1");
-          const valorTotal = valorTotalAuto ? parseFloat(valorTotalAuto) : 0;
-          const dadosDoPacote: Record<string, any> = { paciente_id: finalPacienteId, sessoes_totais: qtdSessoes, sessoes_restantes: qtdSessoes, preco_pago: valorTotal, status_pagamento: "pendente" };
-          if (itemTipo === "pacote") dadosDoPacote.pacote_id = idItemSelecionado; else if (itemTipo === "servico") dadosDoPacote.servico_id = idItemSelecionado;
-          const { data: novoPacote, error: errPacote } = await supabase.from("paciente_pacotes").insert(dadosDoPacote).select().single();
-          if (errPacote) throw new Error("Erro pacote particular: " + errPacote.message);
-          finalPacoteId = novoPacote.id;
+        const { data: pExists } = await supabase.from("pacientes").select("id").ilike("nome", termoBusca.trim()).maybeSingle();
+        if (pExists) finalPacienteId = pExists.id;
+        else {
+          const { data: novoPac, error: errPac } = await supabase.from("pacientes").insert({ nome: termoBusca.trim(), telefone: telefoneBusca || null }).select().single();
+          if (errPac) throw new Error("Erro paciente: " + errPac.message);
+          finalPacienteId = novoPac.id;
         }
       }
 
-      const { error: errAtendimento } = await supabase.from("atendimentos").update({ paciente_id: finalPacienteId, paciente_pacote_id: finalPacoteId, status: "realizado" as any, tipo: tipoAtendimentoRascunho }).eq("id", selected.id);
-      if (errAtendimento) throw new Error("Erro vínculo: " + errAtendimento.message);
-      toast.success(usarPacoteExistenteId ? "Sessão descontada!" : "Check-in concluído!");
+      let finalPacoteId = usarPacoteExistenteId;
+      let tipoFinal = tipoAtendimentoRascunho;
+
+      if (!finalPacoteId) {
+        if (tipoAtendimentoRascunho === "Plano") {
+          const fd = new FormData(e.currentTarget);
+          const { data: novaAut, error: errAut } = await supabase.from("autorizacoes").insert({ paciente_id: finalPacienteId, plano: planoSelecionado, numero_guia: fd.get("numeroGuia") || null, sessoes_autorizadas: parseInt(fd.get("qtdSessoesPlano") as string), sessoes_realizadas: 0 }).select().single();
+          if (errAut) throw new Error("Erro guia: " + errAut.message);
+          const { data: np, error: ep } = await supabase.from("paciente_pacotes").insert({ paciente_id: finalPacienteId, autorizacao_id: novaAut.id, sessoes_totais: parseInt(fd.get("qtdSessoesPlano") as string), sessoes_restantes: parseInt(fd.get("qtdSessoesPlano") as string), preco_pago: 0, status_pagamento: "pago" }).select().single();
+          finalPacoteId = np.id;
+          tipoFinal = "Plano"; // Força plano ao criar guia
+        } else {
+          const { data: np, error: ep } = await supabase.from("paciente_pacotes").insert({ paciente_id: finalPacienteId, sessoes_totais: parseInt(qtdSessoesAuto), sessoes_restantes: parseInt(qtdSessoesAuto), preco_pago: parseFloat(valorTotalAuto), status_pagamento: "pendente", [itemTipo === "pacote" ? "pacote_id" : "servico_id"]: idItemSelecionado }).select().single();
+          finalPacoteId = np.id;
+        }
+      } else {
+        const { data: checkGuia } = await supabase.from("paciente_pacotes").select("autorizacao_id").eq("id", finalPacoteId).single();
+        if (checkGuia?.autorizacao_id) tipoFinal = "Plano";
+      }
+
+      await supabase.from("atendimentos").update({ paciente_id: finalPacienteId, paciente_pacote_id: finalPacoteId, status: "realizado", tipo: tipoFinal }).eq("id", selected.id);
+      toast.success("Check-in concluído!");
       setModoCadastroRapido(false); setSelected(null); reload();
-    } catch (error: any) { toast.error(error.message); }
+    } catch (e: any) { toast.error(e.message); }
   }
 
+  // --- Funções Auxiliares de Visualização ---
   function enviarWhatsapp(a: Atendimento) {
     const tel = a.paciente?.telefone ?? a.telefone_contato;
     const msg = `Olá ${displayName(a)}, confirmando atendimento em ${format(new Date(a.data_inicio), "dd/MM 'às' HH:mm")}.`;
@@ -291,8 +285,8 @@ export default function Agenda() {
               <SheetHeader><SheetTitle>Associação de Atendimento</SheetTitle></SheetHeader>
               <form onSubmit={salvarCadastroRapido} className="space-y-4 mt-2">
                 <div className="space-y-1.5 relative">
-                  <Label>Nome</Label>
-                  <div className="relative"><Search className="absolute left-3 top-3 w-4 h-4 text-muted-foreground" /><Input value={termoBusca} onChange={(e) => { setTermoBusca(e.target.value); setPacienteSelecionado(null); setPacotesAtivosPaciente([]); setUsarPacoteExistenteId(""); }} className={`pl-9 ${pacienteSelecionado ? "border-green-500 bg-green-50/30 font-semibold" : ""}`} placeholder="Buscar..." required /></div>
+                  <Label>Nome do Paciente</Label>
+                  <div className="relative"><Search className="absolute left-3 top-3 w-4 h-4 text-muted-foreground" /><Input value={termoBusca} onChange={(e) => { setTermoBusca(e.target.value); setPacienteSelecionado(null); setPacotesAtivosPaciente([]); setUsarPacoteExistenteId(""); }} className={`pl-9 ${pacienteSelecionado ? "border-green-500 bg-green-50/30 font-semibold" : ""}`} placeholder="Buscar paciente..." required /></div>
                   {sugestoesPacientes.length > 0 && !pacienteSelecionado && (
                     <div className="absolute z-20 w-full bg-background border rounded-md shadow-xl mt-1 max-h-48 overflow-y-auto">
                       {sugestoesPacientes.map((p) => (
@@ -328,22 +322,30 @@ export default function Agenda() {
                           <label className="flex items-center gap-1.5 text-xs"><input type="radio" checked={itemTipo === "servico"} onChange={() => { setItemTipo("servico"); setQtdSessoesAuto("1"); setValorTotalAuto(""); setIdItemSelecionado(""); }} /> Avulsa</label>
                           <label className="flex items-center gap-1.5 text-xs"><input type="radio" checked={itemTipo === "pacote"} onChange={() => { setItemTipo("pacote"); setQtdSessoesAuto("1"); setValorTotalAuto(""); setIdItemSelecionado(""); }} /> Pacote</label>
                         </div>
-                        <select className="w-full bg-background border rounded-md h-9 px-3 text-sm" required onChange={(e) => handleCatalogoSelectChange(e.target.value)} value={idItemSelecionado}>
+                        <select className="w-full bg-background border rounded-md h-9 px-3 text-sm" required onChange={(e) => setIdItemSelecionado(e.target.value)} value={idItemSelecionado}>
                           <option value="" disabled>-- Selecione --</option>
                           {itemTipo === "servico" ? listaServicos.map(s => <option key={s.id} value={s.id}>{s.nome} (R$ {s.preco})</option>) : listaPacotes.map(p => <option key={p.id} value={p.id}>{p.nome} ({p.numero_sessoes} sessões)</option>)}
                         </select>
                       </div>
                     ) : (
                       <div className="space-y-3 p-3 border rounded-lg bg-blue-50/30">
-                        <div className="space-y-1.5"><Label>Plano de Saúde</Label><Select value={planoSelecionado} onValueChange={setPlanoSelecionado} required><SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger><SelectContent>{listaPlanos.map(p => <SelectItem key={p.id} value={p.nome}>{p.nome}</SelectItem>)}</SelectContent></Select></div>
-                        <div className="space-y-1.5"><Label>Pacote de Repasse (Valor)</Label><Select value={pacotePlanoSelecionado} onValueChange={setPacotePlanoSelecionado} required><SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger><SelectContent>{listaPacotes.map(p => <SelectItem key={p.id} value={p.id}>{p.nome} (R$ {p.preco_total})</SelectItem>)}</SelectContent></Select></div>
-                        <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Número Guia</Label><Input name="numeroGuia" required /></div><div className="space-y-1.5"><Label>Autorizadas</Label><Input name="qtdSessoesPlano" type="number" defaultValue="5" required /></div></div>
+                        <div className="space-y-1.5"><Label>Plano de Saúde</Label><Select value={planoSelecionado} onValueChange={setPlanoSelecionado} required><SelectTrigger className="bg-background"><SelectValue placeholder="Selecione o plano..." /></SelectTrigger><SelectContent>{listaPlanos.map(p => <SelectItem key={p.id} value={p.nome}>{p.nome}</SelectItem>)}</SelectContent></Select></div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1.5"><Label>Número Guia</Label><Input name="numeroGuia" placeholder="Opcional" /></div>
+                          <div className="space-y-1.5"><Label>Autorizadas</Label><Input name="qtdSessoesPlano" type="number" defaultValue="10" required /></div>
+                        </div>
                       </div>
                     )}
-                    <div className="grid grid-cols-2 gap-3 mt-4"><div className="space-y-1.5"><Label>Sessões</Label><Input value={tipoAtendimentoRascunho === "Plano" ? "Faturar" : qtdSessoesAuto} disabled /></div><div className="space-y-1.5"><Label>Valor</Label><Input value={tipoAtendimentoRascunho === "Plano" ? "Conveniado" : (valorTotalAuto ? `R$ ${parseFloat(valorTotalAuto).toFixed(2)}` : "—")} disabled /></div></div>
+                    
+                    {tipoAtendimentoRascunho === "Particular" && (
+                      <div className="grid grid-cols-2 gap-3 mt-4">
+                        <div className="space-y-1.5"><Label>Sessões</Label><Input value={qtdSessoesAuto} disabled /></div>
+                        <div className="space-y-1.5"><Label>Valor</Label><Input value={valorTotalAuto ? `R$ ${parseFloat(valorTotalAuto).toFixed(2)}` : "—"} disabled /></div>
+                      </div>
+                    )}
                   </>
                 )}
-                <div className="flex gap-2 pt-4"><Button type="button" variant="outline" className="flex-1" onClick={() => setModoCadastroRapido(false)}>Cancelar</Button><Button type="submit" className="flex-1 bg-primary text-white" disabled={termoBusca.length > 2 && sugestoesPacientes.length > 0 && !pacienteSelecionado}>Check-in</Button></div>
+                <div className="flex gap-2 pt-4"><Button type="button" variant="outline" className="flex-1" onClick={() => setModoCadastroRapido(false)}>Cancelar</Button><Button type="submit" className="flex-1 bg-primary text-white">Salvar Check-in</Button></div>
               </form>
             </div>
           )}
