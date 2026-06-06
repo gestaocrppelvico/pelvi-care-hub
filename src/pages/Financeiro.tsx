@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Wallet, Package, Settings, ChevronRight, CheckCircle2, CheckSquare, Calendar, User as UserIcon, Activity, Undo2, Pencil } from "lucide-react";
+import { Wallet, Package, Settings, CheckCircle2, CheckSquare, Calendar, User as UserIcon, Activity, Undo2, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval, parseISO } from "date-fns";
 
@@ -23,10 +23,7 @@ interface RepasseRow {
   status: string;
   created_at: string;
   profissional?: { id: string; nome: string; cor_agenda: string };
-  atendimento?: {
-    tipo: string;
-    paciente?: { nome: string };
-  };
+  atendimento?: { tipo: string; paciente?: { nome: string } };
 }
 
 export default function Financeiro() {
@@ -35,10 +32,8 @@ export default function Financeiro() {
   
   const [repasses, setRepasses] = useState<RepasseRow[]>([]);
   const [loading, setLoading] = useState(true);
-  
   const [filtroProfissional, setFiltroProfissional] = useState<string>("todos");
   const [filtroPeriodo, setFiltroPeriodo] = useState<string>("semana");
-  
   const [editando, setEditando] = useState<RepasseRow | null>(null);
   const [valorAtendimento, setValorAtendimento] = useState("");
   const [valorRepasse, setValorRepasse] = useState("");
@@ -47,17 +42,9 @@ export default function Financeiro() {
     setLoading(true);
     const { data } = await supabase
       .from("repasses_atendimento")
-      .select(`
-        *,
-        profissional:profissionais(id, nome, cor_agenda),
-        atendimento:atendimentos(
-          tipo,
-          paciente:pacientes(nome)
-        )
-      `)
+      .select(`*, profissional:profissionais(id, nome, cor_agenda), atendimento:atendimentos(tipo, paciente:pacientes(nome))`)
       .order("created_at", { ascending: false })
       .limit(500);
-      
     setRepasses((data as any[]) ?? []);
     setLoading(false);
   }
@@ -124,13 +111,12 @@ export default function Financeiro() {
     <div className="space-y-4">
       <div className="flex items-center gap-2"><Wallet className="w-6 h-6 text-primary" /><h1 className="text-2xl font-bold">Financeiro</h1></div>
 
-      {podeGerenciar && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-          <Link to="/financeiro/servicos"><Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full"><Package className="w-5 h-5 text-primary" /><div className="flex-1"><div className="font-medium text-sm">Serviços e Pacotes</div></div></Card></Link>
-          {isAdmin && (<Link to="/financeiro/repasses"><Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full"><Settings className="w-5 h-5 text-primary" /><div className="flex-1"><div className="font-medium text-sm">Regras de Repasse</div></div></Card></Link>)}
-          {isAdmin && (<Link to="/financeiro/relatorios"><Card className="p-3 flex items-center gap-2 hover:bg-emerald-50 transition-colors h-full border-emerald-200"><Activity className="w-5 h-5 text-emerald-600" /><div className="flex-1"><div className="font-medium text-sm text-emerald-800">Relatórios</div></div></Card></Link>)}
-        </div>
-      )}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+        <Link to="/financeiro/servicos"><Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full"><Package className="w-5 h-5 text-primary" /><div className="font-medium text-sm">Serviços e Pacotes</div></Card></Link>
+        {isAdmin && <Link to="/financeiro/repasses"><Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full"><Settings className="w-5 h-5 text-primary" /><div className="font-medium text-sm">Regras de Repasse</div></Card></Link>}
+        {/* BOTÃO RELATÓRIOS RESTAURADO ABAIXO */}
+        <Link to="/financeiro/relatorios"><Card className="p-3 flex items-center gap-2 hover:bg-emerald-50 transition-colors h-full border-emerald-200"><Activity className="w-5 h-5 text-emerald-600" /><div className="font-medium text-sm text-emerald-800">Relatórios</div></Card></Link>
+      </div>
 
       <div className="flex flex-col sm:flex-row gap-3 p-3 bg-muted/50 rounded-lg border">
         <Select value={filtroPeriodo} onValueChange={setFiltroPeriodo}><SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="semana">Esta Semana</SelectItem><SelectItem value="mes">Este Mês</SelectItem><SelectItem value="todos">Tudo</SelectItem></SelectContent></Select>
