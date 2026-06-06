@@ -1,14 +1,14 @@
 import { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/hooks/useAuth"; // <-- Importamos o hook de autenticação
+import { useAuth } from "@/hooks/useAuth";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { format, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { ArrowLeft, Printer, TrendingUp, Calculator, FileText, Activity, ShieldAlert } from "lucide-react";
+import { ArrowLeft, Printer, TrendingUp, Calculator, FileText, Activity } from "lucide-react";
 import { toast } from "sonner";
 
 interface Repasse {
@@ -23,7 +23,8 @@ interface Repasse {
 
 export default function RelatorioRepasses() {
   const navigate = useNavigate();
-  const { isAdmin } = useAuth(); // <-- Puxamos a permissão do usuário logado
+  const { isAdmin, isSecretaria } = useAuth();
+  const podeGerenciar = isAdmin || isSecretaria;
   
   const [loading, setLoading] = useState(false);
   const [repasses, setRepasses] = useState<Repasse[]>([]);
@@ -34,30 +35,12 @@ export default function RelatorioRepasses() {
   const [dataFim, setDataFim] = useState(format(endOfMonth(new Date()), "yyyy-MM-dd"));
   const [filtroFisio, setFiltroFisio] = useState("todos");
 
+  // O useEffect agora carrega os profissionais sem ser bloqueado pela ansiedade do state inicial
   useEffect(() => {
-    // Só carrega os dados se for admin
-    if (isAdmin) {
-      supabase.from("profissionais").select("id, nome").then(({ data }) => {
-        if (data) setProfissionaisLista(data);
-      });
-    }
-  }, [isAdmin]);
-
-  // BLOQUEIO DE SEGURANÇA: Se não for Admin, para tudo e mostra tela de aviso
-  if (!isAdmin) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4 text-center">
-        <ShieldAlert className="w-16 h-16 text-red-500" />
-        <h2 className="text-2xl font-bold text-slate-800">Acesso Restrito</h2>
-        <p className="text-muted-foreground max-w-md">
-          Apenas administradores (Diretoria) possuem permissão para visualizar os relatórios financeiros e de repasses.
-        </p>
-        <Button onClick={() => navigate(-1)} variant="outline" className="mt-4">
-          <ArrowLeft className="w-4 h-4 mr-2" /> Voltar
-        </Button>
-      </div>
-    );
-  }
+    supabase.from("profissionais").select("id, nome").then(({ data }) => {
+      if (data) setProfissionaisLista(data);
+    });
+  }, []);
 
   async function gerarRelatorio() {
     if (!dataInicio || !dataFim) {
