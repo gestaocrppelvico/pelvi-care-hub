@@ -86,7 +86,7 @@ export default function Agenda() {
   }, [termoBusca, pacienteSelecionado]);
 
   async function buscarPacotesAtivos(pacienteId: string) {
-    const { data } = await supabase.from('paciente_pacotes').select('id, sessoes_restantes, pacotes(nome), servicos(nome), autorizacoes(plano, numero_guia)').eq('paciente_id', pacienteId).gt('sessoes_restantes', 0).order('created_at', { ascending: false });
+    const { data } = await supabase.from('paciente_pacotes').select('id, sessoes_restantes, pacotes(nome), servicos(nome), autorizacoes(plano, numero_guia)').eq('paciente_id', pacienteId).gt('sessoes_restantes', 0).order('created_at', { ascending: true });
     setPacotesAtivosPaciente(data || []);
     if (data && data.length > 0) setUsarPacoteExistenteId(data[0].id); else setUsarPacoteExistenteId("");
   }
@@ -145,23 +145,27 @@ export default function Agenda() {
     toast.success(`Status → "${statusLabel[novoStatus]}"`); setSelected(null); reload();
   }
 
-  // LÓGICA BLINDADA: Check-in identifica se é Guia e força o tipo "Plano"
+  // PASSO 2: CHECK-IN INTELIGENTE - Lê a guia e força a regra de comissão certa
   async function fazerCheckin(a: Atendimento) {
     if (!confirm("Confirmar check-in?")) return;
-    if (!a.paciente_id) { toast.error("Paciente não vinculado!"); return; }
+    if (!a.paciente_id) { toast.error("Paciente não vinculado! Use Cadastro Rápido."); return; }
 
     const { data: pacotes } = await supabase.from("paciente_pacotes")
       .select("id, autorizacao_id")
       .eq("paciente_id", a.paciente_id)
       .gt("sessoes_restantes", 0)
-      .order("created_at", { ascending: false })
+      .order("created_at", { ascending: true }) // Usa os pacotes/guias mais velhos primeiro
       .limit(1);
 
     let payload: any = { status: "realizado" as any };
     if (pacotes && pacotes.length > 0) {
       payload.paciente_pacote_id = pacotes[0].id;
-      // Se tiver autorizacao_id, força o tipo para Plano para o gatilho financeiro funcionar
-      if (pacotes[0].autorizacao_id) payload.tipo = "Plano";
+      // Define a etiqueta para o banco de dados acertar a comissão
+      if (pacotes[0].autorizacao_id) {
+        payload.tipo = "Plano";
+      } else {
+        payload.tipo = "Particular";
+      }
     }
 
     const { error } = await supabase.from("atendimentos").update(payload).eq("id", a.id);
@@ -169,48 +173,79 @@ export default function Agenda() {
     toast.success("Check-in realizado com sucesso!"); setSelected(null); reload();
   }
 
+  function handleCatalogoSelectChange(idSelecionado: string) {
+    setIdItemSelecionado(idSelecionado);
+    if (itemTipo === "servico") {
+      const servico = listaServicos.find(s => s.id === idSelecionado);
+      if (servico) { setQtdSessoesAuto("1"); setValorTotalAuto(servico.preco.toString()); }
+    } else {
+      const pacote = listaPacotes.find(p => p.id === idSelecionado);
+      if (pacote) { setQtdSessoesAuto(pacote.numero_sessoes.toString()); setValorTotalAuto(pacote.preco_total.toString()); }
+    }
+  }
+
+  // PASSO 2: CADASTRO RÁPIDO BLINDADO (Quantidades e tipos corrigidos)
   async function salvarCadastroRapido(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!selected) return;
     try {
-      let finalPacienteId = pacienteSelecionado?.id;
-      if (!finalPacienteId) {
-        const { data: pExists } = await supabase.from("pacientes").select("id").ilike("nome", termoBusca.trim()).maybeSingle();
-        if (pExists) finalPacienteId = pExists.id;
-        else {
-          const { data: novoPac, error: errPac } = await supabase.from("pacientes").insert({ nome: termoBusca.trim(), telefone: telefoneBusca || null }).select().single();
-          if (errPac) throw new Error("Erro paciente: " + errPac.message);
-          finalPacienteId = novoPac.id;
-        }
+      // 1. Acha ou Cria Paciente
+      let pId = pacienteSelecionado?.id;
+      if (!pId) {
+        const { data: novo, error } = await supabase.from("pacientes").insert({ nome: termoBusca.trim(), telefone: telefoneBusca || null }).select().single();
+        if (error) throw new Error("Erro paciente: " + error.message);
+        pId = novo.id;
       }
 
-      let finalPacoteId = usarPacoteExistenteId;
+      let pacoteVincId = usarPacoteExistenteId;
       let tipoFinal = tipoAtendimentoRascunho;
 
-      if (!finalPacoteId) {
+      // Se é pacote NOVO
+      if (!pacoteVincId) {
         if (tipoAtendimentoRascunho === "Plano") {
           const fd = new FormData(e.currentTarget);
-          const { data: novaAut, error: errAut } = await supabase.from("autorizacoes").insert({ paciente_id: finalPacienteId, plano: planoSelecionado, numero_guia: fd.get("numeroGuia") || null, sessoes_autorizadas: parseInt(fd.get("qtdSessoesPlano") as string), sessoes_realizadas: 0 }).select().single();
-          if (errAut) throw new Error("Erro guia: " + errAut.message);
-          const { data: np, error: ep } = await supabase.from("paciente_pacotes").insert({ paciente_id: finalPacienteId, autorizacao_id: novaAut.id, sessoes_totais: parseInt(fd.get("qtdSessoesPlano") as string), sessoes_restantes: parseInt(fd.get("qtdSessoesPlano") as string), preco_pago: 0, status_pagamento: "pago" }).select().single();
-          finalPacoteId = np.id;
-          tipoFinal = "Plano"; // Força plano ao criar guia
+          const qtdPlano = parseInt(fd.get("qtdSessoesPlano") as string) || 10;
+          
+          const { data: aut } = await supabase.from("autorizacoes").insert({ 
+            paciente_id: pId, plano: planoSelecionado, numero_guia: fd.get("numeroGuia") || null, sessoes_autorizadas: qtdPlano, sessoes_realizadas: 0 
+          }).select().single();
+          
+          const { data: pac } = await supabase.from("paciente_pacotes").insert({ 
+            paciente_id: pId, autorizacao_id: aut.id, sessoes_totais: qtdPlano, sessoes_restantes: qtdPlano, preco_pago: 0, status_pagamento: "pago" 
+          }).select().single();
+          
+          pacoteVincId = pac.id;
+          tipoFinal = "Plano";
         } else {
-          const { data: np, error: ep } = await supabase.from("paciente_pacotes").insert({ paciente_id: finalPacienteId, sessoes_totais: parseInt(qtdSessoesAuto), sessoes_restantes: parseInt(qtdSessoesAuto), preco_pago: parseFloat(valorTotalAuto), status_pagamento: "pendente", [itemTipo === "pacote" ? "pacote_id" : "servico_id"]: idItemSelecionado }).select().single();
-          finalPacoteId = np.id;
+          // PARTICULAR: Lê a quantidade correta escolhida no catálogo
+          const qtd = parseInt(qtdSessoesAuto) || 1;
+          const valor = parseFloat(valorTotalAuto) || 0;
+          
+          let payloadPacote: any = { paciente_id: pId, sessoes_totais: qtd, sessoes_restantes: qtd, preco_pago: valor, status_pagamento: "pendente" };
+          if (itemTipo === "pacote" && idItemSelecionado) payloadPacote.pacote_id = idItemSelecionado;
+          if (itemTipo === "servico" && idItemSelecionado) payloadPacote.servico_id = idItemSelecionado;
+
+          const { data: pac, error: e3 } = await supabase.from("paciente_pacotes").insert(payloadPacote).select().single();
+          if (e3) throw e3;
+          pacoteVincId = pac.id;
+          tipoFinal = "Particular";
         }
       } else {
-        const { data: checkGuia } = await supabase.from("paciente_pacotes").select("autorizacao_id").eq("id", finalPacoteId).single();
+        // Se usou um pacote já existente, descobre o tipo olhando pro banco
+        const { data: checkGuia } = await supabase.from("paciente_pacotes").select("autorizacao_id").eq("id", pacoteVincId).single();
         if (checkGuia?.autorizacao_id) tipoFinal = "Plano";
+        else tipoFinal = "Particular";
       }
 
-      await supabase.from("atendimentos").update({ paciente_id: finalPacienteId, paciente_pacote_id: finalPacoteId, status: "realizado", tipo: tipoFinal }).eq("id", selected.id);
-      toast.success("Check-in concluído!");
+      // 3. Finaliza atendimento com TIPO CORRETO
+      const { error } = await supabase.from("atendimentos").update({ paciente_id: pId, paciente_pacote_id: pacoteVincId, status: "realizado", tipo: tipoFinal }).eq("id", selected.id);
+      if (error) throw new Error("Erro vínculo: " + error.message);
+      
+      toast.success("Check-in e associação concluídos!");
       setModoCadastroRapido(false); setSelected(null); reload();
     } catch (e: any) { toast.error(e.message); }
   }
 
-  // --- Funções Auxiliares de Visualização ---
   function enviarWhatsapp(a: Atendimento) {
     const tel = a.paciente?.telefone ?? a.telefone_contato;
     const msg = `Olá ${displayName(a)}, confirmando atendimento em ${format(new Date(a.data_inicio), "dd/MM 'às' HH:mm")}.`;
@@ -322,7 +357,7 @@ export default function Agenda() {
                           <label className="flex items-center gap-1.5 text-xs"><input type="radio" checked={itemTipo === "servico"} onChange={() => { setItemTipo("servico"); setQtdSessoesAuto("1"); setValorTotalAuto(""); setIdItemSelecionado(""); }} /> Avulsa</label>
                           <label className="flex items-center gap-1.5 text-xs"><input type="radio" checked={itemTipo === "pacote"} onChange={() => { setItemTipo("pacote"); setQtdSessoesAuto("1"); setValorTotalAuto(""); setIdItemSelecionado(""); }} /> Pacote</label>
                         </div>
-                        <select className="w-full bg-background border rounded-md h-9 px-3 text-sm" required onChange={(e) => setIdItemSelecionado(e.target.value)} value={idItemSelecionado}>
+                        <select className="w-full bg-background border rounded-md h-9 px-3 text-sm" required onChange={(e) => handleCatalogoSelectChange(e.target.value)} value={idItemSelecionado}>
                           <option value="" disabled>-- Selecione --</option>
                           {itemTipo === "servico" ? listaServicos.map(s => <option key={s.id} value={s.id}>{s.nome} (R$ {s.preco})</option>) : listaPacotes.map(p => <option key={p.id} value={p.id}>{p.nome} ({p.numero_sessoes} sessões)</option>)}
                         </select>
@@ -339,8 +374,8 @@ export default function Agenda() {
                     
                     {tipoAtendimentoRascunho === "Particular" && (
                       <div className="grid grid-cols-2 gap-3 mt-4">
-                        <div className="space-y-1.5"><Label>Sessões</Label><Input value={qtdSessoesAuto} disabled /></div>
-                        <div className="space-y-1.5"><Label>Valor</Label><Input value={valorTotalAuto ? `R$ ${parseFloat(valorTotalAuto).toFixed(2)}` : "—"} disabled /></div>
+                        <div className="space-y-1.5"><Label>Sessões Totais</Label><Input value={qtdSessoesAuto} disabled /></div>
+                        <div className="space-y-1.5"><Label>Valor Cheio</Label><Input value={valorTotalAuto ? `R$ ${parseFloat(valorTotalAuto).toFixed(2)}` : "—"} disabled /></div>
                       </div>
                     )}
                   </>
@@ -407,30 +442,4 @@ function WeekView({ anchor, eventsByDay, onSelect, onDayClick }: { anchor: Date;
         return (
           <div key={key} className="bg-card min-h-[120px] p-1">
             <button className="w-full mb-1" onClick={() => onDayClick(d)}><div className={`text-center text-[10px] uppercase ${isToday ? "font-bold text-primary" : "text-muted-foreground"}`}>{format(d, "EEE", { locale: ptBR })}</div><div className={`text-center text-sm ${isToday ? "bg-primary text-primary-foreground w-6 h-6 rounded-full mx-auto flex items-center justify-center font-bold" : ""}`}>{format(d, "d")}</div></button>
-            <div className="space-y-0.5">{evts.map((e) => (<button key={e.id} onClick={() => onSelect(e)} className="w-full text-left rounded px-1 py-0.5 text-[10px] text-white truncate" style={{ backgroundColor: eventColor(e) }}>{format(new Date(e.data_inicio), "HH:mm")} {displayName(e)}</button>))}</div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function MonthView({ anchor, eventsByDay, onDayClick }: { anchor: Date; eventsByDay: Map<string, Atendimento[]>; onDayClick: (d: Date) => void }) {
-  const monthStart = startOfMonth(anchor); const monthEnd = endOfMonth(anchor); const calStart = startOfWeek(monthStart, { weekStartsOn: 1 }); const calEnd = endOfWeek(monthEnd, { weekStartsOn: 1 }); const allDays = eachDayOfInterval({ start: calStart, end: calEnd }); const today = format(new Date(), "yyyy-MM-dd");
-  return (
-    <div>
-      <div className="grid grid-cols-7 mb-1">{["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"].map((d) => <div key={d} className="text-center text-[10px] text-muted-foreground uppercase">{d}</div>)}</div>
-      <div className="grid grid-cols-7 gap-px bg-border rounded-lg overflow-hidden">
-        {allDays.map((d) => {
-          const key = format(d, "yyyy-MM-dd"); const isToday = key === today; const inMonth = isSameMonth(d, anchor); const evts = eventsByDay.get(key) ?? [];
-          return (
-            <button key={key} onClick={() => onDayClick(d)} className={`bg-card min-h-[52px] p-1 text-left ${!inMonth ? "opacity-40" : ""}`}>
-              <div className={`text-xs text-center mb-0.5 ${isToday ? "bg-primary text-primary-foreground w-5 h-5 rounded-full mx-auto flex items-center justify-center font-bold" : ""}`}>{format(d, "d")}</div>
-              {evts.length > 0 && (<div className="flex justify-center gap-0.5 flex-wrap">{evts.slice(0, 3).map((e) => <div key={e.id} className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: eventColor(e) }} />)}</div>)}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
+            <div className="space-y-0.5">{evts.map((e) => (<button key={e.id} onClick={() => onSelect(e)} className="w-full text-left rounded px-1 py-0.5 text-[10px] text-white truncate" style={{ backgroundColor: eventColor(e) }}>{format(new Date(e.data_inicio), "HH:mm")} {displayName(e
