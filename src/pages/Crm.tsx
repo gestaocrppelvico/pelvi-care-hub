@@ -16,9 +16,12 @@ import { useAuth } from "@/hooks/useAuth";
 
 interface Template { tipo: string; nome: string; conteudo: string }
 
+// 1. ATUALIZADO: Inclui os campos do Google Calendar (nome livre e telefone de contato)
 interface AtendAmanha {
   id: string;
   data_inicio: string;
+  nome_paciente_livre: string | null;
+  telefone_contato: string | null;
   paciente: { id: string; nome: string; telefone: string | null } | null;
   profissional: { nome: string } | null;
 }
@@ -55,16 +58,27 @@ export default function Crm() {
 
     const [tpl, atAmanha, pacientes, atendsHist] = await Promise.all([
       supabase.from("crm_templates").select("tipo, nome, conteudo").eq("ativo", true),
+      
+      // 2. ATUALIZADO: Puxa também nome_paciente_livre e telefone_contato
       supabase
         .from("atendimentos")
-        .select("id, data_inicio, paciente:pacientes(id, nome, telefone), profissional:profissionais(nome)")
+        .select(`
+          id, 
+          data_inicio, 
+          nome_paciente_livre, 
+          telefone_contato, 
+          paciente:pacientes(id, nome, telefone), 
+          profissional:profissionais(nome)
+        `)
         .gte("data_inicio", startOfDay(tomorrow).toISOString())
         .lte("data_inicio", endOfDay(tomorrow).toISOString())
         .in("status", ["agendado"]),
+        
       supabase
         .from("pacientes")
         .select("id, nome, telefone, data_nascimento")
         .eq("ativo", true),
+        
       supabase
         .from("atendimentos")
         .select("paciente_id, data_inicio")
@@ -80,10 +94,12 @@ export default function Crm() {
     // Última sessão por paciente
     const ultPorPac = new Map<string, string>();
     (atendsHist.data ?? []).forEach((a: any) => {
-      if (!ultPorPac.has(a.paciente_id)) ultPorPac.set(a.paciente_id, a.data_inicio);
+      if (a.paciente_id && !ultPorPac.has(a.paciente_id)) {
+        ultPorPac.set(a.paciente_id, a.data_inicio);
+      }
     });
 
-    // Inativos
+    // Inativos e Aniversariantes
     const inat: PacienteInativo[] = [];
     const niverList: Aniversariante[] = [];
     (pacientes.data ?? []).forEach((p) => {
@@ -108,20 +124,41 @@ export default function Crm() {
     await supabase.from("crm_envios").insert({ paciente_id, tipo, mensagem });
   }
 
+  // 3. ATUALIZADO: Funções auxiliares para descobrir o nome e telefone reais
+  function getNomePaciente(a: AtendAmanha) {
+    return a.paciente?.nome || a.nome_paciente_livre || "Paciente não identificado";
+  }
+
+  function getTelefonePaciente(a: AtendAmanha) {
+    return a.paciente?.telefone || a.telefone_contato || null;
+  }
+
   function enviarLembrete(a: AtendAmanha) {
-    if (!a.paciente) return;
+    const nome = getNomePaciente(a);
+    const telefone = getTelefonePaciente(a);
+
+    if (!telefone) {
+      toast.error("Paciente sem telefone disponível (Atualize na Agenda)");
+      return;
+    }
+
     const tpl = templates["lembrete"]?.conteudo ?? "Olá {paciente}, lembrete da sua sessão amanhã às {hora}.";
     const msg = aplicarTemplate(tpl, {
-      paciente: a.paciente.nome.split(" ")[0],
+      paciente: nome.split(" ")[0],
       data: format(new Date(a.data_inicio), "dd/MM", { locale: ptBR }),
       hora: format(new Date(a.data_inicio), "HH:mm"),
       profissional: a.profissional?.nome ?? "",
     });
-    if (!abrirWhatsapp(a.paciente.telefone, msg, isSecretaria)) {
-      toast.error("Paciente sem telefone cadastrado");
+
+    if (!abrirWhatsapp(telefone, msg, isSecretaria)) {
+      toast.error("Erro ao abrir o WhatsApp");
       return;
     }
-    logEnvio(a.paciente.id, "lembrete", msg);
+    
+    // Só grava no log se já tiver ID de paciente oficial cadastrado
+    if (a.paciente?.id) {
+      logEnvio(a.paciente.id, "lembrete", msg);
+    }
     toast.success("WhatsApp aberto");
   }
 
@@ -180,12 +217,14 @@ export default function Crm() {
            amanha.map((a) => (
              <Card key={a.id} className="p-4 flex items-center gap-3">
                <div className="flex-1 min-w-0">
-                 <div className="font-semibold truncate">{a.paciente?.nome}</div>
+                 {/* 4. ATUALIZADO: Interface agora exibe o nome correto */}
+                 <div className="font-semibold truncate">{getNomePaciente(a)}</div>
                  <div className="text-xs text-muted-foreground">
-                   {format(new Date(a.data_inicio), "EEE, dd/MM 'às' HH:mm", { locale: ptBR })} · {a.profissional?.nome}
+                   {format(new Date(a.data_inicio), "EEE, dd/MM 'às' HH:mm", { locale: ptBR })} · {a.profissional?.nome || "Profissional não definido"}
                  </div>
                </div>
-               <Button size="sm" onClick={() => enviarLembrete(a)} disabled={!a.paciente?.telefone}>
+               {/* O botão só é desativado se realmente não houver nenhum telefone */}
+               <Button size="sm" onClick={() => enviarLembrete(a)} disabled={!getTelefonePaciente(a)}>
                  <MessageCircle className="w-4 h-4" />
                </Button>
              </Card>
