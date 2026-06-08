@@ -6,6 +6,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
+// 1. IMPORTAÇÃO DO PAINEL DA FISIO ADICIONADA AQUI:
+import DashboardFisio from "./DashboardFisio";
+
 interface Stats {
   pacientes: number;
   atendimentosHoje: number;
@@ -60,6 +63,13 @@ export default function Dashboard() {
     isFisio && { to: "/explorar", icon: MapPin, label: "Explorar próximos", desc: "Médicos perto de você" },
     { to: "/mais", icon: FileText, label: "Documentos", desc: "Atestados, alta, reembolso" },
   ].filter(Boolean) as { to: string; icon: any; label: string; desc: string }[];
+
+  // ------------------------------------------------------------------
+  // 2. BLOQUEIO DA HOME: Se for Fisio (e não Admin/Secretaria), mostra o Dashboard exclusivo dela.
+  if (isFisio && !isAdmin && !isSecretaria) {
+    return <DashboardFisio />;
+  }
+  // ------------------------------------------------------------------
 
   return (
     <div className="space-y-6">
