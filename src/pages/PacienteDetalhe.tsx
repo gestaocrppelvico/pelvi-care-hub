@@ -1,13 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Phone, Calendar, Pencil, ShoppingBag, FileText, Activity, Wallet, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Phone, Calendar, Pencil, ShoppingBag } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
@@ -24,17 +23,17 @@ export default function PacienteDetalhe() {
   const { isAdmin, isSecretaria } = useAuth();
   const podeGerenciar = isAdmin || isSecretaria;
 
-  const [pac, setPac] = useState(null);
-  const [pront, setPront] = useState([]);
+  const [pac, setPac] = useState<any>(null);
+  const [pront, setPront] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Estados Novo Lançamento
   const [itemTipo, setItemTipo] = useState<"servico" | "pacote">("servico");
-  const [listaServicos, setListaServicos] = useState([]);
-  const [listaPacotes, setListaPacotes] = useState([]);
-  const [idItemSelecionado, setIdItemSelecionado] = useState("");
-  const [qtdSessoes, setQtdSessoes] = useState(1);
-  const [precoFinal, setPrecoFinal] = useState("");
+  const [listaServicos, setListaServicos] = useState<any[]>([]);
+  const [listaPacotes, setListaPacotes] = useState<any[]>([]);
+  const [idItemSelecionado, setIdItemSelecionado] = useState<string>("");
+  const [qtdSessoes, setQtdSessoes] = useState<number>(1);
+  const [precoFinal, setPrecoFinal] = useState<string>("");
 
   const carregarDados = async () => {
     if (!id) return;
@@ -81,74 +80,58 @@ export default function PacienteDetalhe() {
     } catch (err: any) { toast.error(err.message); }
   };
 
-  if (loading) return 
-Carregando...
-;
+  if (loading) return <div className="p-8 text-center">Carregando...</div>;
 
   return (
-    
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="icon" onClick={() => navigate("/pacientes")}><ArrowLeft className="w-5 h-5" /></Button>
+          <div>
+            <h1 className="text-xl font-bold">{pac?.nome}</h1>
+            <div className="text-xs text-muted-foreground flex gap-3">{pac?.telefone}</div>
+          </div>
+        </div>
+        <Button asChild variant="outline" size="sm">
+          <Link to={`/pacientes/${id}/editar`}><Pencil className="w-4 h-4 mr-2" /> Editar</Link>
+        </Button>
+      </div>
 
-      
+      <Tabs defaultValue="historico">
+        <TabsList className="w-full grid grid-cols-5">
+          <TabsTrigger value="historico">Histórico</TabsTrigger>
+          <TabsTrigger value="prontuario">Prontuário</TabsTrigger>
+          <TabsTrigger value="servicos">Serviços</TabsTrigger>
+          <TabsTrigger value="financeiro">Financeiro</TabsTrigger>
+          <TabsTrigger value="autorizacoes">Autorizações</TabsTrigger>
+        </TabsList>
 
-        
+        <TabsContent value="servicos">
+           <Card className="p-4 space-y-4">
+            <h3 className="font-semibold">Lançar Novo Item</h3>
+            <form onSubmit={lancar} className="space-y-3">
+              <Select onValueChange={(v) => setItemTipo(v as any)}>
+                <SelectTrigger><SelectValue placeholder="Tipo" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="servico">Serviço Avulso</SelectItem>
+                  <SelectItem value="pacote">Pacote</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={idItemSelecionado} onValueChange={handleItemChange}>
+                <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                <SelectContent>
+                  {itemTipo === "servico" ? listaServicos.map(s => <SelectItem key={s.id} value={s.id}>{s.nome}</SelectItem>) : listaPacotes.map(p => <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Input type="number" value={precoFinal} onChange={(e) => setPrecoFinal(e.target.value)} placeholder="Valor R$" />
+              <Button type="submit" className="w-full">Confirmar Lançamento</Button>
+            </form>
+          </Card>
+        </TabsContent>
 
-           navigate("/pacientes")}>
-          
-
-            
-{pac?.nome}
-
-            
-{pac?.telefone}
-
-          
-        
-
-        
-           Editar
-        
-      
-
-
-      
-        
-          Histórico
-          Prontuário
-          Serviços
-          Financeiro
-          Autorizações
-        
-
-        
-           
-            
-Lançar Novo Item
-
-            
-               setItemTipo(v as any)}>
-                
-                
-                  Serviço Avulso
-                  Pacote
-                
-              
-              
-                
-                
-                  {itemTipo === "servico" ? listaServicos.map(s => {s.nome}) : listaPacotes.map(p => {p.nome})}
-                
-              
-               setPrecoFinal(e.target.value)} placeholder="Valor R$" />
-              Confirmar Lançamento
-            
-          
-        
-        
-        {/* Adicione as outras TabsContent aqui conforme necessário */}
-      
-    
-
+        <TabsContent value="financeiro"><PacienteFinanceiro /></TabsContent>
+        <TabsContent value="autorizacoes"><PacienteAutorizacoes /></TabsContent>
+      </Tabs>
+    </div>
   );
 }
-
-
