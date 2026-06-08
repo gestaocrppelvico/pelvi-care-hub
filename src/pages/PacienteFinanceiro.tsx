@@ -25,252 +25,241 @@ export default function PacienteFinanceiro() {
   const [pacientePacotes, setPacientePacotes] = useState<any[]>([]);
   const [pacienteServicos, setPacienteServicos] = useState<any[]>([]);
   const [pagamentos, setPagamentos] = useState<any[]>([]);
-  const [pacotesCat, setPacotesCat] = useState<any[]>([]);
-  const [servicosCat, setServicosCat] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [modoNovoPag, setModoNovoPag] = useState(false);
+  
+  const [novoPag, setNovoPag] = useState<any>({
+    valor: "",
+    forma: "dinheiro",
+    data_pagamento: new Date().toISOString().split("T")[0],
+    paciente_pacote_id: "none",
+    observacoes: ""
+  });
 
-  // forms
-  const [novoPacote, setNovoPacote] = useState<any>({ pacote_id: "", preco_pago: 0 });
-  const [novoServ, setNovoServ] = useState<any>({ servico_id: "", preco_pago: 0 });
-  const [novoPag, setNovoPag] = useState<any>({ valor: 0, forma: "pix", paciente_pacote_id: "", paciente_servico_id: "" });
-
-  async function carregar() {
+  const carregarDados = async () => {
     if (!pacienteId) return;
-    const [pac, pp, ps, pg, pcat, scat] = await Promise.all([
-      supabase.from("pacientes").select("id, nome").eq("id", pacienteId).single(),
-      supabase.from("paciente_pacotes").select("*, pacote:pacotes(nome, numero_sessoes)").eq("paciente_id", pacienteId).order("created_at", { ascending: false }),
-      supabase.from("paciente_servicos").select("*, servico:servicos(nome, preco)").eq("paciente_id", pacienteId).order("created_at", { ascending: false }),
-      supabase.from("pagamentos").select("*").eq("paciente_id", pacienteId).order("data_pagamento", { ascending: false }),
-      supabase.from("pacotes").select("*").eq("ativo", true).order("nome"),
-      supabase.from("servicos").select("*").eq("ativo", true).order("nome"),
-    ]);
-    setPaciente(pac.data);
-    setPacientePacotes(pp.data ?? []);
-    setPacienteServicos(ps.data ?? []);
-    setPagamentos(pg.data ?? []);
-    setPacotesCat(pcat.data ?? []);
-    setServicosCat(scat.data ?? []);
-  }
-  useEffect(() => { carregar(); }, [pacienteId]);
+    setLoading(true);
+    try {
+      // 1. Carrega dados do paciente
+      const { data: pac } = await supabase.from("pacientes").select("*").eq("id", pacienteId).maybeSingle();
+      setPaciente(pac);
 
-  async function comprarPacote() {
-    if (!novoPacote.pacote_id) { toast.error("Selecione o pacote"); return; }
-    const pac = pacotesCat.find((p) => p.id === novoPacote.pacote_id);
-    if (!pac) return;
-    const validade = pac.validade_dias
-      ? new Date(Date.now() + pac.validade_dias * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-      : null;
-    const { error } = await supabase.from("paciente_pacotes").insert({
-      paciente_id: pacienteId,
-      pacote_id: pac.id,
-      sessoes_totais: pac.numero_sessoes,
-      sessoes_restantes: pac.numero_sessoes,
-      preco_pago: Number(novoPacote.preco_pago) || Number(pac.preco_total),
-      data_validade: validade,
-    });
-    if (error) { toast.error(error.message); return; }
-    toast.success("Pacote adicionado");
-    setNovoPacote({ pacote_id: "", preco_pago: 0 });
-    carregar();
-  }
+      // 2. Carrega pacotes financeiros (Trazendo o join com autorizações para dar nome à guia)
+      const { data: pacs } = await supabase
+        .from("paciente_pacotes")
+        .select("*, pacote:pacotes(nome), autorizacao:autorizacoes(plano, numero_guia)")
+        .eq("paciente_id", pacienteId)
+        .order("created_at", { ascending: false });
+      setPacientePacotes(pacs || []);
 
-  async function comprarServico() {
-    if (!novoServ.servico_id) { toast.error("Selecione o serviço"); return; }
-    const s = servicosCat.find((x) => x.id === novoServ.servico_id);
-    if (!s) return;
-    const { error } = await supabase.from("paciente_servicos").insert({
-      paciente_id: pacienteId,
-      servico_id: s.id,
-      preco_pago: Number(novoServ.preco_pago) || Number(s.preco),
-    });
-    if (error) { toast.error(error.message); return; }
-    toast.success("Serviço adicionado");
-    setNovoServ({ servico_id: "", preco_pago: 0 });
-    carregar();
-  }
+      // 3. Carrega serviços avulsos
+      const { data: servs } = await supabase
+        .from("paciente_servicos")
+        .select("*, servico:servicos(nome)")
+        .eq("paciente_id", pacienteId)
+        .order("created_at", { ascending: false });
+      setPacienteServicos(servs || []);
 
-  async function registrarPagamento() {
-    if (!novoPag.valor || novoPag.valor <= 0) { toast.error("Informe o valor"); return; }
-    const payload: any = {
-      paciente_id: pacienteId,
-      valor: Number(novoPag.valor),
-      forma: novoPag.forma,
-      paciente_pacote_id: novoPag.paciente_pacote_id || null,
-      paciente_servico_id: novoPag.paciente_servico_id || null,
-      observacoes: novoPag.observacoes || null,
-    };
-    const { error } = await supabase.from("pagamentos").insert(payload);
-    if (error) { toast.error(error.message); return; }
+      // 4. Carrega histórico de pagamentos
+      const { data: pags } = await supabase
+        .from("pagamentos")
+        .select("*")
+        .eq("paciente_id", pacienteId)
+        .order("data_pagamento", { ascending: false });
+      setPagamentos(pags || []);
 
-    // Marcar como pago
-    if (novoPag.paciente_pacote_id) {
-      await supabase.from("paciente_pacotes").update({ status_pagamento: "pago" }).eq("id", novoPag.paciente_pacote_id);
+    } catch (err: any) {
+      console.error(err);
+      toast.error("Erro ao carregar dados financeiros.");
+    } finally {
+      setLoading(false);
     }
-    if (novoPag.paciente_servico_id) {
-      await supabase.from("paciente_servicos").update({ status_pagamento: "pago" }).eq("id", novoPag.paciente_servico_id);
+  };
+
+  useEffect(() => {
+    carregarDados();
+  }, [pacienteId]);
+
+  const registrarPagamento = async () => {
+    if (!pacienteId || !novoPag.valor) {
+      toast.error("Informe o valor do pagamento.");
+      return;
     }
+    try {
+      const payload: any = {
+        paciente_id: pacienteId,
+        valor: parseFloat(novoPag.valor),
+        forma: novoPag.forma,
+        data_pagamento: novoPag.data_pagamento,
+        observacoes: novoPag.observacoes || null
+      };
 
-    toast.success("Pagamento registrado");
-    setNovoPag({ valor: 0, forma: "pix", paciente_pacote_id: "", paciente_servico_id: "" });
-    carregar();
-  }
+      if (novoPag.paciente_pacote_id !== "none") {
+        payload.paciente_pacote_id = novoPag.paciente_pacote_id;
+      }
 
-  const totalPago = pagamentos.reduce((s, p) => s + Number(p.valor), 0);
-  const totalPendente =
-    pacientePacotes.filter((p) => p.status_pagamento !== "pago").reduce((s, p) => s + Number(p.preco_pago), 0) +
-    pacienteServicos.filter((p) => p.status_pagamento !== "pago").reduce((s, p) => s + Number(p.preco_pago), 0);
+      const { error } = await supabase.from("pagamentos").insert(payload);
+      if (error) throw error;
+
+      toast.success("Pagamento registado com sucesso!");
+      setModoNovoPag(false);
+      setNovoPag({
+        valor: "",
+        forma: "dinheiro",
+        data_pagamento: new Date().toISOString().split("T")[0],
+        paciente_pacote_id: "none",
+        observacoes: ""
+      });
+      carregarDados();
+    } catch (err: any) {
+      toast.error("Erro: " + err.message);
+    }
+  };
+
+  if (loading) return <div className="p-6 text-center text-sm text-muted-foreground">A carregar dados financeiros...</div>;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <Button size="icon" variant="ghost" onClick={() => navigate(`/pacientes/${pacienteId}`)}><ArrowLeft className="w-5 h-5" /></Button>
-        <Wallet className="w-6 h-6 text-primary" />
-        <h1 className="text-xl font-bold">Financeiro</h1>
+        <Button variant="ghost" size="icon" onClick={() => navigate(-1)}><ArrowLeft className="w-5 h-5" /></Button>
+        <div>
+          <h1 className="text-xl font-bold">Financeiro do Paciente</h1>
+          <p className="text-sm text-muted-foreground">{paciente?.nome || "—"}</p>
+        </div>
       </div>
 
-      {paciente && <p className="text-sm text-muted-foreground">{paciente.nome}</p>}
-
-      <div className="grid grid-cols-2 gap-2">
-        <Card className="p-3"><div className="text-xs text-muted-foreground">Pago</div><div className="text-lg font-bold text-emerald-600">{fmt(totalPago)}</div></Card>
-        <Card className="p-3"><div className="text-xs text-muted-foreground">Pendente</div><div className="text-lg font-bold text-amber-600">{fmt(totalPendente)}</div></Card>
-      </div>
-
-      <Tabs defaultValue="pacotes">
-        <TabsList className="w-full">
-          <TabsTrigger value="pacotes" className="flex-1">Pacotes</TabsTrigger>
-          <TabsTrigger value="servicos" className="flex-1">Serviços</TabsTrigger>
-          <TabsTrigger value="pagamentos" className="flex-1">Pagamentos</TabsTrigger>
+      <Tabs defaultValue="saldos">
+        <TabsList className="w-full grid grid-cols-2">
+          <TabsTrigger value="saldos">Saldos e Sessões</TabsTrigger>
+          <TabsTrigger value="historico">Histórico de Pagos</TabsTrigger>
         </TabsList>
 
-        {/* PACOTES */}
-        <TabsContent value="pacotes" className="space-y-2 mt-3">
-          {podeGerenciar && (
-            <Card className="p-3 space-y-2">
-              <div className="font-semibold text-sm">Adicionar pacote</div>
-              <Select value={novoPacote.pacote_id} onValueChange={(v) => {
-                const p = pacotesCat.find((x) => x.id === v);
-                setNovoPacote({ pacote_id: v, preco_pago: p?.preco_total ?? 0 });
-              }}>
-                <SelectTrigger><SelectValue placeholder="Selecione o pacote" /></SelectTrigger>
-                <SelectContent>{pacotesCat.map((p) => <SelectItem key={p.id} value={p.id}>{p.nome} — {p.numero_sessoes}x · {fmt(p.preco_total)}</SelectItem>)}</SelectContent>
-              </Select>
-              <div className="flex gap-2">
-                <Input type="number" step="0.01" value={novoPacote.preco_pago} onChange={(e) => setNovoPacote({ ...novoPacote, preco_pago: e.target.value })} placeholder="Preço" />
-                <Button onClick={comprarPacote}><Plus className="w-4 h-4" /></Button>
-              </div>
-            </Card>
+        <TabsContent value="saldos" className="space-y-3 mt-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5"><Package className="w-4 h-4" /> Contratos e Saldos</h2>
+          </div>
+
+          {pacientePacotes.length === 0 && pacienteServicos.length === 0 && (
+            <Card className="p-6 text-center text-sm text-muted-foreground">Nenhum contrato ativo ou pendente encontrado.</Card>
           )}
 
-          {pacientePacotes.length === 0 && <Card className="p-6 text-center text-sm text-muted-foreground">Nenhum pacote.</Card>}
-          {pacientePacotes.map((pp) => (
-            <Card key={pp.id} className="p-3">
-              <div className="flex items-start gap-2">
-                <Package className="w-5 h-5 text-primary mt-1 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium">{pp.pacote?.nome}</div>
-                  <div className="text-sm text-muted-foreground">
-                    {pp.sessoes_restantes}/{pp.sessoes_totais} sessões · {fmt(Number(pp.preco_pago))}
-                  </div>
-                  {pp.data_validade && <div className="text-xs text-muted-foreground">Válido até {new Date(pp.data_validade).toLocaleDateString("pt-BR")}</div>}
+          {/* LISTAGEM DE PACOTES E GUIAS DE PLANO DE SAÚDE */}
+          {pacientePacotes.map((p) => (
+            <Card key={p.id} className="p-3 border-l-4 border-l-primary space-y-1">
+              <div className="flex items-start justify-between gap-2">
+                {/* INTERFACE INTELIGENTE: Identifica se é guia de plano ou pacote particular */}
+                <div className="font-semibold text-sm text-slate-800">
+                  {p.autorizacao 
+                    ? `Guia Autorizada: ${p.autorizacao.plano} ${p.autorizacao.numero_guia ? `(Nº ${p.autorizacao.numero_guia})` : ''}`
+                    : `Pacote: ${p.pacote?.nome || "Particular Customizado"}`
+                  }
                 </div>
-                <Badge variant={pp.status_pagamento === "pago" ? "default" : "secondary"} className="shrink-0">
-                  {pp.status_pagamento}
+                <Badge variant={p.sessoes_restantes > 0 ? "default" : "secondary"} className="text-[10px] px-1.5 py-0">
+                  {p.sessoes_restantes} / {p.sessoes_totais} rest.
                 </Badge>
               </div>
+              <div className="text-xs text-muted-foreground flex justify-between pt-1">
+                <span>Criado em: {new Date(p.created_at).toLocaleDateString("pt-BR")}</span>
+                <span className="font-medium text-slate-700">
+                  {p.autorizacao ? "Faturamento por Plano de Saúde" : `Preço Total: ${fmt(Number(p.preco_pago))}`}
+                </span>
+              </div>
+              <div className="w-full bg-slate-100 rounded-full h-1.5 mt-2 overflow-hidden">
+                <div 
+                  className="bg-primary h-1.5 rounded-full transition-all" 
+                  style={{ width: `${(p.sessoes_restantes / p.sessoes_totais) * 100}%` }}
+                />
+              </div>
+            </Card>
+          ))}
+
+          {/* LISTAGEM DE SERVIÇOS AVULSOS */}
+          {pacienteServicos.map((s) => (
+            <Card key={s.id} className="p-3 border-l-4 border-l-emerald-500 flex justify-between items-center">
+              <div>
+                <div className="font-semibold text-sm flex items-center gap-1"><Box className="w-3.5 h-3.5 text-emerald-500" /> {s.servico?.nome || "Serviço Avulso"}</div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">Lançado em {new Date(s.created_at).toLocaleDateString("pt-BR")}</div>
+              </div>
+              <Badge variant="outline" className="text-emerald-700 bg-emerald-50 border-emerald-200">Sessão Única</Badge>
             </Card>
           ))}
         </TabsContent>
 
-        {/* SERVIÇOS */}
-        <TabsContent value="servicos" className="space-y-2 mt-3">
-          {podeGerenciar && (
-            <Card className="p-3 space-y-2">
-              <div className="font-semibold text-sm">Adicionar serviço avulso</div>
-              <Select value={novoServ.servico_id} onValueChange={(v) => {
-                const s = servicosCat.find((x) => x.id === v);
-                setNovoServ({ servico_id: v, preco_pago: s?.preco ?? 0 });
-              }}>
-                <SelectTrigger><SelectValue placeholder="Selecione o serviço" /></SelectTrigger>
-                <SelectContent>{servicosCat.map((s) => <SelectItem key={s.id} value={s.id}>{s.nome} — {fmt(s.preco)}</SelectItem>)}</SelectContent>
-              </Select>
-              <div className="flex gap-2">
-                <Input type="number" step="0.01" value={novoServ.preco_pago} onChange={(e) => setNovoServ({ ...novoServ, preco_pago: e.target.value })} placeholder="Preço" />
-                <Button onClick={comprarServico}><Plus className="w-4 h-4" /></Button>
-              </div>
-            </Card>
-          )}
+        <TabsContent value="historico" className="space-y-3 mt-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5"><Wallet className="w-4 h-4" /> Recibos de Pagamento</h2>
+            {podeGerenciar && (
+              <Button size="sm" onClick={() => setModoNovoPag(!modoNovoPag)}>
+                <Plus className="w-4 h-4 mr-1" /> Registar
+              </Button>
+            )}
+          </div>
 
-          {pacienteServicos.length === 0 && <Card className="p-6 text-center text-sm text-muted-foreground">Nenhum serviço.</Card>}
-          {pacienteServicos.map((ps) => (
-            <Card key={ps.id} className="p-3 flex items-center gap-2">
-              <Box className="w-5 h-5 text-primary shrink-0" />
-              <div className="flex-1 min-w-0">
-                <div className="font-medium">{ps.servico?.nome}</div>
-                <div className="text-sm text-muted-foreground">{fmt(Number(ps.preco_pago))} · {ps.utilizado ? "utilizado" : "não utilizado"}</div>
-              </div>
-              <Badge variant={ps.status_pagamento === "pago" ? "default" : "secondary"} className="shrink-0">{ps.status_pagamento}</Badge>
-            </Card>
-          ))}
-        </TabsContent>
-
-        {/* PAGAMENTOS */}
-        <TabsContent value="pagamentos" className="space-y-2 mt-3">
-          {podeGerenciar && (
-            <Card className="p-3 space-y-2">
-              <div className="font-semibold text-sm">Registrar pagamento</div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <Label className="text-xs">Valor</Label>
-                  <Input type="number" step="0.01" value={novoPag.valor} onChange={(e) => setNovoPag({ ...novoPag, valor: e.target.value })} />
+          {modoNovoPag && (
+            <Card className="p-4 border border-primary/20 bg-slate-50/50 space-y-3">
+              <h3 className="font-medium text-xs text-primary uppercase tracking-wider">Novo Recebimento</h3>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label>Valor (R$)</Label>
+                  <Input type="number" step="0.01" value={novoPag.valor} onChange={(e) => setNovoPag({ ...novoPag, valor: e.target.value })} placeholder="0,00" />
                 </div>
-                <div>
-                  <Label className="text-xs">Forma</Label>
+                <div className="space-y-1">
+                  <Label>Forma</Label>
                   <Select value={novoPag.forma} onValueChange={(v) => setNovoPag({ ...novoPag, forma: v })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="bg-background"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="dinheiro">Dinheiro</SelectItem>
-                      <SelectItem value="pix">Pix</SelectItem>
-                      <SelectItem value="cartao_credito">Cartão crédito</SelectItem>
-                      <SelectItem value="cartao_debito">Cartão débito</SelectItem>
+                      <SelectItem value="pix">PIX</SelectItem>
+                      <SelectItem value="cartao_credito">Cartão de Crédito</SelectItem>
+                      <SelectItem value="cartao_debito">Cartão de Débito</SelectItem>
                       <SelectItem value="transferencia">Transferência</SelectItem>
-                      <SelectItem value="plano_saude">Plano de saúde</SelectItem>
-                      <SelectItem value="outro">Outro</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
               </div>
-              <div>
-                <Label className="text-xs">Vincular a (opcional)</Label>
-                <Select value={novoPag.paciente_pacote_id || novoPag.paciente_servico_id || "none"} onValueChange={(v) => {
-                  if (v === "none") return setNovoPag({ ...novoPag, paciente_pacote_id: "", paciente_servico_id: "" });
-                  const isPac = pacientePacotes.some((p) => p.id === v);
-                  setNovoPag({
-                    ...novoPag,
-                    paciente_pacote_id: isPac ? v : "",
-                    paciente_servico_id: isPac ? "" : v,
-                  });
-                }}>
-                  <SelectTrigger><SelectValue placeholder="Sem vínculo" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">— sem vínculo —</SelectItem>
-                    {pacientePacotes.map((p) => <SelectItem key={p.id} value={p.id}>Pacote: {p.pacote?.nome}</SelectItem>)}
-                    {pacienteServicos.map((p) => <SelectItem key={p.id} value={p.id}>Serviço: {p.servico?.nome}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label>Data</Label>
+                  <Input type="date" value={novoPag.data_pagamento} onChange={(e) => setNovoPag({ ...novoPag, data_pagamento: e.target.value })} />
+                </div>
+                <div className="space-y-1">
+                  <Label>Vincular a Contrato</Label>
+                  <Select value={novoPag.paciente_pacote_id} onValueChange={(v) => setNovoPag({ ...novoPag, paciente_pacote_id: v })}>
+                    <SelectTrigger className="bg-background"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">— Sem Vínculo —</SelectItem>
+                      {/* Filtra para não permitir vincular pagamentos manuais a guias de convénio */}
+                      {pacientePacotes.filter(p => !p.autorizacao).map((p) => (
+                        <SelectItem key={p.id} value={p.id}>Pacote: {p.pacote?.nome || "Particular"}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-              <Textarea placeholder="Observações" value={novoPag.observacoes ?? ""} onChange={(e) => setNovoPag({ ...novoPag, observacoes: e.target.value })} />
-              <Button onClick={registrarPagamento} className="w-full"><Plus className="w-4 h-4" /> Registrar</Button>
+              <div className="space-y-1">
+                <Label>Observações</Label>
+                <Textarea placeholder="Ex: Referente à primeira parcela..." value={novoPag.observacoes} onChange={(e) => setNovoPag({ ...novoPag, observacoes: e.target.value })} rows={2} />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <Button className="flex-1" onClick={registrarPagamento}>Confirmar Recebimento</Button>
+                <Button variant="outline" onClick={() => setModoNovoPag(false)}>Cancelar</Button>
+              </div>
             </Card>
           )}
 
-          {pagamentos.length === 0 && <Card className="p-6 text-center text-sm text-muted-foreground">Nenhum pagamento.</Card>}
+          {pagamentos.length === 0 && (
+            <Card className="p-6 text-center text-sm text-muted-foreground">Nenhum histórico de pagamento registado para este paciente.</Card>
+          )}
+
           {pagamentos.map((p) => (
-            <Card key={p.id} className="p-3 flex items-center gap-2">
-              <Receipt className="w-5 h-5 text-primary shrink-0" />
+            <Card key={p.id} className="p-3 flex items-center gap-2.5">
+              <Receipt className="w-5 h-5 text-emerald-500 shrink-0" />
               <div className="flex-1 min-w-0">
-                <div className="font-medium">{fmt(Number(p.valor))}</div>
-                <div className="text-xs text-muted-foreground">{p.forma} · {new Date(p.data_pagamento).toLocaleDateString("pt-BR")}</div>
-                {p.observacoes && <div className="text-xs text-muted-foreground mt-1">{p.observacoes}</div>}
+                <div className="font-bold text-slate-800 text-sm">{fmt(Number(p.valor))}</div>
+                <div className="text-xs text-muted-foreground capitalize">{p.forma.replace("_", " ")} · {new Date(p.data_pagamento).toLocaleDateString("pt-BR")}</div>
+                {p.observacoes && <p className="text-[11px] text-slate-500 bg-slate-50 border rounded p-1 mt-1.5 italic">{p.observacoes}</p>}
               </div>
+              <Badge variant="outline" className="text-emerald-700 bg-emerald-50 border-emerald-200 text-[10px] py-0">Recebido</Badge>
             </Card>
           ))}
         </TabsContent>
