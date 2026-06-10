@@ -34,13 +34,15 @@ export default function Financeiro() {
   const [filtroProfissional, setFiltroProfissional] = useState<string>("todos");
   const [filtroPeriodo, setFiltroPeriodo] = useState<string>("semana");
   
-  // Novos estados para o calendário personalizado
   const [dataInicio, setDataInicio] = useState<string>("");
   const [dataFim, setDataFim] = useState<string>("");
 
   const [editando, setEditando] = useState<RepasseRow | null>(null);
   const [valorAtendimento, setValorAtendimento] = useState("");
   const [valorRepasse, setValorRepasse] = useState("");
+  
+  // NOVO: Guarda qual era a % de repasse antes de editar para aplicar no novo valor
+  const [fatorRecalculo, setFatorRecalculo] = useState(0.35); 
 
   async function carregar() {
     setLoading(true);
@@ -64,12 +66,10 @@ export default function Financeiro() {
   const repassesFiltrados = useMemo(() => {
     let filtrados = repasses;
     
-    // Filtro por profissional
     if (filtroProfissional !== "todos") {
       filtrados = filtrados.filter(r => r.profissional_id === filtroProfissional);
     }
     
-    // Filtro por data
     if (filtroPeriodo !== "todos") {
       const hoje = new Date();
       let start, end;
@@ -81,7 +81,6 @@ export default function Financeiro() {
         start = startOfMonth(hoje); 
         end = endOfMonth(hoje); 
       } else if (filtroPeriodo === "personalizado") {
-        // Usa as datas escolhidas no calendário, ou joga pro passado/futuro se estiver em branco
         start = dataInicio ? startOfDay(parseISO(dataInicio)) : new Date(0);
         end = dataFim ? endOfDay(parseISO(dataFim)) : new Date(8640000000000000);
       }
@@ -129,6 +128,17 @@ export default function Financeiro() {
     carregar();
   }
 
+  // NOVO: Função que faz a mágica de calcular automaticamente quando você digita
+  function handleMudancaAtendimento(val: string) {
+    setValorAtendimento(val);
+    const numero = parseFloat(val.replace(",", "."));
+    if (!isNaN(numero)) {
+      setValorRepasse((numero * fatorRecalculo).toFixed(2));
+    } else {
+      setValorRepasse("");
+    }
+  }
+
   function formatBRL(v: number) { return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
 
   if (isFisio && !isAdmin && !isSecretaria) {
@@ -150,7 +160,6 @@ export default function Financeiro() {
         <Link to="/financeiro/relatorios"><Card className="p-3 flex items-center gap-2 hover:bg-emerald-50 transition-colors h-full border-emerald-200"><Activity className="w-5 h-5 text-emerald-600" /><div className="font-medium text-sm text-emerald-800">Relatórios</div></Card></Link>
       </div>
 
-      {/* ÁREA DOS FILTROS */}
       <div className="flex flex-col sm:flex-row gap-3 p-3 bg-muted/50 rounded-lg border flex-wrap items-center">
         <Select value={filtroPeriodo} onValueChange={setFiltroPeriodo}>
           <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
@@ -170,22 +179,11 @@ export default function Financeiro() {
           </SelectContent>
         </Select>
 
-        {/* CALENDÁRIO SÓ APARECE SE "PERÍODO ESPECÍFICO" ESTIVER SELECIONADO */}
         {filtroPeriodo === "personalizado" && (
           <div className="flex items-center gap-2 w-full sm:w-auto mt-2 sm:mt-0 bg-background p-1 rounded-md border">
-            <Input 
-              type="date" 
-              value={dataInicio} 
-              onChange={(e) => setDataInicio(e.target.value)} 
-              className="h-8 border-none focus-visible:ring-0 w-[130px] text-sm" 
-            />
+            <Input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} className="h-8 border-none focus-visible:ring-0 w-[130px] text-sm" />
             <span className="text-xs text-muted-foreground font-medium">até</span>
-            <Input 
-              type="date" 
-              value={dataFim} 
-              onChange={(e) => setDataFim(e.target.value)} 
-              className="h-8 border-none focus-visible:ring-0 w-[130px] text-sm" 
-            />
+            <Input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} className="h-8 border-none focus-visible:ring-0 w-[130px] text-sm" />
           </div>
         )}
       </div>
@@ -203,7 +201,25 @@ export default function Financeiro() {
           {pendentes.map((r) => (
             <Card key={r.id} className="p-4 flex items-center gap-4">
               <div className="flex-1"><div className="font-semibold">{r.profissional?.nome}</div><div className="text-xs text-muted-foreground">Pcte: {r.atendimento?.paciente?.nome}</div><div className="font-bold text-amber-600">{formatBRL(Number(r.valor_repasse))}</div></div>
-              <div className="flex gap-2"><Button size="sm" variant="ghost" onClick={() => { setEditando(r); setValorAtendimento(String(r.valor_atendimento)); setValorRepasse(String(r.valor_repasse)); }}><Pencil className="w-4 h-4" /></Button><Button size="sm" variant="outline" onClick={() => atualizarStatus(r.id, "pago")}><CheckCircle2 className="w-4 h-4" /></Button></div>
+              <div className="flex gap-2">
+                <Button size="sm" variant="ghost" onClick={() => { 
+                  setEditando(r); 
+                  setValorAtendimento(String(r.valor_atendimento)); 
+                  setValorRepasse(String(r.valor_repasse)); 
+                  
+                  // NOVO: Descobre qual era o % da fisio antes de editar
+                  const vAtend = Number(r.valor_atendimento);
+                  const vRep = Number(r.valor_repasse);
+                  if (vAtend > 0) {
+                    setFatorRecalculo(vRep / vAtend);
+                  } else {
+                    setFatorRecalculo(0.35); // Padrão se era zero
+                  }
+                }}>
+                  <Pencil className="w-4 h-4" />
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => atualizarStatus(r.id, "pago")}><CheckCircle2 className="w-4 h-4" /></Button>
+              </div>
             </Card>
           ))}
         </TabsContent>
@@ -215,7 +231,24 @@ export default function Financeiro() {
       </Tabs>
 
       <Dialog open={!!editando} onOpenChange={() => setEditando(null)}>
-        <DialogContent><DialogHeader><DialogTitle>Editar Valores</DialogTitle></DialogHeader><div className="space-y-4"><Label>Valor Atendimento</Label><Input value={valorAtendimento} onChange={(e) => setValorAtendimento(e.target.value)} /><Label>Valor Repasse</Label><Input value={valorRepasse} onChange={(e) => setValorRepasse(e.target.value)} /><Button onClick={salvarEdicao} className="w-full">Salvar</Button></div></DialogContent>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Editar Valores</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <Label>Valor Atendimento</Label>
+            {/* O onChange agora aciona o nosso recálculo automático */}
+            <Input 
+              value={valorAtendimento} 
+              onChange={(e) => handleMudancaAtendimento(e.target.value)} 
+            />
+            <Label>Valor Repasse</Label>
+            {/* Mantemos a liberdade para você digitar manualmente aqui se quiser */}
+            <Input 
+              value={valorRepasse} 
+              onChange={(e) => setValorRepasse(e.target.value.replace(",", "."))} 
+            />
+            <Button onClick={salvarEdicao} className="w-full">Salvar</Button>
+          </div>
+        </DialogContent>
       </Dialog>
     </div>
   );
