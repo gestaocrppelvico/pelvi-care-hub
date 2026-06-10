@@ -103,7 +103,7 @@ export default function PacienteFinanceiro() {
       const { error } = await supabase.from("pagamentos").insert(payload);
       if (error) throw error;
 
-      toast.success("Pagamento registado com sucesso!");
+      toast.success("Pagamento registrado com sucesso!");
       setModoNovoPag(false);
       setNovoPag({ valor: "", forma: "dinheiro", data_pagamento: new Date().toISOString().split("T")[0], paciente_pacote_id: "none", observacoes: "" });
       carregarDados();
@@ -139,7 +139,7 @@ export default function PacienteFinanceiro() {
       const { error } = await supabase.from("atendimentos").insert(payloadAtendimento);
       if (error) throw error;
 
-      toast.success("Lançamento registado! Repasse gerado com sucesso.");
+      toast.success("Lançamento registrado! Repasse gerado com sucesso.");
       setModalLancamentoAberto(false);
       carregarDados(); // Recarrega para mostrar a sessão descontada
     } catch (err: any) {
@@ -147,7 +147,7 @@ export default function PacienteFinanceiro() {
     }
   };
 
-  if (loading) return <div className="p-6 text-center text-sm text-muted-foreground">A carregar dados financeiros...</div>;
+  if (loading) return <div className="p-6 text-center text-sm text-muted-foreground">Carregando dados financeiros...</div>;
 
   return (
     <div className="space-y-4">
@@ -195,4 +195,158 @@ export default function PacienteFinanceiro() {
                 </Badge>
               </div>
               <div className="text-xs text-muted-foreground flex justify-between pt-1">
-                <span>Criado em: {new Date(p.created_at).toLocaleDateString
+                <span>Criado em: {new Date(p.created_at).toLocaleDateString("pt-BR")}</span>
+                <span className="font-medium text-slate-700">
+                  {p.autorizacao ? "Faturamento por Plano de Saúde" : `Preço Total: ${fmt(Number(p.preco_pago))}`}
+                </span>
+              </div>
+              <div className="w-full bg-slate-100 rounded-full h-1.5 mt-2 overflow-hidden">
+                <div className="bg-primary h-1.5 rounded-full transition-all" style={{ width: `${(p.sessoes_restantes / p.sessoes_totais) * 100}%` }} />
+              </div>
+            </Card>
+          ))}
+
+          {pacienteServicos.map((s) => (
+            <Card key={s.id} className="p-3 border-l-4 border-l-emerald-500 flex justify-between items-center">
+              <div>
+                <div className="font-semibold text-sm flex items-center gap-1"><Box className="w-3.5 h-3.5 text-emerald-500" /> {s.servico?.nome || "Serviço Avulso"}</div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">Lançado em {new Date(s.created_at).toLocaleDateString("pt-BR")}</div>
+              </div>
+              <Badge variant="outline" className="text-emerald-700 bg-emerald-50 border-emerald-200">Sessão Única</Badge>
+            </Card>
+          ))}
+        </TabsContent>
+
+        <TabsContent value="historico" className="space-y-3 mt-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5"><Wallet className="w-4 h-4" /> Recibos de Pagamento</h2>
+            {podeGerenciar && <Button size="sm" onClick={() => setModoNovoPag(!modoNovoPag)}><Plus className="w-4 h-4 mr-1" /> Registrar</Button>}
+          </div>
+
+          {modoNovoPag && (
+            <Card className="p-4 border border-primary/20 bg-slate-50/50 space-y-3">
+              <h3 className="font-medium text-xs text-primary uppercase tracking-wider">Novo Recebimento</h3>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label>Valor (R$)</Label>
+                  <Input type="number" step="0.01" value={novoPag.valor} onChange={(e) => setNovoPag({ ...novoPag, valor: e.target.value })} placeholder="0,00" />
+                </div>
+                <div className="space-y-1">
+                  <Label>Forma</Label>
+                  <Select value={novoPag.forma} onValueChange={(v) => setNovoPag({ ...novoPag, forma: v })}>
+                    <SelectTrigger className="bg-background"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="dinheiro">Dinheiro</SelectItem>
+                      <SelectItem value="pix">PIX</SelectItem>
+                      <SelectItem value="cartao_credito">Cartão de Crédito</SelectItem>
+                      <SelectItem value="cartao_debito">Cartão de Débito</SelectItem>
+                      <SelectItem value="transferencia">Transferência</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label>Data</Label>
+                  <Input type="date" value={novoPag.data_pagamento} onChange={(e) => setNovoPag({ ...novoPag, data_pagamento: e.target.value })} />
+                </div>
+                <div className="space-y-1">
+                  <Label>Vincular a Contrato</Label>
+                  <Select value={novoPag.paciente_pacote_id} onValueChange={(v) => setNovoPag({ ...novoPag, paciente_pacote_id: v })}>
+                    <SelectTrigger className="bg-background"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">— Sem Vínculo —</SelectItem>
+                      {pacientePacotes.filter(p => !p.autorizacao).map((p) => (
+                        <SelectItem key={p.id} value={p.id}>Pacote: {p.pacote?.nome || "Particular"}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label>Observações</Label>
+                <Textarea placeholder="Ex: Referente à primeira parcela..." value={novoPag.observacoes} onChange={(e) => setNovoPag({ ...novoPag, observacoes: e.target.value })} rows={2} />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <Button className="flex-1" onClick={registrarPagamento}>Confirmar Recebimento</Button>
+                <Button variant="outline" onClick={() => setModoNovoPag(false)}>Cancelar</Button>
+              </div>
+            </Card>
+          )}
+
+          {pagamentos.length === 0 && (
+            <Card className="p-6 text-center text-sm text-muted-foreground">Nenhum histórico de pagamento registrado para este paciente.</Card>
+          )}
+
+          {pagamentos.map((p) => (
+            <Card key={p.id} className="p-3 flex items-center gap-2.5">
+              <Receipt className="w-5 h-5 text-emerald-500 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="font-bold text-slate-800 text-sm">{fmt(Number(p.valor))}</div>
+                <div className="text-xs text-muted-foreground capitalize">{p.forma.replace("_", " ")} · {new Date(p.data_pagamento).toLocaleDateString("pt-BR")}</div>
+                {p.observacoes && <p className="text-[11px] text-slate-500 bg-slate-50 border rounded p-1 mt-1.5 italic">{p.observacoes}</p>}
+              </div>
+              <Badge variant="outline" className="text-emerald-700 bg-emerald-50 border-emerald-200 text-[10px] py-0">Recebido</Badge>
+            </Card>
+          ))}
+        </TabsContent>
+      </Tabs>
+
+      {/* NOVO MODAL PARA LANÇAMENTO AVULSO / RETROATIVO */}
+      <Dialog open={modalLancamentoAberto} onOpenChange={setModalLancamentoAberto}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Lançar Sessão (Manual/Retroativo)</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-xs text-muted-foreground bg-blue-50 p-2 rounded border border-blue-100">
+              Este lançamento irá registrar uma sessão como <strong>REALIZADA</strong>, descontar automaticamente do saldo e gerar o repasse para a profissional (inclusive para Planos de Saúde).
+            </p>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Data</Label>
+                <Input type="date" value={lancamentoData} onChange={(e) => setLancamentoData(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Hora (Aprox.)</Label>
+                <Input type="time" value={lancamentoHora} onChange={(e) => setLancamentoHora(e.target.value)} />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Profissional</Label>
+              <Select value={lancamentoProfissionalId} onValueChange={setLancamentoProfissionalId}>
+                <SelectTrigger><SelectValue placeholder="Quem atendeu?" /></SelectTrigger>
+                <SelectContent>
+                  {profissionais.map(p => <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Pacote / Guia a Descontar</Label>
+              <Select value={lancamentoPacoteId} onValueChange={setLancamentoPacoteId}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="avulso">— Sessão Avulsa (Sem vínculo) —</SelectItem>
+                  {pacientePacotes.filter(p => p.sessoes_restantes > 0).map(p => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.autorizacao ? `[PLANO] ${p.autorizacao.plano}` : `[PARTICULAR] ${p.pacote?.nome}`} 
+                      {` (${p.sessoes_restantes} rest.)`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setModalLancamentoAberto(false)}>Cancelar</Button>
+            <Button onClick={realizarLancamentoRetroativo}>Gravar Sessão</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
