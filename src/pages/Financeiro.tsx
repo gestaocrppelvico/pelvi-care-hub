@@ -4,15 +4,14 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Wallet, Package, Settings, CheckCircle2, CheckSquare, Calendar, User as UserIcon, Activity, Undo2, Pencil } from "lucide-react";
+import { Wallet, Package, Settings, CheckCircle2, Activity, Undo2, Pencil } from "lucide-react";
 import { toast } from "sonner";
-import { startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval, parseISO } from "date-fns";
+import { startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval, parseISO, startOfDay, endOfDay } from "date-fns";
 
 interface RepasseRow {
   id: string;
@@ -34,6 +33,11 @@ export default function Financeiro() {
   const [loading, setLoading] = useState(true);
   const [filtroProfissional, setFiltroProfissional] = useState<string>("todos");
   const [filtroPeriodo, setFiltroPeriodo] = useState<string>("semana");
+  
+  // Novos estados para o calendário personalizado
+  const [dataInicio, setDataInicio] = useState<string>("");
+  const [dataFim, setDataFim] = useState<string>("");
+
   const [editando, setEditando] = useState<RepasseRow | null>(null);
   const [valorAtendimento, setValorAtendimento] = useState("");
   const [valorRepasse, setValorRepasse] = useState("");
@@ -59,16 +63,36 @@ export default function Financeiro() {
 
   const repassesFiltrados = useMemo(() => {
     let filtrados = repasses;
-    if (filtroProfissional !== "todos") filtrados = filtrados.filter(r => r.profissional_id === filtroProfissional);
+    
+    // Filtro por profissional
+    if (filtroProfissional !== "todos") {
+      filtrados = filtrados.filter(r => r.profissional_id === filtroProfissional);
+    }
+    
+    // Filtro por data
     if (filtroPeriodo !== "todos") {
       const hoje = new Date();
       let start, end;
-      if (filtroPeriodo === "semana") { start = startOfWeek(hoje, { weekStartsOn: 1 }); end = endOfWeek(hoje, { weekStartsOn: 1 }); } 
-      else { start = startOfMonth(hoje); end = endOfMonth(hoje); }
-      filtrados = filtrados.filter(r => isWithinInterval(parseISO(r.created_at), { start, end }));
+      
+      if (filtroPeriodo === "semana") { 
+        start = startOfWeek(hoje, { weekStartsOn: 1 }); 
+        end = endOfWeek(hoje, { weekStartsOn: 1 }); 
+      } else if (filtroPeriodo === "mes") { 
+        start = startOfMonth(hoje); 
+        end = endOfMonth(hoje); 
+      } else if (filtroPeriodo === "personalizado") {
+        // Usa as datas escolhidas no calendário, ou joga pro passado/futuro se estiver em branco
+        start = dataInicio ? startOfDay(parseISO(dataInicio)) : new Date(0);
+        end = dataFim ? endOfDay(parseISO(dataFim)) : new Date(8640000000000000);
+      }
+      
+      if (start && end) {
+        filtrados = filtrados.filter(r => isWithinInterval(parseISO(r.created_at), { start, end }));
+      }
     }
+    
     return filtrados;
-  }, [repasses, filtroProfissional, filtroPeriodo]);
+  }, [repasses, filtroProfissional, filtroPeriodo, dataInicio, dataFim]);
 
   const pendentes = repassesFiltrados.filter((r) => r.status === "pendente");
   const conferidos = repassesFiltrados.filter((r) => r.status === "pago");
@@ -126,9 +150,44 @@ export default function Financeiro() {
         <Link to="/financeiro/relatorios"><Card className="p-3 flex items-center gap-2 hover:bg-emerald-50 transition-colors h-full border-emerald-200"><Activity className="w-5 h-5 text-emerald-600" /><div className="font-medium text-sm text-emerald-800">Relatórios</div></Card></Link>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3 p-3 bg-muted/50 rounded-lg border">
-        <Select value={filtroPeriodo} onValueChange={setFiltroPeriodo}><SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="semana">Esta Semana</SelectItem><SelectItem value="mes">Este Mês</SelectItem><SelectItem value="todos">Tudo</SelectItem></SelectContent></Select>
-        <Select value={filtroProfissional} onValueChange={setFiltroProfissional}><SelectTrigger className="w-full sm:w-[180px]"><SelectValue placeholder="Profissional" /></SelectTrigger><SelectContent><SelectItem value="todos">Todos</SelectItem>{profissionaisFiltro.map(p => <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>)}</SelectContent></Select>
+      {/* ÁREA DOS FILTROS */}
+      <div className="flex flex-col sm:flex-row gap-3 p-3 bg-muted/50 rounded-lg border flex-wrap items-center">
+        <Select value={filtroPeriodo} onValueChange={setFiltroPeriodo}>
+          <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="semana">Esta Semana</SelectItem>
+            <SelectItem value="mes">Este Mês</SelectItem>
+            <SelectItem value="todos">Tudo</SelectItem>
+            <SelectItem value="personalizado">Período Específico</SelectItem>
+          </SelectContent>
+        </Select>
+        
+        <Select value={filtroProfissional} onValueChange={setFiltroProfissional}>
+          <SelectTrigger className="w-full sm:w-[180px]"><SelectValue placeholder="Profissional" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Todos</SelectItem>
+            {profissionaisFiltro.map(p => <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>)}
+          </SelectContent>
+        </Select>
+
+        {/* CALENDÁRIO SÓ APARECE SE "PERÍODO ESPECÍFICO" ESTIVER SELECIONADO */}
+        {filtroPeriodo === "personalizado" && (
+          <div className="flex items-center gap-2 w-full sm:w-auto mt-2 sm:mt-0 bg-background p-1 rounded-md border">
+            <Input 
+              type="date" 
+              value={dataInicio} 
+              onChange={(e) => setDataInicio(e.target.value)} 
+              className="h-8 border-none focus-visible:ring-0 w-[130px] text-sm" 
+            />
+            <span className="text-xs text-muted-foreground font-medium">até</span>
+            <Input 
+              type="date" 
+              value={dataFim} 
+              onChange={(e) => setDataFim(e.target.value)} 
+              className="h-8 border-none focus-visible:ring-0 w-[130px] text-sm" 
+            />
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-3 gap-2">
