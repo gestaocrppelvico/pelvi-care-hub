@@ -9,8 +9,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Plus, Wallet, Package, Box, Receipt } from "lucide-react";
+import { ArrowLeft, Plus, Wallet, Package, Box, Receipt, CalendarCheck } from "lucide-react";
 import { toast } from "sonner";
 
 const fmt = (v: number) => Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -25,8 +26,16 @@ export default function PacienteFinanceiro() {
   const [pacientePacotes, setPacientePacotes] = useState<any[]>([]);
   const [pacienteServicos, setPacienteServicos] = useState<any[]>([]);
   const [pagamentos, setPagamentos] = useState<any[]>([]);
+  const [profissionais, setProfissionais] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [modoNovoPag, setModoNovoPag] = useState(false);
+  
+  // Estados do Modal de Lançamento Avulso (Retroativo)
+  const [modalLancamentoAberto, setModalLancamentoAberto] = useState(false);
+  const [lancamentoData, setLancamentoData] = useState(new Date().toISOString().split("T")[0]);
+  const [lancamentoHora, setLancamentoHora] = useState("08:00");
+  const [lancamentoProfissionalId, setLancamentoProfissionalId] = useState("");
+  const [lancamentoPacoteId, setLancamentoPacoteId] = useState("avulso");
   
   const [novoPag, setNovoPag] = useState<any>({
     valor: "",
@@ -40,11 +49,9 @@ export default function PacienteFinanceiro() {
     if (!pacienteId) return;
     setLoading(true);
     try {
-      // 1. Carrega dados do paciente
       const { data: pac } = await supabase.from("pacientes").select("*").eq("id", pacienteId).maybeSingle();
       setPaciente(pac);
 
-      // 2. Carrega pacotes financeiros (Trazendo o join com autorizações para dar nome à guia)
       const { data: pacs } = await supabase
         .from("paciente_pacotes")
         .select("*, pacote:pacotes(nome), autorizacao:autorizacoes(plano, numero_guia)")
@@ -52,7 +59,6 @@ export default function PacienteFinanceiro() {
         .order("created_at", { ascending: false });
       setPacientePacotes(pacs || []);
 
-      // 3. Carrega serviços avulsos
       const { data: servs } = await supabase
         .from("paciente_servicos")
         .select("*, servico:servicos(nome)")
@@ -60,13 +66,16 @@ export default function PacienteFinanceiro() {
         .order("created_at", { ascending: false });
       setPacienteServicos(servs || []);
 
-      // 4. Carrega histórico de pagamentos
       const { data: pags } = await supabase
         .from("pagamentos")
         .select("*")
         .eq("paciente_id", pacienteId)
         .order("data_pagamento", { ascending: false });
       setPagamentos(pags || []);
+
+      // Carregar os profissionais para o Modal de Lançamento
+      const { data: profs } = await supabase.from("profissionais").select("id, nome").eq("ativo", true).order("nome");
+      setProfissionais(profs || []);
 
     } catch (err: any) {
       console.error(err);
@@ -76,15 +85,10 @@ export default function PacienteFinanceiro() {
     }
   };
 
-  useEffect(() => {
-    carregarDados();
-  }, [pacienteId]);
+  useEffect(() => { carregarDados(); }, [pacienteId]);
 
   const registrarPagamento = async () => {
-    if (!pacienteId || !novoPag.valor) {
-      toast.error("Informe o valor do pagamento.");
-      return;
-    }
+    if (!pacienteId || !novoPag.valor) { toast.error("Informe o valor do pagamento."); return; }
     try {
       const payload: any = {
         paciente_id: pacienteId,
@@ -94,25 +98,52 @@ export default function PacienteFinanceiro() {
         observacoes: novoPag.observacoes || null
       };
 
-      if (novoPag.paciente_pacote_id !== "none") {
-        payload.paciente_pacote_id = novoPag.paciente_pacote_id;
-      }
+      if (novoPag.paciente_pacote_id !== "none") payload.paciente_pacote_id = novoPag.paciente_pacote_id;
 
       const { error } = await supabase.from("pagamentos").insert(payload);
       if (error) throw error;
 
       toast.success("Pagamento registado com sucesso!");
       setModoNovoPag(false);
-      setNovoPag({
-        valor: "",
-        forma: "dinheiro",
-        data_pagamento: new Date().toISOString().split("T")[0],
-        paciente_pacote_id: "none",
-        observacoes: ""
-      });
+      setNovoPag({ valor: "", forma: "dinheiro", data_pagamento: new Date().toISOString().split("T")[0], paciente_pacote_id: "none", observacoes: "" });
       carregarDados();
+    } catch (err: any) { toast.error("Erro: " + err.message); }
+  };
+
+  // FUNÇÃO MÁGICA DE LANÇAMENTO AVULSO / RETROATIVO
+  const realizarLancamentoRetroativo = async () => {
+    if (!lancamentoProfissionalId) { toast.error("Selecione a profissional!"); return; }
+    if (!lancamentoData || !lancamentoHora) { toast.error("Data e hora são obrigatórios!"); return; }
+
+    const dataCompleta = new Date(`${lancamentoData}T${lancamentoHora}:00`);
+
+    // Descobrir se o paciente tem convênio ou é particular (para a coluna tipo do atendimento)
+    const ehConvenio = pacientePacotes.find(p => p.id === lancamentoPacoteId)?.autorizacao !== null;
+    const tipoAtend = (ehConvenio && lancamentoPacoteId !== "avulso") ? "Plano" : "Particular";
+
+    const payloadAtendimento: any = {
+      paciente_id: pacienteId,
+      profissional_id: lancamentoProfissionalId,
+      data_inicio: dataCompleta.toISOString(),
+      data_fim: new Date(dataCompleta.getTime() + 60 * 60000).toISOString(), // +1 hora
+      status: "realizado", // Já nasce realizado para forçar o gatilho financeiro!
+      tipo: tipoAtend
+    };
+
+    if (lancamentoPacoteId !== "avulso") {
+      payloadAtendimento.paciente_pacote_id = lancamentoPacoteId;
+    }
+
+    try {
+      // O milagre acontece aqui: ao inserir com status realizado e pacote_id, o Supabase dispara o Gatilho!
+      const { error } = await supabase.from("atendimentos").insert(payloadAtendimento);
+      if (error) throw error;
+
+      toast.success("Lançamento registado! Repasse gerado com sucesso.");
+      setModalLancamentoAberto(false);
+      carregarDados(); // Recarrega para mostrar a sessão descontada
     } catch (err: any) {
-      toast.error("Erro: " + err.message);
+      toast.error("Erro ao lançar: " + err.message);
     }
   };
 
@@ -120,12 +151,19 @@ export default function PacienteFinanceiro() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Button variant="ghost" size="icon" onClick={() => navigate(-1)}><ArrowLeft className="w-5 h-5" /></Button>
-        <div>
-          <h1 className="text-xl font-bold">Financeiro do Paciente</h1>
-          <p className="text-sm text-muted-foreground">{paciente?.nome || "—"}</p>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}><ArrowLeft className="w-5 h-5" /></Button>
+          <div>
+            <h1 className="text-xl font-bold">Financeiro do Paciente</h1>
+            <p className="text-sm text-muted-foreground">{paciente?.nome || "—"}</p>
+          </div>
         </div>
+        
+        {/* NOVO BOTÃO DE LANÇAMENTO AVULSO */}
+        <Button variant="default" size="sm" onClick={() => setModalLancamentoAberto(true)} className="bg-blue-600 hover:bg-blue-700">
+          <CalendarCheck className="w-4 h-4 mr-2" /> Lançar Sessão
+        </Button>
       </div>
 
       <Tabs defaultValue="saldos">
@@ -143,11 +181,9 @@ export default function PacienteFinanceiro() {
             <Card className="p-6 text-center text-sm text-muted-foreground">Nenhum contrato ativo ou pendente encontrado.</Card>
           )}
 
-          {/* LISTAGEM DE PACOTES E GUIAS DE PLANO DE SAÚDE */}
           {pacientePacotes.map((p) => (
             <Card key={p.id} className="p-3 border-l-4 border-l-primary space-y-1">
               <div className="flex items-start justify-between gap-2">
-                {/* INTERFACE INTELIGENTE: Identifica se é guia de plano ou pacote particular */}
                 <div className="font-semibold text-sm text-slate-800">
                   {p.autorizacao 
                     ? `Guia Autorizada: ${p.autorizacao.plano} ${p.autorizacao.numero_guia ? `(Nº ${p.autorizacao.numero_guia})` : ''}`
@@ -159,111 +195,4 @@ export default function PacienteFinanceiro() {
                 </Badge>
               </div>
               <div className="text-xs text-muted-foreground flex justify-between pt-1">
-                <span>Criado em: {new Date(p.created_at).toLocaleDateString("pt-BR")}</span>
-                <span className="font-medium text-slate-700">
-                  {p.autorizacao ? "Faturamento por Plano de Saúde" : `Preço Total: ${fmt(Number(p.preco_pago))}`}
-                </span>
-              </div>
-              <div className="w-full bg-slate-100 rounded-full h-1.5 mt-2 overflow-hidden">
-                <div 
-                  className="bg-primary h-1.5 rounded-full transition-all" 
-                  style={{ width: `${(p.sessoes_restantes / p.sessoes_totais) * 100}%` }}
-                />
-              </div>
-            </Card>
-          ))}
-
-          {/* LISTAGEM DE SERVIÇOS AVULSOS */}
-          {pacienteServicos.map((s) => (
-            <Card key={s.id} className="p-3 border-l-4 border-l-emerald-500 flex justify-between items-center">
-              <div>
-                <div className="font-semibold text-sm flex items-center gap-1"><Box className="w-3.5 h-3.5 text-emerald-500" /> {s.servico?.nome || "Serviço Avulso"}</div>
-                <div className="text-[10px] text-muted-foreground mt-0.5">Lançado em {new Date(s.created_at).toLocaleDateString("pt-BR")}</div>
-              </div>
-              <Badge variant="outline" className="text-emerald-700 bg-emerald-50 border-emerald-200">Sessão Única</Badge>
-            </Card>
-          ))}
-        </TabsContent>
-
-        <TabsContent value="historico" className="space-y-3 mt-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5"><Wallet className="w-4 h-4" /> Recibos de Pagamento</h2>
-            {podeGerenciar && (
-              <Button size="sm" onClick={() => setModoNovoPag(!modoNovoPag)}>
-                <Plus className="w-4 h-4 mr-1" /> Registar
-              </Button>
-            )}
-          </div>
-
-          {modoNovoPag && (
-            <Card className="p-4 border border-primary/20 bg-slate-50/50 space-y-3">
-              <h3 className="font-medium text-xs text-primary uppercase tracking-wider">Novo Recebimento</h3>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label>Valor (R$)</Label>
-                  <Input type="number" step="0.01" value={novoPag.valor} onChange={(e) => setNovoPag({ ...novoPag, valor: e.target.value })} placeholder="0,00" />
-                </div>
-                <div className="space-y-1">
-                  <Label>Forma</Label>
-                  <Select value={novoPag.forma} onValueChange={(v) => setNovoPag({ ...novoPag, forma: v })}>
-                    <SelectTrigger className="bg-background"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="dinheiro">Dinheiro</SelectItem>
-                      <SelectItem value="pix">PIX</SelectItem>
-                      <SelectItem value="cartao_credito">Cartão de Crédito</SelectItem>
-                      <SelectItem value="cartao_debito">Cartão de Débito</SelectItem>
-                      <SelectItem value="transferencia">Transferência</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label>Data</Label>
-                  <Input type="date" value={novoPag.data_pagamento} onChange={(e) => setNovoPag({ ...novoPag, data_pagamento: e.target.value })} />
-                </div>
-                <div className="space-y-1">
-                  <Label>Vincular a Contrato</Label>
-                  <Select value={novoPag.paciente_pacote_id} onValueChange={(v) => setNovoPag({ ...novoPag, paciente_pacote_id: v })}>
-                    <SelectTrigger className="bg-background"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">— Sem Vínculo —</SelectItem>
-                      {/* Filtra para não permitir vincular pagamentos manuais a guias de convénio */}
-                      {pacientePacotes.filter(p => !p.autorizacao).map((p) => (
-                        <SelectItem key={p.id} value={p.id}>Pacote: {p.pacote?.nome || "Particular"}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="space-y-1">
-                <Label>Observações</Label>
-                <Textarea placeholder="Ex: Referente à primeira parcela..." value={novoPag.observacoes} onChange={(e) => setNovoPag({ ...novoPag, observacoes: e.target.value })} rows={2} />
-              </div>
-              <div className="flex gap-2 pt-1">
-                <Button className="flex-1" onClick={registrarPagamento}>Confirmar Recebimento</Button>
-                <Button variant="outline" onClick={() => setModoNovoPag(false)}>Cancelar</Button>
-              </div>
-            </Card>
-          )}
-
-          {pagamentos.length === 0 && (
-            <Card className="p-6 text-center text-sm text-muted-foreground">Nenhum histórico de pagamento registado para este paciente.</Card>
-          )}
-
-          {pagamentos.map((p) => (
-            <Card key={p.id} className="p-3 flex items-center gap-2.5">
-              <Receipt className="w-5 h-5 text-emerald-500 shrink-0" />
-              <div className="flex-1 min-w-0">
-                <div className="font-bold text-slate-800 text-sm">{fmt(Number(p.valor))}</div>
-                <div className="text-xs text-muted-foreground capitalize">{p.forma.replace("_", " ")} · {new Date(p.data_pagamento).toLocaleDateString("pt-BR")}</div>
-                {p.observacoes && <p className="text-[11px] text-slate-500 bg-slate-50 border rounded p-1 mt-1.5 italic">{p.observacoes}</p>}
-              </div>
-              <Badge variant="outline" className="text-emerald-700 bg-emerald-50 border-emerald-200 text-[10px] py-0">Recebido</Badge>
-            </Card>
-          ))}
-        </TabsContent>
-      </Tabs>
-    </div>
-  );
-}
+                <span>Criado em: {new Date(p.created_at).toLocaleDateString
