@@ -34,16 +34,20 @@ export default function VinculoPacientes() {
       // Limite superior: 15 dias para frente
       const dataFinal = addDays(hoje, 15).toISOString();
 
-      // ADICIONADO O 'titulo' NA BUSCA PARA PEGAR O NOME DO EVENTO DO CALENDAR
+      // CORREÇÃO: Usando '*' para puxar todas as colunas sem forçar nomes que podem não existir no banco
       const { data, error } = await supabase
         .from("atendimentos")
-        .select("id, data_inicio, tipo, titulo, observacoes, profissional:profissionais(nome)")
+        .select("*, profissional:profissionais(nome)")
         .is("paciente_id", null)
         .gte("data_inicio", dataInicial)
         .lte("data_inicio", dataFinal)
         .order("data_inicio", { ascending: false });
 
-      if (error) throw error;
+      if (error) {
+        console.error("Erro Supabase:", error);
+        throw error;
+      }
+      
       setAtendimentosOrfaos(data || []);
     } catch (err: any) {
       toast.error("Erro ao carregar atendimentos pendentes.");
@@ -108,6 +112,11 @@ export default function VinculoPacientes() {
     return <div className="p-6 text-center">Acesso restrito à administração.</div>;
   }
 
+  // Função auxiliar para tentar extrair o nome do evento de qualquer campo possível
+  const getNomeEvento = (atend: any) => {
+    return atend.titulo || atend.title || atend.summary || atend.descricao || atend.observacoes || "Evento importado da Agenda";
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
@@ -138,10 +147,10 @@ export default function VinculoPacientes() {
             <Card key={atend.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm border-l-4 border-l-amber-500">
               <div className="space-y-1.5">
                 
-                {/* NOME DO EVENTO EM DESTAQUE AQUI */}
+                {/* NOME DO EVENTO EM DESTAQUE */}
                 <div className="text-base font-bold text-blue-700 flex items-center gap-1.5">
                   <Type className="w-4 h-4 text-blue-500" />
-                  {atend.titulo || atend.observacoes || "Evento sem título"}
+                  {getNomeEvento(atend)}
                 </div>
 
                 <div className="text-sm font-medium text-slate-700 flex items-center gap-1.5">
@@ -151,7 +160,7 @@ export default function VinculoPacientes() {
                 
                 <div className="text-xs text-muted-foreground flex items-center gap-4">
                   <span className="flex items-center gap-1"><User className="w-3.5 h-3.5" /> Fisioterapeuta: {atend.profissional?.nome || "Não informado"}</span>
-                  <span className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-600 font-medium">{atend.tipo}</span>
+                  <span className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-600 font-medium">{atend.tipo || "Não definido"}</span>
                 </div>
               </div>
 
@@ -176,7 +185,7 @@ export default function VinculoPacientes() {
           
           <div className="space-y-4 py-2">
             <div className="p-2 bg-blue-50 border border-blue-100 rounded text-xs text-blue-800">
-              Vinculando o evento: <strong>{atendimentoSelecionado?.titulo || "Sem título"}</strong>
+              Vinculando o evento: <strong>{atendimentoSelecionado ? getNomeEvento(atendimentoSelecionado) : ""}</strong>
             </div>
 
             <div className="space-y-1.5">
