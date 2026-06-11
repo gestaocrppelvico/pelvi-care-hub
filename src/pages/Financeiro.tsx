@@ -9,9 +9,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import { Wallet, Package, Settings, CheckCircle2, Activity, Undo2, Pencil } from "lucide-react";
 import { toast } from "sonner";
-import { startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval, parseISO, startOfDay, endOfDay } from "date-fns";
+import { startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval, parseISO, startOfDay, endOfDay, format } from "date-fns";
 
 interface RepasseRow {
   id: string;
@@ -21,8 +23,14 @@ interface RepasseRow {
   valor_repasse: number;
   status: string;
   created_at: string;
+  observacoes?: string | null;
   profissional?: { id: string; nome: string; cor_agenda: string };
-  atendimento?: { tipo: string; paciente?: { nome: string } };
+  atendimento?: { 
+    tipo: string; 
+    data_inicio: string; 
+    google_event_id?: string | null;
+    paciente?: { nome: string } 
+  };
 }
 
 export default function Financeiro() {
@@ -40,15 +48,16 @@ export default function Financeiro() {
   const [editando, setEditando] = useState<RepasseRow | null>(null);
   const [valorAtendimento, setValorAtendimento] = useState("");
   const [valorRepasse, setValorRepasse] = useState("");
+  const [justificativa, setJustificativa] = useState("");
   
-  // NOVO: Guarda qual era a % de repasse antes de editar para aplicar no novo valor
   const [fatorRecalculo, setFatorRecalculo] = useState(0.35); 
 
   async function carregar() {
     setLoading(true);
+    // ATUALIZADO: select puxando data_inicio e google_event_id do atendimento para auditoria
     const { data } = await supabase
       .from("repasses_atendimento")
-      .select(`*, profissional:profissionais(id, nome, cor_agenda), atendimento:atendimentos(tipo, paciente:pacientes(nome))`)
+      .select(`*, profissional:profissionais(id, nome, cor_agenda), atendimento:atendimentos(tipo, data_inicio, google_event_id, paciente:pacientes(nome))`)
       .order("created_at", { ascending: false })
       .limit(500);
     setRepasses((data as any[]) ?? []);
@@ -119,16 +128,22 @@ export default function Financeiro() {
 
   async function salvarEdicao() {
     if (!editando) return;
+    // ATUALIZADO: Salvando o motivo da alteração na coluna 'observacoes'
     const { error } = await supabase.from("repasses_atendimento")
-      .update({ valor_atendimento: parseFloat(valorAtendimento), valor_repasse: parseFloat(valorRepasse) })
+      .update({ 
+        valor_atendimento: parseFloat(valorAtendimento), 
+        valor_repasse: parseFloat(valorRepasse),
+        observacoes: justificativa.trim() || null
+      })
       .eq("id", editando.id);
+      
     if (error) { toast.error(error.message); return; }
-    toast.success("Valores atualizados!");
+    toast.success("Valores e justificativa atualizados!");
     setEditando(null);
+    setJustificativa("");
     carregar();
   }
 
-  // NOVO: Função que faz a mágica de calcular automaticamente quando você digita
   function handleMudancaAtendimento(val: string) {
     setValorAtendimento(val);
     const numero = parseFloat(val.replace(",", "."));
@@ -196,57 +211,142 @@ export default function Financeiro() {
 
       <Tabs defaultValue="pendentes">
         <TabsList className="w-full"><TabsTrigger value="pendentes" className="flex-1">Pendentes ({pendentes.length})</TabsTrigger><TabsTrigger value="conferidos" className="flex-1">Conferidos ({conferidos.length})</TabsTrigger></TabsList>
+        
+        {/* ABA: PENDENTES */}
         <TabsContent value="pendentes" className="space-y-3 mt-3">
           {podeGerenciar && pendentes.length > 0 && <Button onClick={conferirVisiveis} className="w-full bg-emerald-600">Conferir {pendentes.length} visíveis</Button>}
           {pendentes.map((r) => (
             <Card key={r.id} className="p-4 flex items-center gap-4">
-              <div className="flex-1"><div className="font-semibold">{r.profissional?.nome}</div><div className="text-xs text-muted-foreground">Pcte: {r.atendimento?.paciente?.nome}</div><div className="font-bold text-amber-600">{formatBRL(Number(r.valor_repasse))}</div></div>
+              <div className="flex-1">
+                <div className="font-semibold text-slate-800">{r.profissional?.nome}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">Pacote/Sessão: {r.atendimento?.paciente?.nome || "—"}</div>
+                
+                {/* ATUALIZADO: Mostra Data e Tag de Lançamento Manual */}
+                {r.atendimento?.data_inicio && (
+                  <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+                    <span>Data: {format(parseISO(r.atendimento.data_inicio), "dd/MM/yyyy HH:mm")}</span>
+                    {!r.atendimento?.google_event_id && (
+                      <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-[10px] h-4 py-0 px-1.5 font-medium hover:bg-amber-50">
+                        Lançamento Manual
+                      </Badge>
+                    )}
+                  </div>
+                )}
+                
+                <div className="font-bold text-amber-600 mt-1.5">{formatBRL(Number(r.valor_repasse))}</div>
+                
+                {/* ATUALIZADO: Mostra justificativa se houver */}
+                {r.observacoes && (
+                  <div className="text-[11px] text-slate-600 italic bg-amber-50/40 border border-amber-100 rounded px-2 py-1 mt-1.5 max-w-md">
+                    Motivo alteração: {r.observacoes}
+                  </div>
+                )}
+              </div>
               <div className="flex gap-2">
                 <Button size="sm" variant="ghost" onClick={() => { 
                   setEditando(r); 
                   setValorAtendimento(String(r.valor_atendimento)); 
                   setValorRepasse(String(r.valor_repasse)); 
+                  setJustificativa(r.observacoes || ""); // Resgata justificativa antiga se houver
                   
-                  // NOVO: Descobre qual era o % da fisio antes de editar
                   const vAtend = Number(r.valor_atendimento);
                   const vRep = Number(r.valor_repasse);
                   if (vAtend > 0) {
                     setFatorRecalculo(vRep / vAtend);
                   } else {
-                    setFatorRecalculo(0.35); // Padrão se era zero
+                    setFatorRecalculo(0.35);
                   }
                 }}>
                   <Pencil className="w-4 h-4" />
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => atualizarStatus(r.id, "pago")}><CheckCircle2 className="w-4 h-4" /></Button>
+                <Button size="sm" variant="outline" onClick={() => atualizarStatus(r.id, "pago")}><CheckCircle2 className="w-4 h-4 text-emerald-600" /></Button>
               </div>
             </Card>
           ))}
         </TabsContent>
+
+        {/* ABA: CONFERIDOS (TURBINADA - IGUAL À DE PENDENTES) */}
         <TabsContent value="conferidos" className="space-y-3 mt-3">
           {conferidos.map((r) => (
-            <Card key={r.id} className="p-4 flex items-center gap-4 opacity-70"><div className="flex-1"><div className="font-semibold">{r.profissional?.nome}</div><div className="font-bold text-emerald-600">{formatBRL(Number(r.valor_repasse))}</div></div><Button size="sm" variant="ghost" onClick={() => atualizarStatus(r.id, "pendente")}><Undo2 className="w-4 h-4" /></Button></Card>
+            <Card key={r.id} className="p-4 flex items-center gap-4 bg-slate-50/70 border-slate-100">
+              <div className="flex-1">
+                <div className="font-semibold text-slate-700">{r.profissional?.nome}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">Pacote/Sessão: {r.atendimento?.paciente?.nome || "—"}</div>
+                
+                {/* ATUALIZADO: Mesma exibição de Data e Tag Manual na aba de Conferidos */}
+                {r.atendimento?.data_inicio && (
+                  <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+                    <span>Data: {format(parseISO(r.atendimento.data_inicio), "dd/MM/yyyy HH:mm")}</span>
+                    {!r.atendimento?.google_event_id && (
+                      <Badge variant="outline" className="bg-amber-50/50 text-amber-700 border-amber-200/60 text-[10px] h-4 py-0 px-1.5 font-medium">
+                        Lançamento Manual
+                      </Badge>
+                    )}
+                  </div>
+                )}
+                
+                <div className="font-bold text-emerald-600 mt-1.5">{formatBRL(Number(r.valor_repasse))}</div>
+                
+                {/* ATUALIZADO: Mesma exibição de justificativa na aba de Conferidos */}
+                {r.observacoes && (
+                  <div className="text-[11px] text-slate-600 italic bg-background border rounded px-2 py-1 mt-1.5 max-w-md">
+                    Motivo alteração: {r.observacoes}
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-2">
+                {/* Permite re-editar os valores mesmo depois de conferido */}
+                <Button size="sm" variant="ghost" onClick={() => { 
+                  setEditando(r); 
+                  setValorAtendimento(String(r.valor_atendimento)); 
+                  setValorRepasse(String(r.valor_repasse)); 
+                  setJustificativa(r.observacoes || "");
+                  const vAtend = Number(r.valor_atendimento);
+                  const vRep = Number(r.valor_repasse);
+                  if (vAtend > 0) setFatorRecalculo(vRep / vAtend);
+                  else setFatorRecalculo(0.35);
+                }}>
+                  <Pencil className="w-4 h-4" />
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => atualizarStatus(r.id, "pendente")}><Undo2 className="w-4 h-4 text-slate-500" /></Button>
+              </div>
+            </Card>
           ))}
         </TabsContent>
       </Tabs>
 
+      {/* MODAL DE EDIÇÃO ATUALIZADO */}
       <Dialog open={!!editando} onOpenChange={() => setEditando(null)}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Editar Valores</DialogTitle></DialogHeader>
-          <div className="space-y-4">
-            <Label>Valor Atendimento</Label>
-            {/* O onChange agora aciona o nosso recálculo automático */}
-            <Input 
-              value={valorAtendimento} 
-              onChange={(e) => handleMudancaAtendimento(e.target.value)} 
-            />
-            <Label>Valor Repasse</Label>
-            {/* Mantemos a liberdade para você digitar manualmente aqui se quiser */}
-            <Input 
-              value={valorRepasse} 
-              onChange={(e) => setValorRepasse(e.target.value.replace(",", "."))} 
-            />
-            <Button onClick={salvarEdicao} className="w-full">Salvar</Button>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader><DialogTitle>Editar Valores de Repasse</DialogTitle></DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div>
+              <Label>Valor Atendimento (Total Pago)</Label>
+              <Input 
+                value={valorAtendimento} 
+                onChange={(e) => handleMudancaAtendimento(e.target.value)} 
+              />
+            </div>
+            <div>
+              <Label>Valor do Repasse da Profissional</Label>
+              <Input 
+                value={valorRepasse} 
+                onChange={(e) => setValorRepasse(e.target.value.replace(",", "."))} 
+              />
+            </div>
+            
+            {/* ATUALIZADO: Novo campo de texto para justificativa da alteração */}
+            <div className="space-y-1.5">
+              <Label>Justificativa / Motivo da Alteração</Label>
+              <Textarea 
+                placeholder="Ex: Ajuste manual devido a bônus acordado ou valor diferenciado cobrado por fora..."
+                value={justificativa} 
+                onChange={(e) => setJustificativa(e.target.value)} 
+                rows={3}
+              />
+            </div>
+            
+            <Button onClick={salvarEdicao} className="w-full bg-blue-600 hover:bg-blue-700 text-white">Salvar Alterações</Button>
           </div>
         </DialogContent>
       </Dialog>
