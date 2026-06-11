@@ -29,12 +29,9 @@ export default function VinculoPacientes() {
     setLoading(true);
     try {
       const hoje = new Date();
-      // Limite inferior: 30 dias atrás
       const dataInicial = subDays(hoje, 30).toISOString();
-      // Limite superior: 15 dias para frente
       const dataFinal = addDays(hoje, 15).toISOString();
 
-      // CORREÇÃO: Usando '*' para puxar todas as colunas sem forçar nomes que podem não existir no banco
       const { data, error } = await supabase
         .from("atendimentos")
         .select("*, profissional:profissionais(nome)")
@@ -56,7 +53,6 @@ export default function VinculoPacientes() {
     }
   };
 
-  // Busca pacientes cadastrados conforme digita o nome
   useEffect(() => {
     const buscarPacientes = async () => {
       if (buscaPaciente.trim().length < 2) {
@@ -86,7 +82,6 @@ export default function VinculoPacientes() {
     if (isAdmin || isSecretaria) carregarAtendimentosOrfaos();
   }, [isAdmin, isSecretaria]);
 
-  // Executa o vínculo definitivo no banco de dados
   const vincularPaciente = async (pacienteId: string, nomePaciente: string) => {
     if (!atendimentoSelecionado) return;
 
@@ -102,7 +97,7 @@ export default function VinculoPacientes() {
       setModalAberto(false);
       setAtendimentoSelecionado(null);
       setBuscaPaciente("");
-      carregarAtendimentosOrfaos(); // Recarrega a lista leve
+      carregarAtendimentosOrfaos(); 
     } catch (err: any) {
       toast.error("Erro ao realizar vínculo: " + err.message);
     }
@@ -112,9 +107,9 @@ export default function VinculoPacientes() {
     return <div className="p-6 text-center">Acesso restrito à administração.</div>;
   }
 
-  // Função auxiliar para tentar extrair o nome do evento de qualquer campo possível
+  // AGORA ELE LÊ EXATAMENTE A COLUNA CORRETA DO SEU BANCO DE DADOS
   const getNomeEvento = (atend: any) => {
-    return atend.titulo || atend.title || atend.summary || atend.descricao || atend.observacoes || "Evento importado da Agenda";
+    return atend.nome_paciente_livre || atend.observacoes || "Evento importado da Agenda";
   };
 
   return (
