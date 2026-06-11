@@ -34,6 +34,9 @@ import PacienteDocumentos from "./pages/PacienteDocumentos";
 import PacienteAutorizacoes from "./pages/PacienteAutorizacoes";
 import NotFound from "./pages/NotFound";
 
+// 1. IMPORTAÇÃO DA NOVA PÁGINA AQUI:
+import VinculoPacientes from "./pages/VinculoPacientes";
+
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -62,10 +65,16 @@ const App = () => (
             <Route path="/crm" element={<Crm />} />
             <Route path="/crm/templates" element={<CrmTemplates />} />
             <Route path="/configuracoes/planos" element={<PlanosConfig />} />
+            
+            {/* ROTAS DO FINANCEIRO */}
             <Route path="/financeiro" element={<Financeiro />} />
             <Route path="/financeiro/relatorios" element={<RelatorioRepasses />} />
             <Route path="/financeiro/servicos" element={<FinanceiroServicos />} />
             <Route path="/financeiro/repasses" element={<FinanceiroRepasses />} />
+            
+            {/* 2. A ROTA DA PÁGINA NOVA CADASTRADA AQUI: */}
+            <Route path="/financeiro/vincular" element={<VinculoPacientes />} />
+
             <Route path="/pacientes/:id/financeiro" element={<PacienteFinanceiro />} />
             <Route path="/pacientes/:id/documentos" element={<PacienteDocumentos />} />
             <Route path="/pacientes/:id/autorizacoes" element={<PacienteAutorizacoes />} />
