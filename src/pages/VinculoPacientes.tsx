@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { ArrowLeft, Link2, Search, User, Calendar, Clock } from "lucide-react";
-import { format, parseISO } from "date-fns";
+import { ArrowLeft, Link2, Search, User, Calendar, Type } from "lucide-react";
+import { format, parseISO, subDays, addDays } from "date-fns";
 import { toast } from "sonner";
 
 export default function VinculoPacientes() {
@@ -24,19 +24,23 @@ export default function VinculoPacientes() {
   const [buscaPaciente, setBuscaPaciente] = useState("");
   const [pacientesEncontrados, setPacientesEncontrados] = useState<any[]>([]);
 
-  // Carrega os atendimentos que não possuem paciente_id associado (Últimos 30 dias)
+  // Carrega os atendimentos que não possuem paciente_id associado
   const carregarAtendimentosOrfaos = async () => {
     setLoading(true);
     try {
-      const trintaDiasAtras = new Date();
-      trintaDiasAtras.setDate(trintaDiasAtras.getDate() - 30);
+      const hoje = new Date();
+      // Limite inferior: 30 dias atrás
+      const dataInicial = subDays(hoje, 30).toISOString();
+      // Limite superior: 15 dias para frente
+      const dataFinal = addDays(hoje, 15).toISOString();
 
-      // Consulta ultra leve: filtra apenas nulos e por data recente
+      // ADICIONADO O 'titulo' NA BUSCA PARA PEGAR O NOME DO EVENTO DO CALENDAR
       const { data, error } = await supabase
         .from("atendimentos")
-        .select("id, data_inicio, tipo, profissional:profissionais(nome)")
+        .select("id, data_inicio, tipo, titulo, observacoes, profissional:profissionais(nome)")
         .is("paciente_id", null)
-        .gte("data_inicio", trintaDiasAtras.toISOString())
+        .gte("data_inicio", dataInicial)
+        .lte("data_inicio", dataFinal)
         .order("data_inicio", { ascending: false });
 
       if (error) throw error;
@@ -115,7 +119,7 @@ export default function VinculoPacientes() {
       </div>
 
       <p className="text-sm text-muted-foreground">
-        Aqui aparecem os agendamentos realizados na recorrência da agenda que ainda não foram associados a um perfil de paciente do sistema. Vincule-os para liberar o CRM, histórico e prontuários.
+        Aqui aparecem os agendamentos recentes da agenda que ainda não foram associados a um perfil de paciente do sistema. Vincule-os para liberar o CRM, histórico e prontuários.
       </p>
 
       {loading ? (
@@ -132,11 +136,19 @@ export default function VinculoPacientes() {
           
           {atendimentosOrfaos.map((atend) => (
             <Card key={atend.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm border-l-4 border-l-amber-500">
-              <div className="space-y-1">
-                <div className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
+              <div className="space-y-1.5">
+                
+                {/* NOME DO EVENTO EM DESTAQUE AQUI */}
+                <div className="text-base font-bold text-blue-700 flex items-center gap-1.5">
+                  <Type className="w-4 h-4 text-blue-500" />
+                  {atend.titulo || atend.observacoes || "Evento sem título"}
+                </div>
+
+                <div className="text-sm font-medium text-slate-700 flex items-center gap-1.5">
                   <Calendar className="w-4 h-4 text-slate-400" />
                   {format(parseISO(atend.data_inicio), "dd/MM/yyyy 'às' HH:mm")}
                 </div>
+                
                 <div className="text-xs text-muted-foreground flex items-center gap-4">
                   <span className="flex items-center gap-1"><User className="w-3.5 h-3.5" /> Fisioterapeuta: {atend.profissional?.nome || "Não informado"}</span>
                   <span className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-600 font-medium">{atend.tipo}</span>
@@ -146,7 +158,7 @@ export default function VinculoPacientes() {
               <Button 
                 size="sm" 
                 onClick={() => { setAtendimentoSelecionado(atend); setModalAberto(true); }}
-                className="bg-blue-600 hover:bg-blue-700 shrink-0"
+                className="bg-blue-600 hover:bg-blue-700 shrink-0 mt-2 sm:mt-0"
               >
                 <Link2 className="w-4 h-4 mr-1.5" /> Vincular Paciente
               </Button>
@@ -163,6 +175,10 @@ export default function VinculoPacientes() {
           </DialogHeader>
           
           <div className="space-y-4 py-2">
+            <div className="p-2 bg-blue-50 border border-blue-100 rounded text-xs text-blue-800">
+              Vinculando o evento: <strong>{atendimentoSelecionado?.titulo || "Sem título"}</strong>
+            </div>
+
             <div className="space-y-1.5">
               <Label>Digitar nome do paciente</Label>
               <div className="relative">
@@ -172,6 +188,7 @@ export default function VinculoPacientes() {
                   value={buscaPaciente}
                   onChange={(e) => setBuscaPaciente(e.target.value)}
                   className="pl-9"
+                  autoFocus
                 />
               </div>
             </div>
