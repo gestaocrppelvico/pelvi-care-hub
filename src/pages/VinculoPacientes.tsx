@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -6,8 +6,9 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { ArrowLeft, Link2, Search, User, Calendar, Type } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ArrowLeft, Link2, Search, User, Calendar, Type, Filter, ArrowDownUp, ListChecks } from "lucide-react";
 import { format, parseISO, subDays, addDays } from "date-fns";
 import { toast } from "sonner";
 
@@ -18,32 +19,38 @@ export default function VinculoPacientes() {
   const [atendimentosOrfaos, setAtendimentosOrfaos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
-  // Estados para o Modal de Vínculo
+  // Filtros e Ordenação
+  const [filtroTexto, setFiltroTexto] = useState("");
+  const [filtroProf, setFiltroProf] = useState("todos");
+  const [ordem, setOrdem] = useState("asc"); // asc = mais antigos primeiro (ou mais próximos do dia atual)
+
+  // Estados para o Modal de Vínculo Individual
   const [modalAberto, setModalAberto] = useState(false);
   const [atendimentoSelecionado, setAtendimentoSelecionado] = useState<any>(null);
   const [buscaPaciente, setBuscaPaciente] = useState("");
   const [pacientesEncontrados, setPacientesEncontrados] = useState<any[]>([]);
+
+  // Estados para o Modal de Vínculo em Lote (Bulk)
+  const [modalBulkAberto, setModalBulkAberto] = useState(false);
+  const [bulkInfo, setBulkInfo] = useState({ pacienteId: "", pacienteNome: "", matches: [] as any[] });
 
   // Carrega os atendimentos que não possuem paciente_id associado
   const carregarAtendimentosOrfaos = async () => {
     setLoading(true);
     try {
       const hoje = new Date();
-      const dataInicial = subDays(hoje, 30).toISOString();
-      const dataFinal = addDays(hoje, 15).toISOString();
+      // Margem maior para capturar o que ficou para trás e o que está por vir
+      const dataInicial = subDays(hoje, 60).toISOString();
+      const dataFinal = addDays(hoje, 30).toISOString();
 
       const { data, error } = await supabase
         .from("atendimentos")
         .select("*, profissional:profissionais(nome)")
         .is("paciente_id", null)
         .gte("data_inicio", dataInicial)
-        .lte("data_inicio", dataFinal)
-        .order("data_inicio", { ascending: false });
+        .lte("data_inicio", dataFinal);
 
-      if (error) {
-        console.error("Erro Supabase:", error);
-        throw error;
-      }
+      if (error) throw error;
       
       setAtendimentosOrfaos(data || []);
     } catch (err: any) {
@@ -53,6 +60,7 @@ export default function VinculoPacientes() {
     }
   };
 
+  // Debounce para busca de paciente na base de dados
   useEffect(() => {
     const buscarPacientes = async () => {
       if (buscaPaciente.trim().length < 2) {
@@ -71,10 +79,7 @@ export default function VinculoPacientes() {
       }
     };
 
-    const delayDebounce = setTimeout(() => {
-      buscarPacientes();
-    }, 300);
-
+    const delayDebounce = setTimeout(() => buscarPacientes(), 300);
     return () => clearTimeout(delayDebounce);
   }, [buscaPaciente]);
 
@@ -82,19 +87,78 @@ export default function VinculoPacientes() {
     if (isAdmin || isSecretaria) carregarAtendimentosOrfaos();
   }, [isAdmin, isSecretaria]);
 
-  const vincularPaciente = async (pacienteId: string, nomePaciente: string) => {
+  const getNomeEvento = (atend: any) => {
+    return atend.nome_paciente_livre || atend.observacoes || "Evento não identificado";
+  };
+
+  // ----------------------------------------------------------------------
+  // LÓGICA DE FILTRAGEM E ORDENAÇÃO
+  // ----------------------------------------------------------------------
+  const listaFiltrada = useMemo(() => {
+    return atendimentosOrfaos
+      .filter(a => {
+        const nome = getNomeEvento(a).toLowerCase();
+        const prof = (a.profissional?.nome || "").toLowerCase();
+        const passaTexto = nome.includes(filtroTexto.toLowerCase());
+        const passaProf = filtroProf === "todos" || prof === filtroProf;
+        return passaTexto && passaProf;
+      })
+      .sort((a, b) => {
+        const tA = new Date(a.data_inicio).getTime();
+        const tB = new Date(b.data_inicio).getTime();
+        return ordem === "asc" ? tA - tB : tB - tA;
+      });
+  }, [atendimentosOrfaos, filtroTexto, filtroProf, ordem]);
+
+  const profissionaisUnicos = useMemo(() => {
+    const nomes = atendimentosOrfaos.map(a => a.profissional?.nome).filter(Boolean);
+    return Array.from(new Set(nomes));
+  }, [atendimentosOrfaos]);
+
+  // ----------------------------------------------------------------------
+  // LÓGICA DE VINCULAÇÃO (INDIVIDUAL E EM LOTE)
+  // ----------------------------------------------------------------------
+  
+  // 1. O usuário clica num paciente da busca
+  const handleSelecionarPaciente = (pacienteId: string, pacienteNome: string) => {
     if (!atendimentoSelecionado) return;
 
+    const nomeAlvo = getNomeEvento(atendimentoSelecionado).trim().toLowerCase();
+    
+    // Procura se existem outros pendentes com exatamente o mesmo nome
+    const matches = atendimentosOrfaos.filter(a => 
+      a.id !== atendimentoSelecionado.id && 
+      getNomeEvento(a).trim().toLowerCase() === nomeAlvo
+    );
+
+    if (matches.length > 0) {
+      // Se achou clones, abre a confirmação em lote
+      setBulkInfo({ pacienteId, pacienteNome, matches });
+      setModalAberto(false);
+      setModalBulkAberto(true);
+    } else {
+      // Se é único, vincula direto
+      efetivarVinculo(pacienteId, pacienteNome, [atendimentoSelecionado.id]);
+    }
+  };
+
+  // 2. A função real que vai no banco de dados gravar os IDs
+  const efetivarVinculo = async (pacienteId: string, nomePaciente: string, idsParaVincular: string[]) => {
     try {
       const { error } = await supabase
         .from("atendimentos")
         .update({ paciente_id: pacienteId })
-        .eq("id", atendimentoSelecionado.id);
+        .in("id", idsParaVincular); // Atualiza vários de uma vez!
 
       if (error) throw error;
 
-      toast.success(`Atendimento vinculado com sucesso à ${nomePaciente}!`);
+      toast.success(idsParaVincular.length > 1 
+        ? `${idsParaVincular.length} atendimentos vinculados a ${nomePaciente}!` 
+        : `Atendimento vinculado a ${nomePaciente}!`
+      );
+      
       setModalAberto(false);
+      setModalBulkAberto(false);
       setAtendimentoSelecionado(null);
       setBuscaPaciente("");
       carregarAtendimentosOrfaos(); 
@@ -103,14 +167,7 @@ export default function VinculoPacientes() {
     }
   };
 
-  if (!isAdmin && !isSecretaria) {
-    return <div className="p-6 text-center">Acesso restrito à administração.</div>;
-  }
-
-  // AGORA ELE LÊ EXATAMENTE A COLUNA CORRETA DO SEU BANCO DE DADOS
-  const getNomeEvento = (atend: any) => {
-    return atend.nome_paciente_livre || atend.observacoes || "Evento importado da Agenda";
-  };
+  if (!isAdmin && !isSecretaria) return <div className="p-6 text-center">Acesso restrito à administração.</div>;
 
   return (
     <div className="space-y-4">
@@ -119,30 +176,75 @@ export default function VinculoPacientes() {
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <Link2 className="w-6 h-6 text-primary" />
-        <h1 className="text-xl font-bold">Vincular Atendimentos da Agenda</h1>
+        <h1 className="text-xl font-bold">Auditoria de Agenda</h1>
       </div>
 
       <p className="text-sm text-muted-foreground">
-        Aqui aparecem os agendamentos recentes da agenda que ainda não foram associados a um perfil de paciente do sistema. Vincule-os para liberar o CRM, histórico e prontuários.
+        Vincule os agendamentos "órfãos" vindos do Google Calendar aos cadastros oficiais dos pacientes para liberar prontuários e financeiro.
       </p>
 
+      {/* BARRA DE FILTROS */}
+      <Card className="p-3 bg-slate-50/50 flex flex-col md:flex-row gap-3 shadow-sm border-blue-100">
+        <div className="relative flex-1">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input 
+            placeholder="Buscar por nome do evento..." 
+            className="pl-9 bg-white" 
+            value={filtroTexto}
+            onChange={(e) => setFiltroTexto(e.target.value)}
+          />
+        </div>
+        
+        <div className="flex gap-2">
+          <div className="w-[180px]">
+            <Select value={filtroProf} onValueChange={setFiltroProf}>
+              <SelectTrigger className="bg-white text-xs h-10">
+                <Filter className="w-3.5 h-3.5 mr-1.5" /> <SelectValue placeholder="Profissional" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todas as agendas</SelectItem>
+                {profissionaisUnicos.map(p => (
+                  <SelectItem key={p} value={p.toLowerCase()}>{p}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          
+          <div className="w-[160px]">
+            <Select value={ordem} onValueChange={setOrdem}>
+              <SelectTrigger className="bg-white text-xs h-10">
+                <ArrowDownUp className="w-3.5 h-3.5 mr-1.5" /> <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="asc">Mais Antigos/Próximos</SelectItem>
+                <SelectItem value="desc">Mais Recentes/Futuros</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </Card>
+
       {loading ? (
-        <div className="text-center p-6 text-muted-foreground animate-pulse">Buscando agendamentos pendentes...</div>
+        <div className="text-center p-10 text-muted-foreground animate-pulse">Buscando pendências...</div>
       ) : atendimentosOrfaos.length === 0 ? (
         <Card className="p-8 text-center text-sm text-muted-foreground border-dashed">
-          🎉 Todos os atendimentos recentes da agenda já estão devidamente vinculados!
+          🎉 A agenda está limpa! Nenhum atendimento pendente de identificação.
         </Card>
       ) : (
-        <div className="space-y-2">
-          <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
-            Pendentes de Identificação ({atendimentosOrfaos.length})
-          </h3>
+        <div className="space-y-2 mt-2">
+          <div className="flex justify-between items-center px-1">
+            <h3 className="font-semibold text-sm text-slate-500 uppercase tracking-wide">
+              {listaFiltrada.length} Pendentes
+            </h3>
+          </div>
           
-          {atendimentosOrfaos.map((atend) => (
-            <Card key={atend.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm border-l-4 border-l-amber-500">
+          {listaFiltrada.length === 0 && (
+            <div className="text-center p-6 text-sm text-muted-foreground">Nenhum resultado para os filtros atuais.</div>
+          )}
+
+          {listaFiltrada.map((atend) => (
+            <Card key={atend.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm border-l-4 border-l-amber-500 hover:border-l-blue-500 transition-colors">
               <div className="space-y-1.5">
-                
-                {/* NOME DO EVENTO EM DESTAQUE */}
                 <div className="text-base font-bold text-blue-700 flex items-center gap-1.5">
                   <Type className="w-4 h-4 text-blue-500" />
                   {getNomeEvento(atend)}
@@ -154,7 +256,7 @@ export default function VinculoPacientes() {
                 </div>
                 
                 <div className="text-xs text-muted-foreground flex items-center gap-4">
-                  <span className="flex items-center gap-1"><User className="w-3.5 h-3.5" /> Fisioterapeuta: {atend.profissional?.nome || "Não informado"}</span>
+                  <span className="flex items-center gap-1"><User className="w-3.5 h-3.5" /> {atend.profissional?.nome || "Sem profissional"}</span>
                   <span className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-600 font-medium">{atend.tipo || "Não definido"}</span>
                 </div>
               </div>
@@ -164,14 +266,14 @@ export default function VinculoPacientes() {
                 onClick={() => { setAtendimentoSelecionado(atend); setModalAberto(true); }}
                 className="bg-blue-600 hover:bg-blue-700 shrink-0 mt-2 sm:mt-0"
               >
-                <Link2 className="w-4 h-4 mr-1.5" /> Vincular Paciente
+                <Link2 className="w-4 h-4 mr-1.5" /> Vincular
               </Button>
             </Card>
           ))}
         </div>
       )}
 
-      {/* MODAL DE BUSCA DO PACIENTE REAL */}
+      {/* MODAL 1: BUSCA INDIVIDUAL */}
       <Dialog open={modalAberto} onOpenChange={setModalAberto}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
@@ -180,20 +282,14 @@ export default function VinculoPacientes() {
           
           <div className="space-y-4 py-2">
             <div className="p-2 bg-blue-50 border border-blue-100 rounded text-xs text-blue-800">
-              Vinculando o evento: <strong>{atendimentoSelecionado ? getNomeEvento(atendimentoSelecionado) : ""}</strong>
+              Alvo: <strong>{atendimentoSelecionado ? getNomeEvento(atendimentoSelecionado) : ""}</strong>
             </div>
 
             <div className="space-y-1.5">
               <Label>Digitar nome do paciente</Label>
               <div className="relative">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Ex: Maria Silva..."
-                  value={buscaPaciente}
-                  onChange={(e) => setBuscaPaciente(e.target.value)}
-                  className="pl-9"
-                  autoFocus
-                />
+                <Input placeholder="Ex: Maria Silva..." value={buscaPaciente} onChange={(e) => setBuscaPaciente(e.target.value)} className="pl-9" autoFocus />
               </div>
             </div>
 
@@ -202,30 +298,61 @@ export default function VinculoPacientes() {
               {pacientesEncontrados.length === 0 && buscaPaciente.trim().length >= 2 && (
                 <p className="text-xs text-amber-600 italic">Nenhum paciente cadastrado com este nome.</p>
               )}
-              {buscaPaciente.trim().length < 2 && (
-                <p className="text-xs text-muted-foreground italic">Digite pelo menos 2 letras para pesquisar.</p>
-              )}
 
               <div className="space-y-1.5 max-h-[180px] overflow-y-auto pr-1">
                 {pacientesEncontrados.map((p) => (
                   <button
                     key={p.id}
-                    onClick={() => vincularPaciente(p.id, p.nome)}
+                    onClick={() => handleSelecionarPaciente(p.id, p.nome)}
                     className="w-full p-2 text-left rounded-lg border hover:bg-blue-50/50 hover:border-blue-200 transition-colors flex items-center justify-between text-sm group"
                   >
                     <div>
                       <div className="font-medium text-slate-800 group-hover:text-blue-700">{p.nome}</div>
                       <div className="text-xs text-muted-foreground">{p.telefone || "Sem telefone"}</div>
                     </div>
-                    <Link2 className="w-4 h-4 text-slate-300 group-hover:text-blue-500 transition-colors" />
+                    <Link2 className="w-4 h-4 text-slate-300 group-hover:text-blue-500" />
                   </button>
                 ))}
               </div>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL 2: AVISO DE VINCULAÇÃO EM LOTE */}
+      <Dialog open={modalBulkAberto} onOpenChange={setModalBulkAberto}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-blue-700">
+              <ListChecks className="w-5 h-5" /> Múltiplas Sessões Encontradas!
+            </DialogTitle>
+            <DialogDescription className="pt-2">
+              O sistema encontrou <strong>{bulkInfo.matches.length}</strong> outros agendamentos pendentes com o mesmo nome na agenda.
+            </DialogDescription>
+          </DialogHeader>
           
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setModalAberto(false)}>Cancelar</Button>
+          <div className="py-2 space-y-3">
+            <p className="text-sm text-slate-600">
+              Deseja vincular <strong>todas as {bulkInfo.matches.length + 1} sessões</strong> ao cadastro de <strong>{bulkInfo.pacienteNome}</strong> de uma só vez?
+            </p>
+          </div>
+          
+          <DialogFooter className="gap-2 sm:gap-0 mt-4">
+            <Button 
+              variant="outline" 
+              onClick={() => efetivarVinculo(bulkInfo.pacienteId, bulkInfo.pacienteNome, [atendimentoSelecionado.id])}
+            >
+              Não, vincular só esta
+            </Button>
+            <Button 
+              className="bg-blue-600 hover:bg-blue-700"
+              onClick={() => {
+                const todosIds = [atendimentoSelecionado.id, ...bulkInfo.matches.map(m => m.id)];
+                efetivarVinculo(bulkInfo.pacienteId, bulkInfo.pacienteNome, todosIds);
+              }}
+            >
+              Sim, vincular todas
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
