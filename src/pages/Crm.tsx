@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { addDays, format, startOfDay, endOfDay, differenceInDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { toast } from "sonner";
-import { MessageCircle, Settings2, Cake, Clock, UserX } from "lucide-react";
+import { MessageCircle, Settings2, Cake, Clock, UserX, CalendarDays } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -48,12 +48,24 @@ export default function Crm() {
   const [inativos, setInativos] = useState<PacienteInativo[]>([]);
   const [niver, setNiver] = useState<Aniversariante[]>([]);
   const [loading, setLoading] = useState(true);
+  
+  // Guardamos a data que o sistema calculou para monitorização visual
+  const [dataAlvoExibicao, setDataAlvoExibicao] = useState<Date>(new Date());
 
   async function carregar() {
     setLoading(true);
-    const tomorrow = addDays(new Date(), 1);
-    const today = new Date();
-    const todayMonthDay = format(today, "MM-dd");
+    const hoje = new Date();
+    const diaSemana = hoje.getDay(); // 0 = Domingo, 5 = Sexta, 6 = Sábado
+
+    // LÓGICA DA DATA INTELIGENTE PARA O CRM
+    let tomorrow = addDays(hoje, 1);
+    if (diaSemana === 5) tomorrow = addDays(hoje, 3); // Se for Sexta, pula para Segunda (+3 dias)
+    if (diaSemana === 6) tomorrow = addDays(hoje, 2); // Se for Sábado, pula para Segunda (+2 dias)
+    if (diaSemana === 0) tomorrow = addDays(hoje, 1); // Se for Domingo, mantém Segunda (+1 dia)
+
+    setDataAlvoExibicao(tomorrow);
+
+    const todayMonthDay = format(hoje, "MM-dd");
 
     const [tpl, atAmanha, pacientes, atendsHist] = await Promise.all([
       supabase.from("crm_templates").select("tipo, nome, conteudo").eq("ativo", true),
@@ -104,7 +116,7 @@ export default function Crm() {
     const niverList: Aniversariante[] = [];
     (pacientes.data ?? []).forEach((p) => {
       const ult = ultPorPac.get(p.id) ?? null;
-      const dias = ult ? differenceInDays(today, new Date(ult)) : 9999;
+      const dias = ult ? differenceInDays(hoje, new Date(ult)) : 9999;
       
       if (dias >= diasInativo) {
         inat.push({ id: p.id, nome: p.nome, telefone: p.telefone, ultima: ult, dias });
@@ -196,7 +208,7 @@ export default function Crm() {
       <Tabs defaultValue="lembretes" className="w-full">
         <TabsList className="w-full grid grid-cols-3">
           <TabsTrigger value="lembretes" className="text-xs">
-            <Clock className="w-4 h-4 mr-1" /> Amanhã
+            <Clock className="w-4 h-4 mr-1" /> Lista de Envios
             {amanha.length > 0 && <Badge className="ml-1 h-5">{amanha.length}</Badge>}
           </TabsTrigger>
           <TabsTrigger value="inativos" className="text-xs">
@@ -209,15 +221,25 @@ export default function Crm() {
           </TabsTrigger>
         </TabsList>
 
-        {/* Lembretes 24h */}
+        {/* Lembretes Inteligentes */}
         <TabsContent value="lembretes" className="space-y-2 mt-4">
+          
+          {/* Identificador de Data Dinâmica */}
+          {!loading && (
+            <div className="flex items-center gap-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg p-2.5 text-xs font-medium shadow-sm mb-3">
+              <CalendarDays className="w-4 h-4 text-blue-600 shrink-0" />
+              <span>
+                Alvo de confirmação: <strong className="capitalize">{format(dataAlvoExibicao, "eeee, dd 'de' MMMM", { locale: ptBR })}</strong>
+              </span>
+            </div>
+          )}
+
           {loading ? <p className="text-center text-muted-foreground py-6">Carregando...</p> :
-           amanha.length === 0 ? <Card className="p-6 text-center text-muted-foreground">Nenhum atendimento amanhã.</Card> :
+           amanha.length === 0 ? <Card className="p-6 text-center text-muted-foreground">Nenhum atendimento agendado para o próximo dia útil.</Card> :
            amanha.map((a) => (
              <Card key={a.id} className="p-4 flex items-center gap-3">
                <div className="flex-1 min-w-0">
                  <div className="font-semibold truncate">
-                   {/* Lógica do Link para Paciente ou Texto Normal */}
                    {a.paciente?.id ? (
                      <Link to={`/pacientes/${a.paciente.id}`} className="text-blue-600 hover:text-blue-800 hover:underline transition-colors">
                        {getNomePaciente(a)}
