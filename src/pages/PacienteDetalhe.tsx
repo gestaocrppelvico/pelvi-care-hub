@@ -14,7 +14,6 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 
-// Importações dos sub-componentes
 import PacienteFinanceiro from "./PacienteFinanceiro";
 import PacienteAutorizacoes from "./PacienteAutorizacoes";
 
@@ -29,7 +28,6 @@ export default function PacienteDetalhe() {
   const [atendimentos, setAtendimentos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Estados Novo Lançamento
   const [itemTipo, setItemTipo] = useState<"servico" | "pacote">("servico");
   const [listaServicos, setListaServicos] = useState<any[]>([]);
   const [listaPacotes, setListaPacotes] = useState<any[]>([]);
@@ -51,7 +49,6 @@ export default function PacienteDetalhe() {
         .order("created_at", { ascending: false });
       setPront(pr || []);
       
-      // NOVO: Busca o histórico completo de atendimentos do paciente
       const { data: at } = await supabase
         .from("atendimentos")
         .select("id, status, data_inicio, profissional:profissionais(nome)")
@@ -99,25 +96,14 @@ export default function PacienteDetalhe() {
     } catch (err: any) { toast.error(err.message); }
   };
 
-  // CÁLCULO DAS ESTATÍSTICAS DO HISTÓRICO
   const statsHistorico = useMemo(() => {
     const realizados = atendimentos.filter(a => a.status === "realizado");
     const faltas = atendimentos.filter(a => a.status === "falta" || a.status === "ausente");
     const cancelados = atendimentos.filter(a => a.status === "cancelado" || a.status === "remarcado");
-    
-    // Pega nomes únicos dos profissionais que já atenderam (que tiveram sessão realizada)
     const profs = Array.from(new Set(realizados.map(a => a.profissional?.nome).filter(Boolean)));
-    
-    // Descobre qual foi o primeiro registro (como a lista está decrescente, o último item é o mais antigo)
     const primeiraSessao = realizados.length > 0 ? realizados[realizados.length - 1].data_inicio : null;
     
-    return { 
-      total: realizados.length, 
-      faltas: faltas.length, 
-      cancelados: cancelados.length, 
-      profissionais: profs, 
-      primeiraSessao 
-    };
+    return { total: realizados.length, faltas: faltas.length, cancelados: cancelados.length, profissionais: profs, primeiraSessao };
   }, [atendimentos]);
 
   if (loading) return <div className="p-8 text-center text-muted-foreground animate-pulse">Carregando dados do paciente...</div>;
@@ -134,8 +120,10 @@ export default function PacienteDetalhe() {
             </div>
           </div>
         </div>
-        <Button asChild variant="outline" size="sm">
-          <Link to={`/pacientes/${id}/editar`}><Pencil className="w-4 h-4 mr-2" /> Editar</Link>
+        
+        {/* BOTÃO ATUALIZADO: "Ver ficha" em destaque azul */}
+        <Button asChild size="sm" className="bg-blue-600 hover:bg-blue-700 text-white">
+          <Link to={`/pacientes/${id}/editar`}><FileText className="w-4 h-4 mr-1.5" /> Ver ficha</Link>
         </Button>
       </div>
 
@@ -148,11 +136,7 @@ export default function PacienteDetalhe() {
           <TabsTrigger value="autorizacoes" className="text-xs sm:text-sm">Guias</TabsTrigger>
         </TabsList>
 
-        {/* ---------------------------------------------------------------------------------- */}
-        {/* ABA 1: HISTÓRICO CLINICO E ASSIDUIDADE */}
         <TabsContent value="historico" className="space-y-4 mt-4">
-          
-          {/* Mini-Dashboard do Paciente */}
           <div className="grid grid-cols-3 gap-2 sm:gap-4">
             <Card className="p-3 border-l-4 border-l-emerald-500 shadow-sm bg-emerald-50/30">
               <div className="flex items-center gap-1.5 mb-1 text-emerald-700">
@@ -180,7 +164,6 @@ export default function PacienteDetalhe() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Informações Gerais */}
             <Card className="p-4 space-y-4 shadow-sm">
               <h3 className="font-semibold text-sm flex items-center gap-2 border-b pb-2">
                 <UserCircle className="w-4 h-4 text-primary" /> Informações de Tratamento
@@ -211,14 +194,12 @@ export default function PacienteDetalhe() {
               </div>
             </Card>
 
-            {/* Linha do Tempo */}
             <Card className="p-4 shadow-sm h-[300px] flex flex-col">
               <h3 className="font-semibold text-sm flex items-center gap-2 border-b pb-2 mb-3">
                 <Calendar className="w-4 h-4 text-primary" /> Últimas Consultas
               </h3>
               <div className="flex-1 overflow-y-auto pr-2 space-y-3">
                 {atendimentos.length === 0 && <div className="text-center text-sm text-muted-foreground mt-10">Nenhum agendamento encontrado.</div>}
-                
                 {atendimentos.map(a => (
                   <div key={a.id} className="flex items-start gap-3 border-l-2 border-slate-100 pl-3 py-1">
                     <div className="w-2 h-2 rounded-full mt-1.5 -ml-[17px] border-2 border-white ring-2 ring-slate-100" 
@@ -241,8 +222,6 @@ export default function PacienteDetalhe() {
           </div>
         </TabsContent>
 
-        {/* ---------------------------------------------------------------------------------- */}
-        {/* ABA 2: PRONTUÁRIOS */}
         <TabsContent value="prontuario" className="mt-4">
           {pront.length === 0 ? (
             <Card className="p-10 flex flex-col items-center justify-center text-center space-y-4 shadow-sm border-dashed">
@@ -251,9 +230,7 @@ export default function PacienteDetalhe() {
               </div>
               <div>
                 <h3 className="font-semibold text-lg text-slate-800">Nenhum prontuário encontrado</h3>
-                <p className="text-sm text-muted-foreground max-w-sm mt-1">
-                  Este paciente ainda não possui evoluções ou notas clínicas registradas no sistema.
-                </p>
+                <p className="text-sm text-muted-foreground max-w-sm mt-1">Este paciente ainda não possui evoluções registradas.</p>
               </div>
               <Button asChild className="mt-2 bg-blue-600 hover:bg-blue-700">
                 <Link to={`/pacientes/${id}/prontuario/novo`}><Plus className="w-4 h-4 mr-2" /> Criar Primeiro Prontuário</Link>
@@ -267,7 +244,6 @@ export default function PacienteDetalhe() {
                   <Link to={`/pacientes/${id}/prontuario/novo`}><Plus className="w-4 h-4 mr-1" /> Novo Prontuário</Link>
                 </Button>
               </div>
-              
               {pront.map(p => (
                 <Card key={p.id} className="p-4 shadow-sm border-l-4 border-l-blue-500">
                   <div className="flex justify-between items-start mb-2">
@@ -280,7 +256,6 @@ export default function PacienteDetalhe() {
                       </div>
                     </div>
                   </div>
-                  {/* Presumindo que o texto do prontuário fica na coluna 'evolucao', 'descricao' ou 'observacoes' */}
                   <div className="text-sm text-slate-600 bg-slate-50 p-3 rounded border whitespace-pre-wrap">
                     {p.evolucao || p.descricao || p.observacoes || "Nenhum detalhe escrito nesta evolução."}
                   </div>
@@ -290,8 +265,6 @@ export default function PacienteDetalhe() {
           )}
         </TabsContent>
 
-        {/* ---------------------------------------------------------------------------------- */}
-        {/* ABA 3: SERVIÇOS (Lançamento) */}
         <TabsContent value="servicos" className="mt-4">
            <Card className="p-4 space-y-4 shadow-sm">
             <h3 className="font-semibold flex items-center gap-2"><ShoppingBag className="w-4 h-4 text-primary" /> Lançar Novo Item (Venda)</h3>
@@ -318,8 +291,6 @@ export default function PacienteDetalhe() {
           </Card>
         </TabsContent>
 
-        {/* ---------------------------------------------------------------------------------- */}
-        {/* ABAS 4 e 5: COMPONENTES EXTERNOS */}
         <TabsContent value="financeiro" className="mt-4"><PacienteFinanceiro /></TabsContent>
         <TabsContent value="autorizacoes" className="mt-4"><PacienteAutorizacoes /></TabsContent>
       </Tabs>
