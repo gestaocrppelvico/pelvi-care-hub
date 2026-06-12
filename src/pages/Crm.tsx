@@ -77,7 +77,6 @@ export default function Crm() {
         .select("id, nome, telefone, data_nascimento")
         .eq("ativo", true),
         
-      // CORREÇÃO 1: Adicionado limit altíssimo e trazemos o status para filtrar de forma inteligente
       supabase
         .from("atendimentos")
         .select("paciente_id, data_inicio, status")
@@ -91,7 +90,6 @@ export default function Crm() {
     setTemplates(tplMap);
     setAmanha((atAmanha.data as any) ?? []);
 
-    // CORREÇÃO 2: Lógica robusta que ignora apenas cancelamentos e faltas
     const ultPorPac = new Map<string, string>();
     (atendsHist.data ?? []).forEach((a: any) => {
       const statusDaSessao = (a.status || "").toLowerCase();
@@ -102,14 +100,12 @@ export default function Crm() {
       }
     });
 
-    // Inativos e Aniversariantes
     const inat: PacienteInativo[] = [];
     const niverList: Aniversariante[] = [];
     (pacientes.data ?? []).forEach((p) => {
       const ult = ultPorPac.get(p.id) ?? null;
       const dias = ult ? differenceInDays(today, new Date(ult)) : 9999;
       
-      // Só entra na lista se os dias de ausência forem maiores que a régua estipulada
       if (dias >= diasInativo) {
         inat.push({ id: p.id, nome: p.nome, telefone: p.telefone, ultima: ult, dias });
       }
@@ -220,8 +216,17 @@ export default function Crm() {
            amanha.map((a) => (
              <Card key={a.id} className="p-4 flex items-center gap-3">
                <div className="flex-1 min-w-0">
-                 <div className="font-semibold truncate">{getNomePaciente(a)}</div>
-                 <div className="text-xs text-muted-foreground">
+                 <div className="font-semibold truncate">
+                   {/* Lógica do Link para Paciente ou Texto Normal */}
+                   {a.paciente?.id ? (
+                     <Link to={`/pacientes/${a.paciente.id}`} className="text-blue-600 hover:text-blue-800 hover:underline transition-colors">
+                       {getNomePaciente(a)}
+                     </Link>
+                   ) : (
+                     <span className="text-slate-800">{getNomePaciente(a)}</span>
+                   )}
+                 </div>
+                 <div className="text-xs text-muted-foreground mt-0.5">
                    {format(new Date(a.data_inicio), "EEE, dd/MM 'às' HH:mm", { locale: ptBR })} · {a.profissional?.nome || "Profissional não definido"}
                  </div>
                </div>
@@ -246,8 +251,12 @@ export default function Crm() {
            inativos.map((p) => (
              <Card key={p.id} className="p-4 flex items-center gap-3">
                <div className="flex-1 min-w-0">
-                 <div className="font-semibold truncate">{p.nome}</div>
-                 <div className="text-xs text-muted-foreground">
+                 <div className="font-semibold truncate">
+                   <Link to={`/pacientes/${p.id}`} className="text-blue-600 hover:text-blue-800 hover:underline transition-colors">
+                     {p.nome}
+                   </Link>
+                 </div>
+                 <div className="text-xs text-muted-foreground mt-0.5">
                    {p.ultima ? `Última sessão ${format(new Date(p.ultima), "dd/MM/yyyy")} (${p.dias} dias)` : "Nunca atendido"}
                  </div>
                </div>
@@ -264,10 +273,14 @@ export default function Crm() {
            niver.length === 0 ? <Card className="p-6 text-center text-muted-foreground">Nenhum aniversariante hoje.</Card> :
            niver.map((p) => (
              <Card key={p.id} className="p-4 flex items-center gap-3">
-               <Cake className="w-5 h-5 text-primary" />
+               <Cake className="w-5 h-5 text-primary shrink-0" />
                <div className="flex-1 min-w-0">
-                 <div className="font-semibold truncate">{p.nome}</div>
-                 <div className="text-xs text-muted-foreground">🎉 Hoje!</div>
+                 <div className="font-semibold truncate">
+                   <Link to={`/pacientes/${p.id}`} className="text-blue-600 hover:text-blue-800 hover:underline transition-colors">
+                     {p.nome}
+                   </Link>
+                 </div>
+                 <div className="text-xs text-muted-foreground mt-0.5">🎉 Hoje!</div>
                </div>
                <Button size="sm" onClick={() => enviarNiver(p)} disabled={!p.telefone}>
                  <MessageCircle className="w-4 h-4" />
