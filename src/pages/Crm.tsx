@@ -16,7 +16,6 @@ import { useAuth } from "@/hooks/useAuth";
 
 interface Template { tipo: string; nome: string; conteudo: string }
 
-// 1. ATUALIZADO: Inclui os campos do Google Calendar (nome livre e telefone de contato)
 interface AtendAmanha {
   id: string;
   data_inicio: string;
@@ -59,7 +58,6 @@ export default function Crm() {
     const [tpl, atAmanha, pacientes, atendsHist] = await Promise.all([
       supabase.from("crm_templates").select("tipo, nome, conteudo").eq("ativo", true),
       
-      // 2. ATUALIZADO: Puxa também nome_paciente_livre e telefone_contato
       supabase
         .from("atendimentos")
         .select(`
@@ -79,11 +77,13 @@ export default function Crm() {
         .select("id, nome, telefone, data_nascimento")
         .eq("ativo", true),
         
+      // CORREÇÃO 1: Adicionado limit altíssimo e trazemos o status para filtrar de forma inteligente
       supabase
         .from("atendimentos")
-        .select("paciente_id, data_inicio")
-        .in("status", ["realizado", "agendado"])
-        .order("data_inicio", { ascending: false }),
+        .select("paciente_id, data_inicio, status")
+        .not("paciente_id", "is", null)
+        .order("data_inicio", { ascending: false })
+        .limit(50000), 
     ]);
 
     const tplMap: Record<string, Template> = {};
@@ -91,10 +91,13 @@ export default function Crm() {
     setTemplates(tplMap);
     setAmanha((atAmanha.data as any) ?? []);
 
-    // Última sessão por paciente
+    // CORREÇÃO 2: Lógica robusta que ignora apenas cancelamentos e faltas
     const ultPorPac = new Map<string, string>();
     (atendsHist.data ?? []).forEach((a: any) => {
-      if (a.paciente_id && !ultPorPac.has(a.paciente_id)) {
+      const statusDaSessao = (a.status || "").toLowerCase();
+      const ehSessaoInvalida = ["cancelado", "falta", "ausente", "remarcado"].includes(statusDaSessao);
+      
+      if (!ehSessaoInvalida && a.paciente_id && !ultPorPac.has(a.paciente_id)) {
         ultPorPac.set(a.paciente_id, a.data_inicio);
       }
     });
@@ -105,6 +108,8 @@ export default function Crm() {
     (pacientes.data ?? []).forEach((p) => {
       const ult = ultPorPac.get(p.id) ?? null;
       const dias = ult ? differenceInDays(today, new Date(ult)) : 9999;
+      
+      // Só entra na lista se os dias de ausência forem maiores que a régua estipulada
       if (dias >= diasInativo) {
         inat.push({ id: p.id, nome: p.nome, telefone: p.telefone, ultima: ult, dias });
       }
@@ -124,7 +129,6 @@ export default function Crm() {
     await supabase.from("crm_envios").insert({ paciente_id, tipo, mensagem });
   }
 
-  // 3. ATUALIZADO: Funções auxiliares para descobrir o nome e telefone reais
   function getNomePaciente(a: AtendAmanha) {
     return a.paciente?.nome || a.nome_paciente_livre || "Paciente não identificado";
   }
@@ -155,7 +159,6 @@ export default function Crm() {
       return;
     }
     
-    // Só grava no log se já tiver ID de paciente oficial cadastrado
     if (a.paciente?.id) {
       logEnvio(a.paciente.id, "lembrete", msg);
     }
@@ -217,13 +220,11 @@ export default function Crm() {
            amanha.map((a) => (
              <Card key={a.id} className="p-4 flex items-center gap-3">
                <div className="flex-1 min-w-0">
-                 {/* 4. ATUALIZADO: Interface agora exibe o nome correto */}
                  <div className="font-semibold truncate">{getNomePaciente(a)}</div>
                  <div className="text-xs text-muted-foreground">
                    {format(new Date(a.data_inicio), "EEE, dd/MM 'às' HH:mm", { locale: ptBR })} · {a.profissional?.nome || "Profissional não definido"}
                  </div>
                </div>
-               {/* O botão só é desativado se realmente não houver nenhum telefone */}
                <Button size="sm" onClick={() => enviarLembrete(a)} disabled={!getTelefonePaciente(a)}>
                  <MessageCircle className="w-4 h-4" />
                </Button>
