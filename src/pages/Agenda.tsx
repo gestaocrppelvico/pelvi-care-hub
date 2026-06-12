@@ -110,9 +110,21 @@ export default function Agenda() {
 
   useEffect(() => { carregarCatalogos(); }, [carregarCatalogos]);
 
+  // CORREÇÃO 1: Limpeza do Array antes da busca para evitar mistura de dias
   const reload = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    const { data } = await supabase.from("atendimentos").select("id, data_inicio, data_fim, status, tipo, paciente_id, nome_paciente_livre, telefone_contato, profissional_id, google_event_id, paciente:pacientes(nome, telefone), profissional:profissionais(nome, cor_agenda)").gte("data_inicio", range.start.toISOString()).lte("data_inicio", range.end.toISOString()).not("status", "in", '("cancelado","faltou","faltou_sem_aviso")').order("data_inicio");
+    if (!silent) {
+      setLoading(true);
+      setList([]); // Limpa a grade antes de renderizar os novos horários
+    }
+    
+    const { data } = await supabase
+      .from("atendimentos")
+      .select("id, data_inicio, data_fim, status, tipo, paciente_id, nome_paciente_livre, telefone_contato, profissional_id, google_event_id, paciente:pacientes(nome, telefone), profissional:profissionais(nome, cor_agenda)")
+      .gte("data_inicio", range.start.toISOString())
+      .lte("data_inicio", range.end.toISOString())
+      .not("status", "in", '("cancelado","faltou","faltou_sem_aviso")')
+      .order("data_inicio");
+      
     setList((data as any[]) ?? []);
     if (!silent) setLoading(false);
   }, [range]);
@@ -134,7 +146,18 @@ export default function Agenda() {
     if (!silent) { setSyncing(false); toast.success("Agenda atualizada!"); }
   }, [isFisio, isAdmin, isSecretaria, myProfissionalId, reload]);
 
-  useEffect(() => { syncNow(true); pollRef.current = setInterval(() => syncNow(true), 5 * 60 * 1000); return () => clearInterval(pollRef.current); }, [syncNow]);
+  // CORREÇÃO 2: Executa a busca local instantânea toda vez que você mudar de dia/semana
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  // CORREÇÃO 3: Sincronização em Background separada, roda apenas 1x ao entrar e a cada 5 min
+  useEffect(() => {
+    syncNow(true); 
+    pollRef.current = setInterval(() => syncNow(true), 5 * 60 * 1000); 
+    return () => clearInterval(pollRef.current); 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function nav(dir: -1 | 1) { setAnchor((prev) => { if (view === "day") return addDays(prev, dir); if (view === "week") return addWeeks(prev, dir); return addMonths(prev, dir); }); }
   function goToday() { setAnchor(new Date()); }
@@ -262,7 +285,7 @@ export default function Agenda() {
         <h1 className="text-xl font-bold">Agenda</h1>
         <div className="flex items-center gap-2">
           <Sheet><SheetTrigger asChild><Button size="sm" className="bg-primary text-white"><Plus className="w-4 h-4 mr-1" /> Novo</Button></SheetTrigger><SheetContent><SheetHeader><SheetTitle>Novo Agendamento</SheetTitle></SheetHeader><div className="space-y-4 pt-4"><p className="text-sm text-muted-foreground">Utilize o Google Calendar.</p></div></SheetContent></Sheet>
-          <Button variant="outline" size="sm" onClick={() => syncNow()} disabled={syncing}><RefreshCw className={`w-4 h-4 mr-1 ${syncing ? "animate-spin" : ""}`} /> Atualizar</Button>
+          <Button variant="outline" size="sm" onClick={() => syncNow(false)} disabled={syncing}><RefreshCw className={`w-4 h-4 mr-1 ${syncing ? "animate-spin" : ""}`} /> Atualizar</Button>
         </div>
       </div>
 
