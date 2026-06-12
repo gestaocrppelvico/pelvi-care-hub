@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Plus, Wallet, Package, Box, Receipt, CalendarCheck } from "lucide-react";
+import { ArrowLeft, Plus, Wallet, Package, Box, Receipt, CalendarCheck, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 const fmt = (v: number) => Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -37,6 +37,11 @@ export default function PacienteFinanceiro() {
   const [lancamentoProfissionalId, setLancamentoProfissionalId] = useState("");
   const [lancamentoPacoteId, setLancamentoPacoteId] = useState("avulso");
   
+  // Estados para o Modal de Edição Direta
+  const [modalEdicaoPacote, setModalEdicaoPacote] = useState(false);
+  const [pacoteEditando, setPacoteEditando] = useState<any>(null);
+  const [editForm, setEditForm] = useState({ sessoes_totais: 0, sessoes_restantes: 0, preco_pago: 0, status_pagamento: "pendente" });
+
   const [novoPag, setNovoPag] = useState<any>({
     valor: "",
     forma: "dinheiro",
@@ -52,10 +57,12 @@ export default function PacienteFinanceiro() {
       const { data: pac } = await supabase.from("pacientes").select("*").eq("id", pacienteId).maybeSingle();
       setPaciente(pac);
 
+      // CORREÇÃO: Filtramos "cancelado" para não aparecerem "fantasmas"
       const { data: pacs } = await supabase
         .from("paciente_pacotes")
-        .select("*, pacote:pacotes(nome), autorizacao:autorizacoes(plano, numero_guia)")
+        .select("*, pacote:pacotes(nome), autorizacao:autorizacoes(plano, numero_guia), servico:servicos(nome)")
         .eq("paciente_id", pacienteId)
+        .neq("status_pagamento", "cancelado") 
         .order("created_at", { ascending: false });
       setPacientePacotes(pacs || []);
 
@@ -73,7 +80,6 @@ export default function PacienteFinanceiro() {
         .order("data_pagamento", { ascending: false });
       setPagamentos(pags || []);
 
-      // Carregar os profissionais para o Modal de Lançamento
       const { data: profs } = await supabase.from("profissionais").select("id, nome").eq("ativo", true).order("nome");
       setProfissionais(profs || []);
 
@@ -110,14 +116,11 @@ export default function PacienteFinanceiro() {
     } catch (err: any) { toast.error("Erro: " + err.message); }
   };
 
-  // FUNÇÃO MÁGICA DE LANÇAMENTO AVULSO / RETROATIVO
   const realizarLancamentoRetroativo = async () => {
     if (!lancamentoProfissionalId) { toast.error("Selecione a profissional!"); return; }
     if (!lancamentoData || !lancamentoHora) { toast.error("Data e hora são obrigatórios!"); return; }
 
     const dataCompleta = new Date(`${lancamentoData}T${lancamentoHora}:00`);
-
-    // Descobrir se o paciente tem convênio ou é particular (para a coluna tipo do atendimento)
     const ehConvenio = pacientePacotes.find(p => p.id === lancamentoPacoteId)?.autorizacao !== null;
     const tipoAtend = (ehConvenio && lancamentoPacoteId !== "avulso") ? "Plano" : "Particular";
 
@@ -125,26 +128,68 @@ export default function PacienteFinanceiro() {
       paciente_id: pacienteId,
       profissional_id: lancamentoProfissionalId,
       data_inicio: dataCompleta.toISOString(),
-      data_fim: new Date(dataCompleta.getTime() + 60 * 60000).toISOString(), // +1 hora
-      status: "realizado", // Já nasce realizado para forçar o gatilho financeiro!
+      data_fim: new Date(dataCompleta.getTime() + 60 * 60000).toISOString(),
+      status: "realizado", 
       tipo: tipoAtend
     };
 
-    if (lancamentoPacoteId !== "avulso") {
-      payloadAtendimento.paciente_pacote_id = lancamentoPacoteId;
-    }
+    if (lancamentoPacoteId !== "avulso") payloadAtendimento.paciente_pacote_id = lancamentoPacoteId;
 
     try {
-      // O milagre acontece aqui: ao inserir com status realizado e pacote_id, o Supabase dispara o Gatilho!
       const { error } = await supabase.from("atendimentos").insert(payloadAtendimento);
       if (error) throw error;
-
       toast.success("Lançamento registrado! Repasse gerado com sucesso.");
       setModalLancamentoAberto(false);
-      carregarDados(); // Recarrega para mostrar a sessão descontada
+      carregarDados();
     } catch (err: any) {
       toast.error("Erro ao lançar: " + err.message);
     }
+  };
+
+  // FUNÇÕES DE EDIÇÃO E EXCLUSÃO
+  const abrirEdicaoPacote = (p: any) => {
+    setPacoteEditando(p);
+    setEditForm({
+      sessoes_totais: p.sessoes_totais,
+      sessoes_restantes: p.sessoes_restantes,
+      preco_pago: p.preco_pago,
+      status_pagamento: p.status_pagamento || "pendente"
+    });
+    setModalEdicaoPacote(true);
+  };
+
+  const salvarEdicaoPacote = async () => {
+    try {
+      const { error } = await supabase.from("paciente_pacotes").update({
+        sessoes_totais: editForm.sessoes_totais,
+        sessoes_restantes: editForm.sessoes_restantes,
+        preco_pago: editForm.preco_pago,
+        status_pagamento: editForm.status_pagamento
+      }).eq("id", pacoteEditando.id);
+      if (error) throw error;
+      toast.success("Contrato atualizado com sucesso!");
+      setModalEdicaoPacote(false);
+      carregarDados();
+    } catch (err: any) { toast.error("Erro: " + err.message); }
+  };
+
+  const apagarPacote = async (id: string) => {
+    if (!confirm("Tem certeza que deseja apagar este lançamento permanentemente?")) return;
+    try {
+      const { error } = await supabase.from("paciente_pacotes").delete().eq("id", id);
+      if (error) throw error;
+      toast.success("Lançamento apagado com sucesso!");
+      carregarDados();
+    } catch (err: any) { toast.error("Erro ao apagar: " + err.message); }
+  };
+
+  const apagarServicoAvulso = async (id: string) => {
+    if (!confirm("Apagar este serviço avulso?")) return;
+    try {
+      await supabase.from("paciente_servicos").delete().eq("id", id);
+      toast.success("Serviço apagado com sucesso!");
+      carregarDados();
+    } catch (err: any) { toast.error("Erro ao apagar: " + err.message); }
   };
 
   if (loading) return <div className="p-6 text-center text-sm text-muted-foreground">Carregando dados financeiros...</div>;
@@ -159,8 +204,6 @@ export default function PacienteFinanceiro() {
             <p className="text-sm text-muted-foreground">{paciente?.nome || "—"}</p>
           </div>
         </div>
-        
-        {/* NOVO BOTÃO DE LANÇAMENTO AVULSO */}
         <Button variant="default" size="sm" onClick={() => setModalLancamentoAberto(true)} className="bg-blue-600 hover:bg-blue-700">
           <CalendarCheck className="w-4 h-4 mr-2" /> Lançar Sessão
         </Button>
@@ -182,23 +225,38 @@ export default function PacienteFinanceiro() {
           )}
 
           {pacientePacotes.map((p) => (
-            <Card key={p.id} className="p-3 border-l-4 border-l-primary space-y-1">
+            <Card key={p.id} className="p-3 border-l-4 border-l-primary space-y-1 hover:shadow-md transition-shadow">
               <div className="flex items-start justify-between gap-2">
-                <div className="font-semibold text-sm text-slate-800">
+                <div className="font-semibold text-sm text-slate-800 pr-2">
                   {p.autorizacao 
                     ? `Guia Autorizada: ${p.autorizacao.plano} ${p.autorizacao.numero_guia ? `(Nº ${p.autorizacao.numero_guia})` : ''}`
-                    : `Pacote: ${p.pacote?.nome || "Particular Customizado"}`
+                    : `Pacote/Serviço: ${p.pacote?.nome || p.servico?.nome || "Particular Customizado"}`
                   }
                 </div>
+                
+                {/* BOTÕES DE EDIÇÃO E EXCLUSÃO DIRETOS */}
+                {podeGerenciar && (
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => abrirEdicaoPacote(p)}>
+                      <Pencil className="w-3.5 h-3.5 text-blue-600" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 hover:bg-red-50" onClick={() => apagarPacote(p.id)}>
+                      <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                    </Button>
+                  </div>
+                )}
+              </div>
+              
+              <div className="flex items-center justify-between pt-1">
                 <Badge variant={p.sessoes_restantes > 0 ? "default" : "secondary"} className="text-[10px] px-1.5 py-0">
                   {p.sessoes_restantes} / {p.sessoes_totais} rest.
                 </Badge>
-              </div>
-              <div className="text-xs text-muted-foreground flex justify-between pt-1">
-                <span>Criado em: {new Date(p.created_at).toLocaleDateString("pt-BR")}</span>
-                <span className="font-medium text-slate-700">
-                  {p.autorizacao ? "Faturamento por Plano de Saúde" : `Preço Total: ${fmt(Number(p.preco_pago))}`}
+                <span className="font-bold text-slate-700 text-sm">
+                  {p.autorizacao ? "Plano de Saúde" : `R$ ${Number(p.preco_pago).toFixed(2)}`}
                 </span>
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">
+                Criado em: {new Date(p.created_at).toLocaleDateString("pt-BR")} · <span className="capitalize text-amber-600 font-medium">{p.status_pagamento}</span>
               </div>
               <div className="w-full bg-slate-100 rounded-full h-1.5 mt-2 overflow-hidden">
                 <div className="bg-primary h-1.5 rounded-full transition-all" style={{ width: `${(p.sessoes_restantes / p.sessoes_totais) * 100}%` }} />
@@ -212,7 +270,14 @@ export default function PacienteFinanceiro() {
                 <div className="font-semibold text-sm flex items-center gap-1"><Box className="w-3.5 h-3.5 text-emerald-500" /> {s.servico?.nome || "Serviço Avulso"}</div>
                 <div className="text-[10px] text-muted-foreground mt-0.5">Lançado em {new Date(s.created_at).toLocaleDateString("pt-BR")}</div>
               </div>
-              <Badge variant="outline" className="text-emerald-700 bg-emerald-50 border-emerald-200">Sessão Única</Badge>
+              <div className="flex items-center gap-2 shrink-0">
+                <Badge variant="outline" className="text-emerald-700 bg-emerald-50 border-emerald-200">Sessão Única</Badge>
+                {podeGerenciar && (
+                  <Button variant="ghost" size="icon" className="h-7 w-7 hover:bg-red-50" onClick={() => apagarServicoAvulso(s.id)}>
+                    <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                  </Button>
+                )}
+              </div>
             </Card>
           ))}
         </TabsContent>
@@ -292,7 +357,49 @@ export default function PacienteFinanceiro() {
         </TabsContent>
       </Tabs>
 
-      {/* NOVO MODAL PARA LANÇAMENTO AVULSO / RETROATIVO */}
+      {/* MODAL DE EDIÇÃO DE CONTRATO/PACOTE */}
+      <Dialog open={modalEdicaoPacote} onOpenChange={setModalEdicaoPacote}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Editar Contrato/Pacote</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Sessões Totais</Label>
+                <Input type="number" value={editForm.sessoes_totais} onChange={(e) => setEditForm({...editForm, sessoes_totais: Number(e.target.value)})} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Sessões Restantes</Label>
+                <Input type="number" value={editForm.sessoes_restantes} onChange={(e) => setEditForm({...editForm, sessoes_restantes: Number(e.target.value)})} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Valor Total (R$)</Label>
+                <Input type="number" value={editForm.preco_pago} onChange={(e) => setEditForm({...editForm, preco_pago: Number(e.target.value)})} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Status</Label>
+                <Select value={editForm.status_pagamento} onValueChange={(v) => setEditForm({...editForm, status_pagamento: v})}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pago">Pago</SelectItem>
+                    <SelectItem value="pendente">Pendente</SelectItem>
+                    <SelectItem value="cancelado">Cancelado</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setModalEdicaoPacote(false)}>Cancelar</Button>
+            <Button onClick={salvarEdicaoPacote} className="bg-blue-600 hover:bg-blue-700">Salvar Alterações</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL DE LANÇAMENTO AVULSO */}
       <Dialog open={modalLancamentoAberto} onOpenChange={setModalLancamentoAberto}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
