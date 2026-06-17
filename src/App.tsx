@@ -35,6 +35,8 @@ import PacienteAutorizacoes from "./pages/PacienteAutorizacoes";
 import NotFound from "./pages/NotFound";
 import NovaAnamnese from './pages/NovaAnamnese';
 import NovaEvolucao from './pages/NovaEvolucao';
+import VisualizarProntuario from './pages/VisualizarProntuario';
+
 
 
 // 1. IMPORTAÇÃO DA NOVA PÁGINA AQUI:
@@ -70,6 +72,7 @@ const App = () => (
             <Route path="/configuracoes/planos" element={<PlanosConfig />} />
             <Route path="/paciente/:id/anamnese/nova" element={<NovaAnamnese />} />
             <Route path="/paciente/:id/evolucao/nova" element={<NovaEvolucao />} />
+            <Route path="/paciente/:id/prontuario/:prontuarioId" element={<VisualizarProntuario />} />
             
             {/* ROTAS DO FINANCEIRO */}
             <Route path="/financeiro" element={<Financeiro />} />
