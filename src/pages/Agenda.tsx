@@ -1,486 +1,316 @@
-import { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { Link } from "react-router-dom";
-import { format, addDays, addWeeks, addMonths, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, isSameMonth, differenceInMinutes, eachDayOfInterval } from "date-fns";
+import { useEffect, useMemo, useState, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
+import { format, addDays, addWeeks, addMonths, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, isSameMonth, eachDayOfInterval } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { abrirWhatsapp } from "@/lib/crm";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Clock, FileText, RefreshCw, CheckCircle, ChevronLeft, ChevronRight, MessageCircle, ClipboardList, Trash2, Search, Plus } from "lucide-react";
+import { Clock, RefreshCw, ChevronLeft, ChevronRight, Plus, Calendar as CalendarIcon } from "lucide-react";
 
-interface Atendimento { id: string; data_inicio: string; data_fim: string | null; status: string; tipo: string; nome_paciente_livre: string | null; telefone_contato: string | null; paciente_id: string | null; paciente: { nome: string; telefone: string | null } | null; profissional: { nome: string; cor_agenda: string } | null; profissional_id: string; google_event_id: string | null; }
-interface PacoteCatalogo { id: string; nome: string; numero_sessoes: number; preco_total: number; }
-interface ServicoCatalogo { id: string; nome: string; preco: number; }
-type ViewMode = "day" | "week" | "month";
-
-const statusLabel: Record<string, string> = { agendado: "Agendado", em_andamento: "Em andamento", realizado: "Realizado", cancelado: "Cancelado", faltou: "Faltou", faltou_sem_aviso: "Faltou s/ aviso" };
-const statusColor: Record<string, string> = { agendado: "secondary", em_andamento: "default", realizado: "default", cancelado: "destructive", faltou: "destructive", faltou_sem_aviso: "destructive" };
-const HOURS = Array.from({ length: 14 }, (_, i) => i + 7);
-
-function displayName(a: Atendimento) { return a.paciente?.nome ?? a.nome_paciente_livre ?? "—"; }
-function eventColor(a: Atendimento) { return a.profissional?.cor_agenda ?? "#9CA3AF"; }
-function statusBadge(a: Atendimento) { return statusLabel[a.status] ?? a.status; }
+interface Atendimento {
+  id: string;
+  data_inicio: string;
+  data_fim: string | null;
+  status: string;
+  tipo: string;
+  nome_paciente_livre: string | null;
+  telefone_contato: string | null;
+  paciente_id: string | null;
+  paciente: { nome: string; telefone: string | null } | null;
+  profissional: { id: string; nome: string; cor_agenda: string } | null;
+  profissional_id: string | null;
+}
 
 export default function Agenda() {
-  const { isSecretaria, isAdmin, isFisio, user } = useAuth();
-  const podeGerenciar = isAdmin || isSecretaria;
-  const [myProfissionalId, setMyProfissionalId] = useState<string | null>(null);
+  const { isSecretaria, isAdmin } = useAuth();
+  const [searchParams] = useSearchParams();
+  const profFiltroUrl = searchParams.get("profissional");
 
-  useEffect(() => {
-    if (!user) return;
-    supabase.from("profissionais").select("id").eq("user_id", user.id).maybeSingle().then(({ data }) => setMyProfissionalId(data?.id ?? null));
-  }, [user]);
-
-  const [view, setView] = useState<ViewMode>("week");
-  const [anchor, setAnchor] = useState<Date>(new Date());
-  const [list, setList] = useState<Atendimento[]>([]);
+  // Estados de Controle da Grade
+  const [view, setView] = useState<"day" | "week" | "month">("day");
+  const [currentDate, setCurrentDate] = useState<Date>(new Date());
+  const [atendimentos, setAtendimentos] = useState<Atendimento[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<Atendimento | null>(null);
-  const [syncing, setSyncing] = useState(false);
-  const [modoCadastroRapido, setModoCadastroRapido] = useState(false);
-  const [termoBusca, setTermoBusca] = useState("");
-  const [telefoneBusca, setTelefoneBusca] = useState("");
-  const [sugestoesPacientes, setSugestoesPacientes] = useState<any[]>([]);
-  const [pacienteSelecionado, setPacienteSelecionado] = useState<any | null>(null);
-  const [pacotesAtivosPaciente, setPacotesAtivosPaciente] = useState<any[]>([]);
-  const [usarPacoteExistenteId, setUsarPacoteExistenteId] = useState<string>("");
-  const [tipoAtendimentoRascunho, setTipoAtendimentoRascunho] = useState<"Plano" | "Particular">("Particular");
-  const [itemTipo, setItemTipo] = useState<"servico" | "pacote">("servico");
-  
-  const [listaPacotes, setListaPacotes] = useState<PacoteCatalogo[]>([]);
-  const [listaServicos, setListaServicos] = useState<ServicoCatalogo[]>([]);
-  const [listaPlanos, setListaPlanos] = useState<{id: string, nome: string}[]>([]);
-  
-  const [idItemSelecionado, setIdItemSelecionado] = useState<string>("");
-  const [planoSelecionado, setPlanoSelecionado] = useState<string>("");
-  const [qtdSessoesAuto, setQtdSessoesAuto] = useState<string>("1");
-  const [valorTotalAuto, setValorTotalAuto] = useState<string>("");
 
-  const pollRef = useRef<ReturnType<typeof setInterval>>();
+  // Estados do Formulário/Sheet de Edição
+  const [selectedAtend, setSelectedAtend] = useState<Atendimento | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [statusForm, setStatusForm] = useState("agendado");
+  const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    if (selected && modoCadastroRapido) {
-      setTermoBusca(selected.nome_paciente_livre || "");
-      setTelefoneBusca(selected.telefone_contato || "");
-      setPacienteSelecionado(null);
-      setSugestoesPacientes([]);
-      setPacotesAtivosPaciente([]);
-      setUsarPacoteExistenteId("");
-    }
-  }, [selected, modoCadastroRapido]);
-
-  useEffect(() => {
-    if (termoBusca.length >= 3 && !pacienteSelecionado) {
-      const delay = setTimeout(async () => {
-        const { data } = await supabase.from('pacientes').select('id, nome, telefone').ilike('nome', `%${termoBusca}%`).limit(5);
-        setSugestoesPacientes(data || []);
-      }, 300);
-      return () => clearTimeout(delay);
-    } else { setSugestoesPacientes([]); }
-  }, [termoBusca, pacienteSelecionado]);
-
-  async function buscarPacotesAtivos(pacienteId: string) {
-    const { data } = await supabase.from('paciente_pacotes').select('id, sessoes_restantes, pacotes(nome), servicos(nome), autorizacoes(plano, numero_guia)').eq('paciente_id', pacienteId).gt('sessoes_restantes', 0).order('created_at', { ascending: true });
-    setPacotesAtivosPaciente(data || []);
-    if (data && data.length > 0) setUsarPacoteExistenteId(data[0].id); else setUsarPacoteExistenteId("");
-  }
-
-  const range = useMemo(() => {
-    if (view === "day") return { start: startOfDay(anchor), end: endOfDay(anchor) };
-    if (view === "week") { const s = startOfWeek(anchor, { weekStartsOn: 1 }); return { start: startOfDay(s), end: endOfDay(addDays(s, 6)) }; }
-    return { start: startOfDay(startOfMonth(anchor)), end: endOfDay(endOfMonth(anchor)) };
-  }, [view, anchor]);
-
-  const carregarCatalogos = useCallback(async () => {
+  // Carrega os atendimentos do banco de dados
+  const carregarAtendimentos = useCallback(async () => {
+    setLoading(true);
     try {
-      const [{ data: pData }, { data: sData }, { data: plData }] = await Promise.all([
-        supabase.from("pacotes").select("id, nome, numero_sessoes, preco_total").eq("ativo", true),
-        supabase.from("servicos").select("id, nome, preco").eq("ativo", true),
-        supabase.from("planos_saude").select("id, nome").eq("ativo", true)
-      ]);
-      setListaPacotes((pData as any[]) ?? []); setListaServicos((sData as any[]) ?? []); setListaPlanos((plData as any[]) ?? []);
-    } catch (err) { console.error(err); }
-  }, []);
+      let start: Date;
+      let end: Date;
 
-  useEffect(() => { carregarCatalogos(); }, [carregarCatalogos]);
-
-  // CORREÇÃO 1: Limpeza do Array antes da busca para evitar mistura de dias
-  const reload = useCallback(async (silent = false) => {
-    if (!silent) {
-      setLoading(true);
-      setList([]); // Limpa a grade antes de renderizar os novos horários
-    }
-    
-    const { data } = await supabase
-      .from("atendimentos")
-      .select("id, data_inicio, data_fim, status, tipo, paciente_id, nome_paciente_livre, telefone_contato, profissional_id, google_event_id, paciente:pacientes(nome, telefone), profissional:profissionais(nome, cor_agenda)")
-      .gte("data_inicio", range.start.toISOString())
-      .lte("data_inicio", range.end.toISOString())
-      .not("status", "in", '("cancelado","faltou","faltou_sem_aviso")')
-      .order("data_inicio");
-      
-    setList((data as any[]) ?? []);
-    if (!silent) setLoading(false);
-  }, [range]);
-
-  const syncNow = useCallback(async (silent = false) => {
-    if (!silent) setSyncing(true);
-    const hoje = new Date(); const timeMin = addDays(hoje, -1).toISOString(); const timeMax = addDays(hoje, 30).toISOString();
-    const body: Record<string, unknown> = { timeMin, timeMax };
-    if (isFisio && !isAdmin && !isSecretaria && myProfissionalId) body.profissional_id = myProfissionalId;
-    const { data: { session } } = await supabase.auth.getSession();
-    const token = session?.access_token ?? import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-    let syncError: string | null = null;
-    try {
-      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/gcal-pull`, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}`, "apikey": import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY }, body: JSON.stringify(body) });
-      if (!res.ok) syncError = await res.text();
-    } catch (e: any) { syncError = e.message; }
-    if (syncError && !silent) toast.error("Falha ao sincronizar: " + syncError);
-    await reload(silent);
-    if (!silent) { setSyncing(false); toast.success("Agenda atualizada!"); }
-  }, [isFisio, isAdmin, isSecretaria, myProfissionalId, reload]);
-
-  // CORREÇÃO 2: Executa a busca local instantânea toda vez que você mudar de dia/semana
-  useEffect(() => {
-    reload();
-  }, [reload]);
-
-  // CORREÇÃO 3: Sincronização em Background separada, roda apenas 1x ao entrar e a cada 5 min
-  useEffect(() => {
-    syncNow(true); 
-    pollRef.current = setInterval(() => syncNow(true), 5 * 60 * 1000); 
-    return () => clearInterval(pollRef.current); 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  function nav(dir: -1 | 1) { setAnchor((prev) => { if (view === "day") return addDays(prev, dir); if (view === "week") return addWeeks(prev, dir); return addMonths(prev, dir); }); }
-  function goToday() { setAnchor(new Date()); }
-
-  async function mudarStatus(id: string, novoStatus: string) {
-    const { error } = await supabase.from("atendimentos").update({ status: novoStatus as any }).eq("id", id);
-    if (error) { toast.error(error.message); return; }
-    toast.success(`Status → "${statusLabel[novoStatus]}"`); setSelected(null); reload();
-  }
-
-  async function fazerCheckin(a: Atendimento) {
-    if (!confirm("Confirmar check-in?")) return;
-    if (!a.paciente_id) { toast.error("Paciente não vinculado! Use Cadastro Rápido."); return; }
-
-    const { data: pacotes } = await supabase.from("paciente_pacotes")
-      .select("id, autorizacao_id")
-      .eq("paciente_id", a.paciente_id)
-      .gt("sessoes_restantes", 0)
-      .order("created_at", { ascending: true })
-      .limit(1);
-
-    let payload: any = { status: "realizado" as any };
-    if (pacotes && pacotes.length > 0) {
-      payload.paciente_pacote_id = pacotes[0].id;
-      if (pacotes[0].autorizacao_id) {
-        payload.tipo = "Plano";
+      if (view === "day") {
+        start = startOfDay(currentDate);
+        end = endOfDay(currentDate);
+      } else if (view === "week") {
+        start = startOfWeek(currentDate, { weekStartsOn: 1 });
+        end = endOfWeek(currentDate, { weekStartsOn: 1 });
       } else {
-        payload.tipo = "Particular";
+        start = startOfMonth(currentDate);
+        end = endOfMonth(currentDate);
       }
+
+      let query = supabase
+        .from("atendimentos")
+        .select("id, data_inicio, data_fim, status, tipo, nome_paciente_livre, telefone_contato, paciente_id, paciente:pacientes(nome, telefone), profissional:profissionais(id, nome, cor_agenda), profissional_id")
+        .gte("data_inicio", start.toISOString())
+        .lte("data_inicio", end.toISOString());
+
+      // Se houver um filtro vindo do clique do card da secretária, filtra por profissional
+      if (profFiltroUrl) {
+        query = query.eq("profissional_id", profFiltroUrl);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      setAtendimentos((data as any[]) || []);
+    } catch (err: any) {
+      toast.error("Erro ao carregar agenda: " + err.message);
+    } finally {
+      setLoading(false);
     }
+  }, [view, currentDate, profFiltroUrl]);
 
-    const { error } = await supabase.from("atendimentos").update(payload).eq("id", a.id);
-    if (error) { toast.error(error.message); return; }
-    toast.success("Check-in realizado com sucesso!"); setSelected(null); reload();
-  }
+  useEffect(() => {
+    carregarAtendimentos();
+  }, [carregarAtendimentos]);
 
-  function handleCatalogoSelectChange(idSelecionado: string) {
-    setIdItemSelecionado(idSelecionado);
-    if (itemTipo === "servico") {
-      const servico = listaServicos.find(s => s.id === idSelecionado);
-      if (servico) { setQtdSessoesAuto("1"); setValorTotalAuto(servico.preco.toString()); }
-    } else {
-      const pacote = listaPacotes.find(p => p.id === idSelecionado);
-      if (pacote) { setQtdSessoesAuto(pacote.numero_sessoes.toString()); setValorTotalAuto(pacote.preco_total.toString()); }
-    }
-  }
+  // Organiza os atendimentos por dia para facilitar renderização nas visões semana/mês
+  const mapeamentoDias = useMemo(() => {
+    const mapa = new Map<string, Atendimento[]>();
+    atendimentos.forEach((at) => {
+      const chave = format(new Date(at.data_inicio), "yyyy-MM-dd");
+      if (!mapa.has(chave)) mapa.set(chave, []);
+      mapa.get(chave)!.push(at);
+    });
+    return mapa;
+  }, [atendimentos]);
 
-  async function salvarCadastroRapido(e: React.FormEvent<HTMLFormElement>) {
+  // Abre o painel lateral para editar status do atendimento
+  const abrirEdicao = (at: Atendimento) => {
+    setSelectedAtend(at);
+    setStatusForm(at.status);
+    setSheetOpen(true);
+  };
+
+  // Salva a alteração do status (Tratando a Falta como congelamento)
+  const handleSalvarStatus = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selected) return;
+    if (!selectedAtend) return;
+
+    setBusy(true);
     try {
-      let pId = pacienteSelecionado?.id;
-      if (!pId) {
-        const { data: novo, error } = await supabase.from("pacientes").insert({ nome: termoBusca.trim(), telefone: telefoneBusca || null }).select().single();
-        if (error) throw new Error("Erro paciente: " + error.message);
-        pId = novo.id;
-      }
+      const { error } = await supabase
+        .from("atendimentos")
+        .update({ status: statusForm })
+        .eq("id", selectedAtend.id);
 
-      let pacoteVincId = usarPacoteExistenteId;
-      let tipoFinal = tipoAtendimentoRascunho;
+      if (error) throw error;
 
-      if (!pacoteVincId) {
-        if (tipoAtendimentoRascunho === "Plano") {
-          const fd = new FormData(e.currentTarget);
-          const qtdPlano = parseInt(fd.get("qtdSessoesPlano") as string) || 10;
-          
-          const { data: aut } = await supabase.from("autorizacoes").insert({ 
-            paciente_id: pId, plano: planoSelecionado, numero_guia: fd.get("numeroGuia") || null, sessoes_autorizadas: qtdPlano, sessoes_realizadas: 0 
-          }).select().single();
-          
-          const { data: pac } = await supabase.from("paciente_pacotes").insert({ 
-            paciente_id: pId, autorizacao_id: aut.id, sessoes_totais: qtdPlano, sessoes_restantes: qtdPlano, preco_pago: 0, status_pagamento: "pago" 
-          }).select().single();
-          
-          pacoteVincId = pac.id;
-          tipoFinal = "Plano";
-        } else {
-          const qtd = parseInt(qtdSessoesAuto) || 1;
-          const valor = parseFloat(valorTotalAuto) || 0;
-          
-          let payloadPacote: any = { paciente_id: pId, sessoes_totais: qtd, sessoes_restantes: qtd, preco_pago: valor, status_pagamento: "pendente" };
-          if (itemTipo === "pacote" && idItemSelecionado) payloadPacote.pacote_id = idItemSelecionado;
-          if (itemTipo === "servico" && idItemSelecionado) payloadPacote.servico_id = idItemSelecionado;
+      toast.success("Status do agendamento atualizado!");
+      setSheetOpen(false);
+      carregarAtendimentos();
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
-          const { data: pac, error: e3 } = await supabase.from("paciente_pacotes").insert(payloadPacote).select().single();
-          if (e3) throw e3;
-          pacoteVincId = pac.id;
-          tipoFinal = "Particular";
-        }
-      } else {
-        const { data: checkGuia } = await supabase.from("paciente_pacotes").select("autorizacao_id").eq("id", pacoteVincId).single();
-        if (checkGuia?.autorizacao_id) tipoFinal = "Plano";
-        else tipoFinal = "Particular";
-      }
+  // Navegação de datas
+  const handleAnterior = () => {
+    if (view === "day") setCurrentDate(prev => addDays(prev, -1));
+    else if (view === "week") setCurrentDate(prev => addWeeks(prev, -1));
+    else setCurrentDate(prev => addMonths(prev, -1));
+  };
 
-      const { error } = await supabase.from("atendimentos").update({ paciente_id: pId, paciente_pacote_id: pacoteVincId, status: "realizado", tipo: tipoFinal }).eq("id", selected.id);
-      if (error) throw new Error("Erro vínculo: " + error.message);
-      
-      toast.success("Check-in e associação concluídos!");
-      setModoCadastroRapido(false); setSelected(null); reload();
-    } catch (e: any) { toast.error(e.message); }
-  }
+  const handleProximo = () => {
+    if (view === "day") setCurrentDate(prev => addDays(prev, 1));
+    else if (view === "week") setCurrentDate(prev => addWeeks(prev, 1));
+    else setCurrentDate(prev => addMonths(prev, 1));
+  };
 
-  function enviarWhatsapp(a: Atendimento) {
-    const tel = a.paciente?.telefone ?? a.telefone_contato;
-    const msg = `Olá ${displayName(a)}, confirmando atendimento em ${format(new Date(a.data_inicio), "dd/MM 'às' HH:mm")}.`;
-    if (!abrirWhatsapp(tel, msg, isSecretaria)) toast.error("Telefone não disponível");
-  }
-
-  const title = useMemo(() => {
-    if (view === "day") return format(anchor, "dd 'de' MMMM, yyyy", { locale: ptBR });
-    if (view === "week") { const s = startOfWeek(anchor, { weekStartsOn: 1 }); const e = addDays(s, 6); return `${format(s, "dd/MM")} – ${format(e, "dd/MM/yyyy")}`; }
-    return format(anchor, "MMMM yyyy", { locale: ptBR });
-  }, [view, anchor]);
-
-  const eventsByDay = useMemo(() => {
-    const map = new Map<string, Atendimento[]>();
-    list.forEach((a) => { const key = format(new Date(a.data_inicio), "yyyy-MM-dd"); if (!map.has(key)) map.set(key, []); map.get(key)!.push(a); });
-    return map;
-  }, [list]);
+  // Estilização dinâmica baseada no status do atendimento (CORREÇÃO DA FALTA AQUI)
+  const obterEstiloCard = (status: string, corProfissional?: string) => {
+    if (status === "faltou") {
+      return "border-l-4 border-slate-400 bg-slate-100/80 text-slate-400 shadow-none opacity-70";
+    }
+    if (status === "realizado") {
+      return "border-l-4 border-emerald-500 bg-emerald-50/40 text-emerald-900";
+    }
+    if (status === "cancelado") {
+      return "border-l-4 border-red-300 bg-red-50/30 text-red-400 line-through";
+    }
+    // Status Padrão (Agendado) usa a cor definida para o profissional
+    return `border-l-4 bg-white text-slate-800 shadow-sm`;
+  };
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold">Agenda</h1>
+    <div className="space-y-4 p-2 max-w-7xl mx-auto">
+      
+      {/* CABEÇALHO E CONTROLES DA AGENDA */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-white p-3 rounded-xl border shadow-sm">
         <div className="flex items-center gap-2">
-          <Sheet><SheetTrigger asChild><Button size="sm" className="bg-primary text-white"><Plus className="w-4 h-4 mr-1" /> Novo</Button></SheetTrigger><SheetContent><SheetHeader><SheetTitle>Novo Agendamento</SheetTitle></SheetHeader><div className="space-y-4 pt-4"><p className="text-sm text-muted-foreground">Utilize o Google Calendar.</p></div></SheetContent></Sheet>
-          <Button variant="outline" size="sm" onClick={() => syncNow(false)} disabled={syncing}><RefreshCw className={`w-4 h-4 mr-1 ${syncing ? "animate-spin" : ""}`} /> Atualizar</Button>
+          <Button variant="outline" size="icon" onClick={handleAnterior}><ChevronLeft className="w-4 h-4" /></Button>
+          <Button variant="outline" onClick={() => setCurrentDate(new Date())} className="text-xs font-semibold">Hoje</Button>
+          <Button variant="outline" size="icon" onClick={handleProximo}><ChevronRight className="w-4 h-4" /></Button>
+          <h2 className="text-base font-bold capitalize text-slate-700 ml-1">
+            {format(currentDate, view === "month" ? "MMMM 'de' yyyy" : "dd 'de' MMMM", { locale: ptBR })}
+          </h2>
+        </div>
+
+        <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-lg self-stretch sm:self-auto">
+          {(["day", "week", "month"] as const).map((v) => (
+            <Button
+              key={v}
+              variant={view === v ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setView(v)}
+              className="text-xs capitalize flex-1 sm:flex-none font-semibold h-8"
+            >
+              {v === "day" ? "Dia" : v === "week" ? "Semana" : "Mês"}
+            </Button>
+          ))}
+          <Button variant="outline" size="icon" onClick={carregarAtendimentos} className="h-8 w-8 bg-white"><RefreshCw className="w-3.5 h-3.5" /></Button>
         </div>
       </div>
 
-      <div className="flex gap-1 bg-muted rounded-lg p-1">
-        {(["day", "week", "month"] as ViewMode[]).map((v) => (
-          <button key={v} onClick={() => setView(v)} className={`flex-1 text-xs font-medium py-1.5 rounded-md transition-colors ${view === v ? "bg-background shadow-sm" : "text-muted-foreground"}`}>{v === "day" ? "Dia" : v === "week" ? "Semana" : "Mês"}</button>
-        ))}
-      </div>
-
-      <div className="flex items-center justify-between">
-        <Button variant="ghost" size="icon" onClick={() => nav(-1)}><ChevronLeft className="w-5 h-5" /></Button>
-        <button onClick={goToday} className="text-sm font-semibold capitalize">{title}</button>
-        <Button variant="ghost" size="icon" onClick={() => nav(1)}><ChevronRight className="w-5 h-5" /></Button>
-      </div>
-
-      {loading && list.length === 0 ? (<p className="text-muted-foreground text-center py-12">Carregando...</p>) : (
-        <>
-          {view === "day" && <DayView events={list} onSelect={(a) => { setSelected(a); setModoCadastroRapido(false); }} />}
-          {view === "week" && <WeekView anchor={anchor} eventsByDay={eventsByDay} onSelect={(a) => { setSelected(a); setModoCadastroRapido(false); }} onDayClick={(d) => { setAnchor(d); setView("day"); }} />}
-          {view === "month" && <MonthView anchor={anchor} eventsByDay={eventsByDay} onDayClick={(d) => { setAnchor(d); setView("day"); }} />}
-        </>
+      {profFiltroUrl && (
+        <div className="bg-blue-50 border border-blue-200 text-blue-800 p-2 rounded-lg text-xs font-semibold text-center">
+          📌 A filtrar agenda por profissional selecionado no painel.
+        </div>
       )}
 
-      <Sheet open={!!selected} onOpenChange={(o) => { if (!o) { setSelected(null); setModoCadastroRapido(false); } }}>
-        <SheetContent side="bottom" className="max-h-[90vh] overflow-y-auto rounded-t-2xl">
-          {selected && !modoCadastroRapido && (
-            <div className="space-y-4 pb-6">
-              <SheetHeader><SheetTitle className="flex items-center gap-2"><div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: eventColor(selected) }} />{displayName(selected)}</SheetTitle></SheetHeader>
-              <div className="space-y-2 text-sm">
-                <div className="flex items-center gap-2"><Clock className="w-4 h-4 text-muted-foreground" /> {format(new Date(selected.data_inicio), "dd/MM/yyyy HH:mm")}</div>
-                <p><strong>Profissional:</strong> {selected.profissional?.nome ?? "—"}</p>
-                <div className="flex items-center gap-2"><strong>Status:</strong><Badge variant={statusColor[selected.status] as any}>{statusBadge(selected)}</Badge></div>
-                {!selected.paciente_id && <Badge variant="outline" className="text-xs bg-amber-100 text-amber-800">⚠ Aguardando Cadastro</Badge>}
-              </div>
-              <div className="flex flex-wrap gap-2 pt-2">
-                {selected.status === "agendado" && (selected.paciente_id ? <Button size="sm" onClick={() => fazerCheckin(selected)}><CheckCircle className="w-3 h-3 mr-1" />Check-in</Button> : <Button size="sm" onClick={() => setModoCadastroRapido(true)}><ClipboardList className="w-3 h-3 mr-1" />Cadastro e Iniciar</Button>)}
-                {selected.status !== "cancelado" && selected.paciente_id && <Button size="sm" variant="outline" asChild><Link to={`/atendimentos/${selected.id}/prontuario`}><FileText className="w-3 h-3 mr-1" />Prontuário</Link></Button>}
-                {(selected.paciente?.telefone || selected.telefone_contato) && <Button size="sm" variant="outline" onClick={() => enviarWhatsapp(selected)}><MessageCircle className="w-3 h-3 mr-1" />WhatsApp</Button>}
-                {selected.status === "agendado" && <Button size="sm" variant="outline" className="text-red-600 border-red-200" onClick={() => mudarStatus(selected.id, "faltou")}>Faltou</Button>}
-                {podeGerenciar && <Button variant="destructive" size="sm" className="ml-auto" onClick={async () => { if (confirm("Excluir agendamento?")) { await supabase.from('atendimentos').delete().eq('id', selected.id); setSelected(null); reload(); } }}><Trash2 className="w-3 h-3 mr-1" /> Remover</Button>}
-              </div>
-            </div>
-          )}
-
-          {selected && modoCadastroRapido && (
-            <div className="space-y-4 pb-6">
-              <SheetHeader><SheetTitle>Associação de Atendimento</SheetTitle></SheetHeader>
-              <form onSubmit={salvarCadastroRapido} className="space-y-4 mt-2">
-                <div className="space-y-1.5 relative">
-                  <Label>Nome do Paciente</Label>
-                  <div className="relative"><Search className="absolute left-3 top-3 w-4 h-4 text-muted-foreground" /><Input value={termoBusca} onChange={(e) => { setTermoBusca(e.target.value); setPacienteSelecionado(null); setPacotesAtivosPaciente([]); setUsarPacoteExistenteId(""); }} className={`pl-9 ${pacienteSelecionado ? "border-green-500 bg-green-50/30 font-semibold" : ""}`} placeholder="Buscar paciente..." required /></div>
-                  {sugestoesPacientes.length > 0 && !pacienteSelecionado && (
-                    <div className="absolute z-20 w-full bg-background border rounded-md shadow-xl mt-1 max-h-48 overflow-y-auto">
-                      {sugestoesPacientes.map((p) => (
-                        <div key={p.id} className="p-3 hover:bg-muted cursor-pointer border-b" onClick={() => { setPacienteSelecionado(p); setTermoBusca(p.nome); setTelefoneBusca(p.telefone || ""); setSugestoesPacientes([]); buscarPacotesAtivos(p.id); }}>
-                          <div className="font-medium text-sm">{p.nome}</div><div className="text-xs text-muted-foreground">{p.telefone || "Sem telefone"}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="space-y-1.5"><Label>Telefone (opcional)</Label><Input value={telefoneBusca} onChange={(e) => setTelefoneBusca(e.target.value)} /></div>
-
-                {pacotesAtivosPaciente.length > 0 && (
-                  <div className="p-4 border border-green-300 bg-green-50/50 rounded-lg space-y-3 mt-4">
-                    <Label className="text-green-800">Saldos/Guias Encontradas</Label>
-                    <select className="w-full bg-white border rounded-md h-10 px-3 text-sm" value={usarPacoteExistenteId} onChange={(e) => setUsarPacoteExistenteId(e.target.value)}>
-                      <option value="">Não, cobrar NOVO serviço/guia.</option>
-                      {pacotesAtivosPaciente.map(pkg => (<option key={pkg.id} value={pkg.id}>{pkg.autorizacoes ? `Guia: ${pkg.autorizacoes.plano}` : 'Pacote'} - {pkg.sessoes_restantes} restantes</option>))}
-                    </select>
+      {/* RENDERIZAÇÃO DAS VISÕES */}
+      {loading ? (
+        <div className="py-20 text-center text-sm text-muted-foreground animate-pulse">A sintonizar os horários...</div>
+      ) : view === "day" ? (
+        
+        /* --- VISÃO DIÁRIA --- */
+        <div className="space-y-2">
+          {atendimentos.length === 0 ? (
+            <div className="text-center py-16 border-2 border-dashed rounded-xl bg-white text-muted-foreground text-sm">Nenhum atendimento agendado para este dia.</div>
+          ) : (
+            atendimentos.map((at) => (
+              <div
+                key={at.id}
+                onClick={() => abrirEdicao(at)}
+                className={`p-3 rounded-xl border transition-all cursor-pointer flex justify-between items-center ${obterEstiloCard(at.status)}`}
+                style={at.status !== 'faltou' && at.status !== 'realizado' && at.status !== 'cancelado' && at.profissional?.cor_agenda ? { borderLeftColor: at.profissional.cor_agenda } : {}}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className={`font-bold text-sm truncate ${at.status === "faltou" ? "line-through text-slate-400" : ""}`}>
+                    {at.paciente?.nome || at.nome_paciente_livre || "Sem Identificação"}
                   </div>
-                )}
-
-                {!usarPacoteExistenteId && (
-                  <>
-                    <div className="flex gap-2 p-1 bg-muted rounded-md mt-4">
-                      <button type="button" onClick={() => setTipoAtendimentoRascunho("Particular")} className={`flex-1 text-xs py-1.5 rounded-sm transition-all ${tipoAtendimentoRascunho === "Particular" ? "bg-background shadow-sm font-semibold" : "text-muted-foreground"}`}>Particular</button>
-                      <button type="button" onClick={() => setTipoAtendimentoRascunho("Plano")} className={`flex-1 text-xs py-1.5 rounded-sm transition-all ${tipoAtendimentoRascunho === "Plano" ? "bg-background shadow-sm font-semibold" : "text-muted-foreground"}`}>Plano de Saúde</button>
-                    </div>
-
-                    {tipoAtendimentoRascunho === "Particular" ? (
-                      <div className="space-y-3 p-3 border rounded-lg bg-slate-50/50">
-                        <div className="flex gap-4 items-center">
-                          <label className="flex items-center gap-1.5 text-xs"><input type="radio" checked={itemTipo === "servico"} onChange={() => { setItemTipo("servico"); setQtdSessoesAuto("1"); setValorTotalAuto(""); setIdItemSelecionado(""); }} /> Avulsa</label>
-                          <label className="flex items-center gap-1.5 text-xs"><input type="radio" checked={itemTipo === "pacote"} onChange={() => { setItemTipo("pacote"); setQtdSessoesAuto("1"); setValorTotalAuto(""); setIdItemSelecionado(""); }} /> Pacote</label>
-                        </div>
-                        <select className="w-full bg-background border rounded-md h-9 px-3 text-sm" required onChange={(e) => handleCatalogoSelectChange(e.target.value)} value={idItemSelecionado}>
-                          <option value="" disabled>-- Selecione --</option>
-                          {itemTipo === "servico" ? listaServicos.map(s => <option key={s.id} value={s.id}>{s.nome} (R$ {s.preco})</option>) : listaPacotes.map(p => <option key={p.id} value={p.id}>{p.nome} ({p.numero_sessoes} sessões)</option>)}
-                        </select>
-                      </div>
-                    ) : (
-                      <div className="space-y-3 p-3 border rounded-lg bg-blue-50/30">
-                        <div className="space-y-1.5"><Label>Plano de Saúde</Label><Select value={planoSelecionado} onValueChange={setPlanoSelecionado} required><SelectTrigger className="bg-background"><SelectValue placeholder="Selecione o plano..." /></SelectTrigger><SelectContent>{listaPlanos.map(p => <SelectItem key={p.id} value={p.nome}>{p.nome}</SelectItem>)}</SelectContent></Select></div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1.5"><Label>Número Guia</Label><Input name="numeroGuia" placeholder="Opcional" /></div>
-                          <div className="space-y-1.5"><Label>Autorizadas</Label><Input name="qtdSessoesPlano" type="number" defaultValue="10" required /></div>
-                        </div>
-                      </div>
-                    )}
-                    
-                    {tipoAtendimentoRascunho === "Particular" && (
-                      <div className="grid grid-cols-2 gap-3 mt-4">
-                        <div className="space-y-1.5"><Label>Sessões Totais</Label><Input value={qtdSessoesAuto} disabled /></div>
-                        <div className="space-y-1.5"><Label>Valor Cheio</Label><Input value={valorTotalAuto ? `R$ ${parseFloat(valorTotalAuto).toFixed(2)}` : "—"} disabled /></div>
-                      </div>
-                    )}
-                  </>
-                )}
-                <div className="flex gap-2 pt-4"><Button type="button" variant="outline" className="flex-1" onClick={() => setModoCadastroRapido(false)}>Cancelar</Button><Button type="submit" className="flex-1 bg-primary text-white">Salvar Check-in</Button></div>
-              </form>
-            </div>
+                  <div className="text-xs font-medium text-muted-foreground mt-0.5 flex items-center gap-2">
+                    <span className="font-bold text-slate-600">{format(new Date(at.data_inicio), "HH:mm")}</span>
+                    <span>•</span>
+                    <span className="uppercase tracking-wider text-[10px]">{at.profissional?.nome || "Clínica"}</span>
+                    <span>•</span>
+                    <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4 font-bold uppercase">{at.tipo}</Badge>
+                  </div>
+                </div>
+                <Badge className={`text-[10px] font-bold uppercase h-5 px-2 ${
+                  at.status === "realizado" ? "bg-emerald-600" : at.status === "faltou" ? "bg-slate-400" : at.status === "cancelado" ? "bg-red-400" : "bg-blue-600"
+                }`}>
+                  {at.status}
+                </Badge>
+              </div>
+            ))
           )}
-        </SheetContent>
-      </Sheet>
-    </div>
-  );
-}
-
-function DayView({ events, onSelect }: { events: Atendimento[]; onSelect: (a: Atendimento) => void }) {
-  const columns = useMemo(() => {
-    const sorted = [...events].sort((a, b) => new Date(a.data_inicio).getTime() - new Date(b.data_inicio).getTime());
-    const cols: Atendimento[][] = [];
-    sorted.forEach((evt) => {
-      const start = new Date(evt.data_inicio).getTime(); let placed = false;
-      for (const col of cols) { const lastEnd = col[col.length - 1].data_fim ? new Date(col[col.length - 1].data_fim!).getTime() : new Date(col[col.length - 1].data_inicio).getTime() + 40 * 60000; if (start >= lastEnd) { col.push(evt); placed = true; break; } }
-      if (!placed) cols.push([evt]);
-    });
-    const map = new Map<string, { col: number; total: number }>();
-    sorted.forEach((evt) => {
-      const evtStart = new Date(evt.data_inicio).getTime(); const evtEnd = evt.data_fim ? new Date(evt.data_fim).getTime() : evtStart + 40 * 60000;
-      const colIdx = cols.findIndex((c) => c.includes(evt)); let maxCols = 1;
-      cols.forEach((col, ci) => { if (ci === colIdx) return; const overlaps = col.some((e) => { const s = new Date(e.data_inicio).getTime(); const en = e.data_fim ? new Date(e.data_fim).getTime() : s + 40 * 60000; return s < evtEnd && en > evtStart; }); if (overlaps) maxCols = Math.max(maxCols, cols.length); });
-      map.set(evt.id, { col: colIdx, total: cols.length > 1 ? cols.length : 1 });
-    });
-    return map;
-  }, [events]);
-
-  return (
-    <div className="relative border rounded-lg overflow-hidden bg-card">
-      {HOURS.map((h) => (
-        <div key={h} className="flex border-b last:border-b-0" style={{ minHeight: 60 }}>
-          <div className="w-12 flex-shrink-0 text-[10px] text-muted-foreground text-right pr-2 pt-1">{String(h).padStart(2, "0")}:00</div>
-          <div className="flex-1 relative">
-            {events.filter((e) => new Date(e.data_inicio).getHours() === h).map((e) => {
-              const start = new Date(e.data_inicio); const end = e.data_fim ? new Date(e.data_fim) : new Date(start.getTime() + 40 * 60000);
-              const topOff = (start.getMinutes() / 60) * 60; const height = Math.max((differenceInMinutes(end, start) / 60) * 60, 24);
-              const { col, total } = columns.get(e.id) ?? { col: 0, total: 1 };
-              const width = total > 1 ? `calc(${100 / total}% - 2px)` : "calc(100% - 8px)"; const left = total > 1 ? `calc(${(col / total) * 100}%)` : "0px";
+        </div>
+      ) : (
+        
+        /* --- VISÃO SEMANAL / MENSAL RESUMIDA --- */
+        <div className="bg-white rounded-xl border p-3 shadow-sm">
+          <div className="grid grid-cols-7 gap-1 text-center font-bold text-xs text-slate-500 uppercase tracking-wider mb-2 pb-2 border-b">
+            {["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"].map(d => <div key={d}>{d}</div>)}
+          </div>
+          <div className="grid grid-cols-7 gap-1.5">
+            {eachDayOfInterval({
+              start: view === "week" ? startOfWeek(currentDate, { weekStartsOn: 1 }) : startOfMonth(currentDate),
+              end: view === "week" ? endOfWeek(currentDate, { weekStartsOn: 1 }) : endOfMonth(currentDate)
+            }).map((dia, idx) => {
+              const chaveDia = format(dia, "yyyy-MM-dd");
+              const listaEvts = mapeamentoDias.get(chaveDia) || [];
               return (
-                <button key={e.id} onClick={() => onSelect(e)} className="absolute rounded px-1.5 py-0.5 text-[11px] leading-tight text-white truncate text-left shadow-sm" style={{ top: topOff, height, width, left, backgroundColor: eventColor(e) }}>
-                  <span className="font-medium">{displayName(e)}</span><span className="opacity-80 ml-1">{format(start, "HH:mm")}</span>
-                </button>
+                <div key={idx} className={`min-h-[70px] p-1.5 rounded-lg border bg-slate-50/50 flex flex-col justify-between ${!isSameMonth(dia, currentDate) ? "opacity-30" : ""}`}>
+                  <span className="text-xs font-bold text-slate-500">{format(dia, "d")}</span>
+                  <div className="space-y-1 mt-1 flex-1 flex flex-col justify-end">
+                    {listaEvts.slice(0, 2).map(ev => (
+                      <div 
+                        key={ev.id} 
+                        onClick={() => abrirEdicao(ev)}
+                        className={`text-[10px] p-1 rounded font-semibold truncate cursor-pointer ${
+                          ev.status === 'faltou' ? 'bg-slate-200 text-slate-400 line-through' : 'bg-blue-100 text-blue-800'
+                        }`}
+                      >
+                        {format(new Date(ev.data_inicio), "HH:mm")} {ev.paciente?.nome?.split(" ")[0] || ev.nome_paciente_livre?.split(" ")[0]}
+                      </div>
+                    ))}
+                    {listaEvts.length > 2 && <span className="text-[9px] text-muted-foreground text-center font-bold block">+{listaEvts.length - 2} mais</span>}
+                  </div>
+                </div>
               );
             })}
           </div>
         </div>
-      ))}
-    </div>
-  );
-}
+      )}
 
-function WeekView({ anchor, eventsByDay, onSelect, onDayClick }: { anchor: Date; eventsByDay: Map<string, Atendimento[]>; onSelect: (a: Atendimento) => void; onDayClick: (d: Date) => void }) {
-  const weekStart = startOfWeek(anchor, { weekStartsOn: 1 }); const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)); const today = format(new Date(), "yyyy-MM-dd");
-  return (
-    <div className="grid grid-cols-7 gap-px bg-border rounded-lg overflow-hidden">
-      {days.map((d) => {
-        const key = format(d, "yyyy-MM-dd"); const isToday = key === today; const evts = eventsByDay.get(key) ?? [];
-        return (
-          <div key={key} className="bg-card min-h-[120px] p-1">
-            <button className="w-full mb-1" onClick={() => onDayClick(d)}><div className={`text-center text-[10px] uppercase ${isToday ? "font-bold text-primary" : "text-muted-foreground"}`}>{format(d, "EEE", { locale: ptBR })}</div><div className={`text-center text-sm ${isToday ? "bg-primary text-primary-foreground w-6 h-6 rounded-full mx-auto flex items-center justify-center font-bold" : ""}`}>{format(d, "d")}</div></button>
-            <div className="space-y-0.5">{evts.map((e) => (<button key={e.id} onClick={() => onSelect(e)} className="w-full text-left rounded px-1 py-0.5 text-[10px] text-white truncate" style={{ backgroundColor: eventColor(e) }}>{format(new Date(e.data_inicio), "HH:mm")} {displayName(e)}</button>))}</div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
+      {/* PAINEL LATERAL (SHEET) PARA ATUALIZAÇÃO DO STATUS */}
+      <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+        <SheetContent side="right" className="w-full sm:max-w-md p-5 space-y-4">
+          <SheetHeader>
+            <SheetTitle className="text-lg font-bold text-slate-800">Gerenciar Atendimento</SheetTitle>
+          </SheetHeader>
+          
+          {selectedAtend && (
+            <div className="bg-slate-50 p-3 rounded-xl border space-y-1 text-xs">
+              <p className="font-bold text-sm text-slate-700">{selectedAtend.paciente?.nome || selectedAtend.nome_paciente_livre}</p>
+              <p className="text-muted-foreground"><Clock className="w-3 h-3 inline mr-1" />{format(new Date(selectedAtend.data_inicio), "dd 'de' MMMM 'às' HH:mm", { locale: ptBR })}</p>
+              <p className="text-muted-foreground uppercase font-semibold text-[10px] tracking-wide text-blue-600 mt-1">Profissional: {selectedAtend.profissional?.nome || "Não definido"}</p>
+            </div>
+          )}
 
-function MonthView({ anchor, eventsByDay, onDayClick }: { anchor: Date; eventsByDay: Map<string, Atendimento[]>; onDayClick: (d: Date) => void }) {
-  const monthStart = startOfMonth(anchor); const monthEnd = endOfMonth(anchor); const calStart = startOfWeek(monthStart, { weekStartsOn: 1 }); const calEnd = endOfWeek(monthEnd, { weekStartsOn: 1 }); const allDays = eachDayOfInterval({ start: calStart, end: calEnd }); const today = format(new Date(), "yyyy-MM-dd");
-  return (
-    <div>
-      <div className="grid grid-cols-7 mb-1">{["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"].map((d) => <div key={d} className="text-center text-[10px] text-muted-foreground uppercase">{d}</div>)}</div>
-      <div className="grid grid-cols-7 gap-px bg-border rounded-lg overflow-hidden">
-        {allDays.map((d) => {
-          const key = format(d, "yyyy-MM-dd"); const isToday = key === today; const inMonth = isSameMonth(d, anchor); const evts = eventsByDay.get(key) ?? [];
-          return (
-            <button key={key} onClick={() => onDayClick(d)} className={`bg-card min-h-[52px] p-1 text-left ${!inMonth ? "opacity-40" : ""}`}>
-              <div className={`text-xs text-center mb-0.5 ${isToday ? "bg-primary text-primary-foreground w-5 h-5 rounded-full mx-auto flex items-center justify-center font-bold" : ""}`}>{format(d, "d")}</div>
-              {evts.length > 0 && (<div className="flex justify-center gap-0.5 flex-wrap">{evts.slice(0, 3).map((e) => <div key={e.id} className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: eventColor(e) }} />)}</div>)}
-            </button>
-          );
-        })}
-      </div>
+          <form onSubmit={handleSalvarStatus} className="space-y-5 pt-2">
+            <div className="space-y-2">
+              <Label htmlFor="status" className="text-xs font-bold uppercase tracking-wider text-slate-500">Alterar Status da Sessão</Label>
+              <Select value={statusForm} onValueChange={setStatusForm}>
+                <SelectTrigger id="status" className="h-12 text-sm font-semibold">
+                  <SelectValue placeholder="Selecione o status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="agendado" className="font-medium text-blue-600">Agendado</SelectItem>
+                  <SelectItem value="realizado" className="font-medium text-emerald-600">Realizado / Evoluído</SelectItem>
+                  <SelectItem value="faltou" className="font-medium text-slate-500">Faltou (Enviar para Auditoria)</SelectItem>
+                  <SelectItem value="cancelado" className="font-medium text-red-500">Cancelado / Desmarcado</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800 space-y-1">
+              <p className="font-bold">💡 Informação Operacional:</p>
+              <p>Marcar como <strong>Faltou</strong> colocará esta sessão em análise para os administradores. Nenhuma sessão será cobrada do paciente até a validação gerencial.</p>
+            </div>
+
+            <Button type="submit" className="w-full h-12 text-sm font-bold bg-blue-600 hover:bg-blue-700" disabled={busy}>
+              {busy ? "A atualizar..." : "Confirmar Alteração"}
+            </Button>
+          </form>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
