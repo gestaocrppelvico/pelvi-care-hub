@@ -33,6 +33,9 @@ import Documentos from "./pages/Documentos";
 import PacienteDocumentos from "./pages/PacienteDocumentos";
 import PacienteAutorizacoes from "./pages/PacienteAutorizacoes";
 import NotFound from "./pages/NotFound";
+import NovaAnamnese from './pages/NovaAnamnese';
+import NovaEvolucao from './pages/NovaEvolucao';
+
 
 // 1. IMPORTAÇÃO DA NOVA PÁGINA AQUI:
 import VinculoPacientes from "./pages/VinculoPacientes";
@@ -65,6 +68,8 @@ const App = () => (
             <Route path="/crm" element={<Crm />} />
             <Route path="/crm/templates" element={<CrmTemplates />} />
             <Route path="/configuracoes/planos" element={<PlanosConfig />} />
+            <Route path="/paciente/:id/anamnese/nova" element={<NovaAnamnese />} />
+            <Route path="/paciente/:id/evolucao/nova" element={<NovaEvolucao />} />
             
             {/* ROTAS DO FINANCEIRO */}
             <Route path="/financeiro" element={<Financeiro />} />
