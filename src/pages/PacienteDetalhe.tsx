@@ -1,6 +1,10 @@
 import { useEffect, useState, useMemo } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Phone, Calendar, Pencil, ShoppingBag, CheckCircle2, XCircle, AlertCircle, Clock, UserCircle, FileText, Plus } from "lucide-react";
+import { 
+  ArrowLeft, Phone, Calendar, Pencil, ShoppingBag, CheckCircle2, 
+  XCircle, AlertCircle, Clock, UserCircle, FileText, Plus, 
+  ClipboardEdit, Eye, CircleAlert, BadgeCheck 
+} from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
@@ -17,6 +21,9 @@ import { toast } from "sonner";
 import PacienteFinanceiro from "./PacienteFinanceiro";
 import PacienteAutorizacoes from "./PacienteAutorizacoes";
 
+// Import das novas funções (vamos criar esse arquivo depois)
+import { buscarAtendimentosComEvolucao, buscarPacoteAtivo } from "@/lib/supabaseFunctions";
+
 export default function PacienteDetalhe() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -24,10 +31,13 @@ export default function PacienteDetalhe() {
   const podeGerenciar = isAdmin || isSecretaria;
 
   const [pac, setPac] = useState<any>(null);
-  const [pront, setPront] = useState<any[]>([]);
-  const [atendimentos, setAtendimentos] = useState<any[]>([]);
+  const [pront, setPront] = useState<any[]>([]);          // todos os prontuários
+  const [atendimentos, setAtendimentos] = useState<any[]>([]); // com info de evolução
   const [loading, setLoading] = useState(true);
+  const [anamnese, setAnamnese] = useState<any>(null);   // prontuário tipo 'avaliacao'
+  const [evolucoes, setEvolucoes] = useState<any[]>([]); // prontuários tipo 'evolucao'
 
+  // Estados do lançamento de serviços (já existentes)
   const [itemTipo, setItemTipo] = useState<"servico" | "pacote">("servico");
   const [listaServicos, setListaServicos] = useState<any[]>([]);
   const [listaPacotes, setListaPacotes] = useState<any[]>([]);
@@ -39,23 +49,29 @@ export default function PacienteDetalhe() {
     if (!id) return;
     setLoading(true);
     try {
+      // 1. Paciente
       const { data: p } = await supabase.from("pacientes").select("*").eq("id", id).maybeSingle();
       setPac(p);
-      
+
+      // 2. Prontuários (todos) com atendimento e profissional
       const { data: pr } = await supabase
         .from("prontuarios")
         .select("*, atendimento:atendimentos(data_inicio, profissional:profissionais(nome))")
         .eq("paciente_id", id)
         .order("created_at", { ascending: false });
       setPront(pr || []);
-      
-      const { data: at } = await supabase
-        .from("atendimentos")
-        .select("id, status, data_inicio, profissional:profissionais(nome)")
-        .eq("paciente_id", id)
-        .order("data_inicio", { ascending: false });
-      setAtendimentos(at || []);
-      
+
+      // Separar anamnese e evoluções
+      const anam = pr?.find(r => r.tipo === 'avaliacao') || null;
+      setAnamnese(anam);
+      const evos = pr?.filter(r => r.tipo === 'evolucao') || [];
+      setEvolucoes(evos);
+
+      // 3. Atendimentos com info de evolução (usando a função que criaremos)
+      const atendimentosComEvolucao = await buscarAtendimentosComEvolucao(id);
+      setAtendimentos(atendimentosComEvolucao || []);
+
+      // 4. Listas de serviços e pacotes (para o lançamento)
       const [{ data: s }, { data: pks }] = await Promise.all([
         supabase.from("servicos").select("id, nome, preco").eq("ativo", true),
         supabase.from("pacotes").select("id, nome, numero_sessoes, preco_total").eq("ativo", true)
@@ -63,7 +79,8 @@ export default function PacienteDetalhe() {
       setListaServicos(s || []);
       setListaPacotes(pks || []);
     } catch (e) { 
-      toast.error("Erro ao carregar"); 
+      console.error(e);
+      toast.error("Erro ao carregar dados"); 
     } finally { 
       setLoading(false); 
     }
@@ -86,13 +103,26 @@ export default function PacienteDetalhe() {
     e.preventDefault();
     try {
       if (itemTipo === "pacote") {
-        await supabase.from("paciente_pacotes").insert({ paciente_id: id, pacote_id: idItemSelecionado, sessoes_totais: qtdSessoes, sessoes_restantes: qtdSessoes, preco_pago: precoFinal });
+        await supabase.from("paciente_pacotes").insert({ 
+          paciente_id: id, 
+          pacote_id: idItemSelecionado, 
+          sessoes_totais: qtdSessoes, 
+          sessoes_restantes: qtdSessoes, 
+          preco_pago: precoFinal 
+        });
       } else {
         await supabase.from("paciente_servicos").insert({ paciente_id: id, servico_id: idItemSelecionado });
-        await supabase.from("paciente_pacotes").insert({ paciente_id: id, servico_id: idItemSelecionado, sessoes_totais: 1, sessoes_restantes: 1, preco_pago: precoFinal });
+        await supabase.from("paciente_pacotes").insert({ 
+          paciente_id: id, 
+          servico_id: idItemSelecionado, 
+          sessoes_totais: 1, 
+          sessoes_restantes: 1, 
+          preco_pago: precoFinal 
+        });
       }
       toast.success("Lançado com sucesso!");
       setIdItemSelecionado("");
+      carregarDados(); // recarregar
     } catch (err: any) { toast.error(err.message); }
   };
 
@@ -121,7 +151,6 @@ export default function PacienteDetalhe() {
           </div>
         </div>
         
-        {/* BOTÃO ATUALIZADO: "Ver ficha" em destaque azul */}
         <Button asChild size="sm" className="bg-blue-600 hover:bg-blue-700 text-white">
           <Link to={`/pacientes/${id}/editar`}><FileText className="w-4 h-4 mr-1.5" /> Ver ficha</Link>
         </Button>
@@ -136,6 +165,7 @@ export default function PacienteDetalhe() {
           <TabsTrigger value="autorizacoes" className="text-xs sm:text-sm">Guias</TabsTrigger>
         </TabsList>
 
+        {/* ============ ABA HISTÓRICO (MODIFICADA) ============ */}
         <TabsContent value="historico" className="space-y-4 mt-4">
           <div className="grid grid-cols-3 gap-2 sm:gap-4">
             <Card className="p-3 border-l-4 border-l-emerald-500 shadow-sm bg-emerald-50/30">
@@ -194,34 +224,74 @@ export default function PacienteDetalhe() {
               </div>
             </Card>
 
-            <Card className="p-4 shadow-sm h-[300px] flex flex-col">
+            {/* Card de Últimas Consultas com indicador de evolução */}
+            <Card className="p-4 shadow-sm h-[350px] flex flex-col">
               <h3 className="font-semibold text-sm flex items-center gap-2 border-b pb-2 mb-3">
                 <Calendar className="w-4 h-4 text-primary" /> Últimas Consultas
               </h3>
               <div className="flex-1 overflow-y-auto pr-2 space-y-3">
                 {atendimentos.length === 0 && <div className="text-center text-sm text-muted-foreground mt-10">Nenhum agendamento encontrado.</div>}
-                {atendimentos.map(a => (
-                  <div key={a.id} className="flex items-start gap-3 border-l-2 border-slate-100 pl-3 py-1">
-                    <div className="w-2 h-2 rounded-full mt-1.5 -ml-[17px] border-2 border-white ring-2 ring-slate-100" 
-                         style={{ backgroundColor: a.status === 'realizado' ? '#10b981' : a.status === 'falta' ? '#f59e0b' : '#94a3b8' }} />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium flex items-center justify-between">
-                        {format(parseISO(a.data_inicio), "dd/MM/yyyy HH:mm")}
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded capitalize font-semibold
-                          ${a.status === 'realizado' ? 'bg-emerald-100 text-emerald-700' : 
-                            a.status === 'falta' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
-                          {a.status}
-                        </span>
+                {atendimentos.map(a => {
+                  const temEvolucao = a.prontuarios && a.prontuarios.length > 0;
+                  const prontuarioId = temEvolucao ? a.prontuarios[0].id : null;
+                  return (
+                    <div key={a.id} className="flex items-start gap-3 border-l-2 border-slate-100 pl-3 py-1">
+                      <div className="w-2 h-2 rounded-full mt-1.5 -ml-[17px] border-2 border-white ring-2 ring-slate-100" 
+                           style={{ backgroundColor: a.status === 'realizado' ? '#10b981' : a.status === 'falta' ? '#f59e0b' : '#94a3b8' }} />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium flex items-center justify-between">
+                          {format(parseISO(a.data_inicio), "dd/MM/yyyy HH:mm")}
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded capitalize font-semibold
+                            ${a.status === 'realizado' ? 'bg-emerald-100 text-emerald-700' : 
+                              a.status === 'falta' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
+                            {a.status}
+                          </span>
+                        </div>
+                        <div className="text-xs text-muted-foreground truncate">{a.profissional?.nome || "Profissional não atribuído"}</div>
+                        {/* NOVO: indicador de evolução e botões */}
+                        {a.status === 'realizado' && (
+                          <div className="mt-1 flex items-center gap-2">
+                            {temEvolucao ? (
+                              <>
+                                <Badge variant="outline" className="text-emerald-600 border-emerald-300 bg-emerald-50 text-[10px]">
+                                  <BadgeCheck className="w-3 h-3 mr-1" /> Evoluído
+                                </Badge>
+                                <Button 
+                                  size="sm" 
+                                  variant="ghost" 
+                                  className="h-6 px-2 text-xs"
+                                  onClick={() => navigate(`/paciente/${id}/prontuario/${prontuarioId}`)}
+                                >
+                                  <Eye className="w-3 h-3 mr-1" /> Ver
+                                </Button>
+                              </>
+                            ) : (
+                              <>
+                                <Badge variant="destructive" className="text-[10px]">
+                                  <CircleAlert className="w-3 h-3 mr-1" /> Pendente
+                                </Badge>
+                                <Button 
+                                  size="sm" 
+                                  variant="outline" 
+                                  className="h-6 px-2 text-xs bg-blue-50 hover:bg-blue-100 border-blue-300 text-blue-700"
+                                  onClick={() => navigate(`/paciente/${id}/evolucao/nova?atendimento=${a.id}`)}
+                                >
+                                  <ClipboardEdit className="w-3 h-3 mr-1" /> Evoluir
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      <div className="text-xs text-muted-foreground truncate">{a.profissional?.nome || "Profissional não atribuído"}</div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </Card>
           </div>
         </TabsContent>
 
+        {/* ============ ABA PRONTUÁRIO (MODIFICADA) ============ */}
         <TabsContent value="prontuario" className="mt-4">
           {pront.length === 0 ? (
             <Card className="p-10 flex flex-col items-center justify-center text-center space-y-4 shadow-sm border-dashed">
@@ -232,32 +302,92 @@ export default function PacienteDetalhe() {
                 <h3 className="font-semibold text-lg text-slate-800">Nenhum prontuário encontrado</h3>
                 <p className="text-sm text-muted-foreground max-w-sm mt-1">Este paciente ainda não possui evoluções registradas.</p>
               </div>
-              <Button asChild className="mt-2 bg-blue-600 hover:bg-blue-700">
-                <Link to={`/pacientes/${id}/prontuario/novo`}><Plus className="w-4 h-4 mr-2" /> Criar Primeiro Prontuário</Link>
-              </Button>
+              <div className="flex flex-wrap gap-2 justify-center">
+                <Button asChild className="bg-blue-600 hover:bg-blue-700">
+                  <Link to={`/paciente/${id}/anamnese/nova`}><Plus className="w-4 h-4 mr-2" /> Nova Anamnese</Link>
+                </Button>
+                <Button asChild variant="outline">
+                  <Link to={`/paciente/${id}/evolucao/nova`}><ClipboardEdit className="w-4 h-4 mr-2" /> Primeira Evolução</Link>
+                </Button>
+              </div>
             </Card>
           ) : (
             <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <h3 className="font-semibold text-sm text-slate-700">Evoluções Clínicas ({pront.length})</h3>
-                <Button asChild size="sm" variant="outline">
-                  <Link to={`/pacientes/${id}/prontuario/novo`}><Plus className="w-4 h-4 mr-1" /> Novo Prontuário</Link>
-                </Button>
+              <div className="flex flex-wrap justify-between items-center gap-2">
+                <h3 className="font-semibold text-sm text-slate-700">
+                  {anamnese ? 'Anamnese registrada' : 'Nenhuma anamnese'} · {evolucoes.length} evolução(ões)
+                </h3>
+                <div className="flex flex-wrap gap-2">
+                  {!anamnese && (
+                    <Button asChild size="sm" variant="outline" className="border-blue-300 text-blue-700">
+                      <Link to={`/paciente/${id}/anamnese/nova`}><Plus className="w-4 h-4 mr-1" /> Nova Anamnese</Link>
+                    </Button>
+                  )}
+                  <Button asChild size="sm" variant="outline">
+                    <Link to={`/paciente/${id}/evolucao/nova`}><Plus className="w-4 h-4 mr-1" /> Nova Evolução</Link>
+                  </Button>
+                </div>
               </div>
-              {pront.map(p => (
+
+              {/* Exibir anamnese se existir */}
+              {anamnese && (
+                <Card className="p-4 shadow-sm border-l-4 border-l-purple-500 bg-purple-50/20">
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <div className="font-semibold text-sm text-slate-800 flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-purple-600" /> Anamnese
+                        <Badge variant="outline" className="text-[10px] border-purple-300">Avaliação inicial</Badge>
+                      </div>
+                      <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                        <UserCircle className="w-3 h-3" /> Registrado em {format(parseISO(anamnese.created_at), "dd/MM/yyyy")}
+                        {anamnese.atendimento?.profissional?.nome && ` por ${anamnese.atendimento.profissional.nome}`}
+                      </div>
+                    </div>
+                    <Button 
+                      size="sm" 
+                      variant="ghost" 
+                      className="h-7 px-2 text-xs"
+                      onClick={() => navigate(`/paciente/${id}/prontuario/${anamnese.id}`)}
+                    >
+                      <Eye className="w-3 h-3 mr-1" /> Ver
+                    </Button>
+                  </div>
+                  <div className="text-sm text-slate-700 bg-white/50 p-3 rounded border whitespace-pre-wrap">
+                    <strong>Queixa:</strong> {anamnese.queixa_principal || '—'}<br />
+                    <strong>Diagnóstico:</strong> {anamnese.diagnostico || '—'}<br />
+                    <strong>Dor:</strong> {anamnese.escala_dor ?? '—'} / 10<br />
+                    {anamnese.avaliacao_funcional && <><strong>Observações:</strong> {anamnese.avaliacao_funcional}</>}
+                  </div>
+                </Card>
+              )}
+
+              {/* Lista de evoluções */}
+              {evolucoes.length === 0 && !anamnese && (
+                <p className="text-sm text-muted-foreground text-center py-4">Nenhuma evolução registrada.</p>
+              )}
+              {evolucoes.length > 0 && evolucoes.map(p => (
                 <Card key={p.id} className="p-4 shadow-sm border-l-4 border-l-blue-500">
                   <div className="flex justify-between items-start mb-2">
                     <div>
-                      <div className="font-semibold text-sm text-slate-800">
+                      <div className="font-semibold text-sm text-slate-800 flex items-center gap-2">
                         Evolução · {format(parseISO(p.created_at), "dd/MM/yyyy")}
+                        {p.alta_medica && <Badge variant="destructive" className="text-[10px]">🏁 Alta</Badge>}
                       </div>
                       <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
                         <UserCircle className="w-3 h-3" /> Registrado por {p.atendimento?.profissional?.nome || "Profissional"}
                       </div>
                     </div>
+                    <Button 
+                      size="sm" 
+                      variant="ghost" 
+                      className="h-7 px-2 text-xs"
+                      onClick={() => navigate(`/paciente/${id}/prontuario/${p.id}`)}
+                    >
+                      <Eye className="w-3 h-3 mr-1" /> Ver
+                    </Button>
                   </div>
                   <div className="text-sm text-slate-600 bg-slate-50 p-3 rounded border whitespace-pre-wrap">
-                    {p.evolucao || p.descricao || p.observacoes || "Nenhum detalhe escrito nesta evolução."}
+                    {p.conduta || p.evolucao_livre || p.descricao || p.observacoes || "Nenhum detalhe escrito."}
                   </div>
                 </Card>
               ))}
@@ -265,8 +395,9 @@ export default function PacienteDetalhe() {
           )}
         </TabsContent>
 
+        {/* Abas existentes (Serviços, Financeiro, Guias) - mantidas intactas */}
         <TabsContent value="servicos" className="mt-4">
-           <Card className="p-4 space-y-4 shadow-sm">
+          <Card className="p-4 space-y-4 shadow-sm">
             <h3 className="font-semibold flex items-center gap-2"><ShoppingBag className="w-4 h-4 text-primary" /> Lançar Novo Item (Venda)</h3>
             <form onSubmit={lancar} className="space-y-3">
               <Select onValueChange={(v) => setItemTipo(v as any)}>
