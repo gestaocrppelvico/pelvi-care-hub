@@ -1,27 +1,19 @@
 import { useEffect, useState, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
-import { 
-  Calendar, Users, AlertTriangle, CheckCircle, XCircle, 
-  TrendingUp, Activity, DollarSign, Clock, Stethoscope, Briefcase
-} from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { Calendar, Users, Clock, AlertTriangle, MessageCircle, Cake, ArrowRight, Link2, FileText, CheckCircle, XCircle } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { format, startOfMonth, endOfMonth, startOfDay } from "date-fns";
+import { abrirWhatsapp } from "@/lib/crm";
+import { format, addDays, startOfDay, endOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { 
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, ResponsiveContainer, 
-  PieChart, Pie, Cell, BarChart, Bar, Legend
-} from 'recharts';
 
-// Painéis Secundários
+// Importação dos painéis secundários
 import DashboardFisio from "./DashboardFisio";
 import DashboardSecretaria from "./DashboardSecretaria";
-
-const CORES_PIZZA = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899'];
 
 export default function Dashboard() {
   const { user, isFisio, isSecretaria, isAdmin } = useAuth();
@@ -29,86 +21,111 @@ export default function Dashboard() {
   const [nome, setNome] = useState("");
   const [loading, setLoading] = useState(true);
 
-  // Estados de Auditoria (Ações)
-  const [faltasPendentes, setFaltasPendentes] = useState<any[]>([]);
-  const [evolucoesAtrasadas, setEvolucoesAtrasadas] = useState<any[]>([]);
-  const [guiasRenovar, setGuiasRenovar] = useState<any[]>([]);
+  // Estados dos blocos de dados (Painel de Gestão)
+  const [atendimentosHoje, setAtendimentosHoje] = useState<any[]>([]);
+  const [atendimentosAmanha, setAtendimentosAmanha] = useState<any[]>([]);
+  const [aniversariantesHoje, setAniversariantesHoje] = useState<any[]>([]);
+  const [dataCrmAlvo, setDataCrmAlvo] = useState<Date>(new Date());
 
-  // Estados de BI (Gráficos)
-  const [atendimentosMes, setAtendimentosMes] = useState<any[]>([]);
-  const [distribuicaoConvenios, setDistribuicaoConvenios] = useState<any[]>([]);
+  // Estados dos Gatilhos Inteligentes (Smart Tasks)
+  const [faltasPendentes, setFaltasPendentes] = useState<any[]>([]);
+  const [guiasExpirando, setGuiasExpirando] = useState<any[]>([]);
+  const [totalOrfaos, setTotalOrfaos] = useState(0);
+  const [fichasIncompletas, setFichasIncompletas] = useState<any[]>([]);
 
   useEffect(() => {
-    async function carregarDashboardAdmin() {
+    async function carregarDashboard() {
       if (!user) return;
       setLoading(true);
       try {
         const { data: prof } = await supabase.from("profiles").select("nome_completo").eq("id", user.id).maybeSingle();
         setNome(prof?.nome_completo?.split(" ")[0] ?? "");
 
-        // Otimização: bloqueia o carregamento de dados pesados se não for admin
         if ((isSecretaria && !isAdmin) || (isFisio && !isAdmin && !isSecretaria)) {
           setLoading(false);
           return; 
         }
 
         const hoje = new Date();
-        const inicioMes = startOfMonth(hoje).toISOString();
-        const fimMes = endOfMonth(hoje).toISOString();
-        const inicioDia = startOfDay(hoje).toISOString();
+        const startHoje = startOfDay(hoje).toISOString();
+        const endHoje = endOfDay(hoje).toISOString();
 
-        // 1. Buscas de Auditoria Operacional
-        const [resFaltas, resEvolucoes, resGuias] = await Promise.all([
-          supabase.from("atendimentos").select("id, data_inicio, paciente:pacientes(nome), profissional:profissionais(nome)").eq("status", "faltou"),
-          supabase.from("atendimentos").select("id, data_inicio, paciente:pacientes(nome), profissional:profissionais(nome)").eq("status", "agendado").lt("data_inicio", inicioDia),
-          supabase.from("paciente_pacotes").select("id, paciente_id, sessoes_restantes, autorizacao:autorizacoes(plano), paciente:pacientes(nome)").not("autorizacao_id", "is", null).eq("status_renovacao", "vai_renovar")
+        const diaSemana = hoje.getDay();
+        let dataProxima = addDays(hoje, 1);
+        if (diaSemana === 5) dataProxima = addDays(hoje, 3);
+        if (diaSemana === 6) dataProxima = addDays(hoje, 2);
+        if (diaSemana === 0) dataProxima = addDays(hoje, 1);
+        setDataCrmAlvo(dataProxima);
+
+        const startProximo = startOfDay(dataProxima).toISOString();
+        const endProximo = endOfDay(dataProxima).toISOString();
+
+        const [
+          resHoje,
+          resProximo,
+          resPacientes,
+          resGuias,
+          resOrfaos,
+          resFaltas
+        ] = await Promise.all([
+          supabase.from("atendimentos").select("id, data_inicio, status, nome_paciente_livre, paciente:pacientes(nome), profissional:profissionais(nome)").gte("data_inicio", startHoje).lte("data_inicio", endHoje).not("status", "eq", "cancelado"),
+          supabase.from("atendimentos").select("id, data_inicio, nome_paciente_livre, paciente:pacientes(nome), profissional:profissionais(nome)").gte("data_inicio", startProximo).lte("data_inicio", endProximo).eq("status", "agendado"),
+          supabase.from("pacientes").select("id, nome, telefone, data_nascimento").eq("ativo", true),
+          supabase.from("paciente_pacotes").select("id, sessoes_restantes, sessoes_totais, paciente_id, paciente:pacientes(nome), pacote:pacotes(nome), servico:servicos(nome), autorizacao:autorizacoes(plano)").gt("sessoes_restantes", 0).lte("sessoes_restantes", 2),
+          supabase.from("atendimentos").select("id", { count: "exact", head: true }).is("paciente_id", null),
+          supabase.from("atendimentos").select("id, data_inicio, paciente:pacientes(nome), profissional:profissionais(nome)").eq("status", "faltou")
         ]);
 
-        // 2. Buscas para BI e Gráficos
-        const resAtendimentosMes = await supabase.from("atendimentos").select("id, data_inicio, status, profissional:profissionais(nome)").gte("data_inicio", inicioMes).lte("data_inicio", fimMes).not("status", "eq", "cancelado");
-        const resPacotesPlano = await supabase.from("paciente_pacotes").select("id, autorizacao:autorizacoes(plano)");
-
+        setAtendimentosHoje(resHoje.data || []);
+        setAtendimentosAmanha(resProximo.data || []);
+        setTotalOrfaos(resOrfaos.count || 0);
+        setGuiasExpirando(resGuias.data || []);
         setFaltasPendentes(resFaltas.data || []);
-        setEvolucoesAtrasadas((resEvolucoes.data || []).slice(0, 10));
-        setGuiasRenovar(resGuias.data || []);
-        setAtendimentosMes(resAtendimentosMes.data || []);
 
-        const contagemPlanos: Record<string, number> = { "Particular": 0 };
-        (resPacotesPlano.data || []).forEach(p => {
-          if (p.autorizacao?.plano) {
-            contagemPlanos[p.autorizacao.plano] = (contagemPlanos[p.autorizacao.plano] || 0) + 1;
-          } else {
-            contagemPlanos["Particular"] += 1;
+        const mmDdHoje = format(hoje, "MM-dd");
+        const nivers: any[] = [];
+        const incompletas: any[] = [];
+
+        (resPacientes.data || []).forEach((p) => {
+          if (p.data_nascimento && p.data_nascimento.slice(5) === mmDdHoje) {
+            nivers.push(p);
+          }
+          if (!p.telefone || !p.data_nascimento) {
+            incompletas.push({
+              id: p.id,
+              nome: p.nome,
+              motivo: !p.telefone && !p.data_nascimento ? "Falta Telefone e Nascimento" : !p.telefone ? "Falta Telefone" : "Falta Data de Nascimento"
+            });
           }
         });
-        setDistribuicaoConvenios(Object.entries(contagemPlanos).map(([name, value]) => ({ name, value })).filter(i => i.value > 0));
+
+        setAniversariantesHoje(nivers);
+        setFichasIncompletas(incompletas.slice(0, 5));
 
       } catch (err) {
-        console.error("Erro ao carregar BI:", err);
+        console.error("Erro ao carregar os blocos do dashboard admin:", err);
       } finally {
         setLoading(false);
       }
-    }
-    carregarDashboardAdmin();
+    };
+
+    carregarDashboard();
   }, [user, isSecretaria, isAdmin, isFisio]);
 
-  const dadosGraficoLinha = useMemo(() => {
-    const dias: Record<string, number> = {};
-    atendimentosMes.forEach(at => {
-      const dia = format(new Date(at.data_inicio), "dd/MM", { locale: ptBR });
-      dias[dia] = (dias[dia] || 0) + 1;
+  const atendimentosAgrupadosPorProf = useMemo(() => {
+    const grupos: Record<string, any[]> = {};
+    atendimentosHoje.forEach((at) => {
+      const profNome = at.profissional?.nome || "Profissional Não Definido";
+      if (!grupos[profNome]) grupos[profNome] = [];
+      grupos[profNome].push(at);
     });
-    return Object.entries(dias).map(([dia, total]) => ({ dia, Atendimentos: total }));
-  }, [atendimentosMes]);
+    return grupos;
+  }, [atendimentosHoje]);
 
-  const dadosOcupacao = useMemo(() => {
-    const profs: Record<string, number> = {};
-    atendimentosMes.forEach(at => {
-      const nome = at.profissional?.nome?.split(" ")[0] || "Sem Profissional";
-      profs[nome] = (profs[nome] || 0) + 1;
-    });
-    return Object.entries(profs).map(([name, Atendimentos]) => ({ name, Atendimentos }));
-  }, [atendimentosMes]);
+  const parabenizar = (p: any) => {
+    const msg = `Olá ${p.nome.split(" ")[0]}! 🎉 Nós da clínica CRPPélvico passamos para lhe desejar um feliz aniversário! Que o seu novo ciclo seja repleto de saúde, paz e conquistas. Parabéns! 🎂`;
+    abrirWhatsapp(p.telefone, msg, isSecretaria);
+  };
 
   const processarFalta = async (id: string, decisao: "cobrada" | "abonada") => {
     try {
@@ -121,166 +138,184 @@ export default function Dashboard() {
     }
   };
 
-  // ROTEAMENTO INTELIGENTE
+  // DESVIOS DE ROTA
   if (isSecretaria && !isAdmin) return <DashboardSecretaria nomeUsuario={nome} />;
   if (isFisio && !isAdmin && !isSecretaria) return <DashboardFisio />;
 
-  // SE CHEGOU AQUI, É ADMIN (FELIPE/JULIANA)
-  if (loading) return <div className="p-10 text-center text-muted-foreground animate-pulse">A carregar o Cockpit de Gestão...</div>;
+  // PAINEL GERENCIAL (FELIPE / JULIANA)
+  if (loading) return <div className="p-8 text-center text-muted-foreground animate-pulse">A carregar o Centro de Comando...</div>;
 
   return (
-    <div className="min-h-screen bg-slate-50/50 p-4 md:p-8">
-      {/* Container principal otimizado para monitores largos */}
-      <div className="max-w-[1600px] mx-auto space-y-8">
+    <div className="space-y-5 p-2">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-800">Olá, {nome || "Administrador"} 👋</h1>
+        <p className="text-xs text-muted-foreground">Bem-vindo ao seu painel de monitorização diária e auditoria.</p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <Link to="/agenda">
+          <Card className="p-4 flex items-center gap-3 hover:bg-blue-50/50 hover:border-blue-300 transition-all cursor-pointer border shadow-sm">
+            <div className="p-2.5 bg-blue-100 text-blue-600 rounded-xl shrink-0"><Calendar className="w-5 h-5" /></div>
+            <div className="min-w-0">
+              <div className="font-bold text-sm text-slate-800">Ver Agenda</div>
+              <div className="text-xs text-muted-foreground truncate">Horários do dia</div>
+            </div>
+          </Card>
+        </Link>
+        <Link to="/pacientes">
+          <Card className="p-4 flex items-center gap-3 hover:bg-emerald-50/50 hover:border-emerald-300 transition-all cursor-pointer border shadow-sm">
+            <div className="p-2.5 bg-emerald-100 text-emerald-600 rounded-xl shrink-0"><Users className="w-5 h-5" /></div>
+            <div className="min-w-0">
+              <div className="font-bold text-sm text-slate-800">Pacientes</div>
+              <div className="text-xs text-muted-foreground truncate">Consultar fichas</div>
+            </div>
+          </Card>
+        </Link>
+      </div>
+
+      <Card className="p-4 shadow-sm border-t-4 border-t-blue-600">
+        <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-2">
+          <Clock className="w-4 h-4 text-blue-600" /> Atendimentos Programados para Hoje
+        </h2>
+        {atendimentosHoje.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-6 border border-dashed rounded-lg bg-slate-50/50">Nenhum atendimento registado para o dia de hoje.</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {Object.entries(atendimentosAgrupadosPorProf).map(([profNome, lista]) => (
+              <Card key={profNome} className="p-3 bg-slate-50/60 border shadow-sm">
+                <div className="font-bold text-xs text-blue-900 border-b pb-2 mb-2 uppercase flex justify-between items-center">
+                  <span className="truncate pr-2">{profNome}</span>
+                  <Badge variant="secondary" className="bg-blue-100 text-blue-800 text-[10px] px-1.5 h-5 shrink-0 font-bold">{lista.length}</Badge>
+                </div>
+                <div className="space-y-1.5 max-h-[200px] overflow-y-auto pr-1">
+                  {lista.map((at) => (
+                    <div key={at.id} className="flex items-center justify-between text-xs p-2 bg-white rounded border shadow-sm">
+                      <div className="truncate font-semibold text-slate-700 max-w-[70%]">{at.paciente?.nome || at.nome_paciente_livre || "Sem nome"}</div>
+                      <div className="flex items-center gap-1 font-bold shrink-0 text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">
+                        {format(new Date(at.data_inicio), "HH:mm")}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         
-        {/* HEADER RESPONSIVO */}
-        <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 border-b border-slate-200 pb-6">
-          <div>
-            <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900 tracking-tight">Cockpit de Gestão</h1>
-            <p className="text-sm md:text-base text-slate-500 font-medium mt-1">Olá, {nome}. Este é o panorama gerencial da clínica.</p>
-          </div>
-          <div className="flex gap-3 w-full md:w-auto">
-            <Button variant="outline" size="lg" onClick={() => navigate("/agenda")} className="flex-1 md:flex-none border-slate-300 shadow-sm"><Calendar className="w-4 h-4 mr-2"/> Agenda</Button>
-            <Button size="lg" onClick={() => navigate("/pacientes")} className="flex-1 md:flex-none bg-slate-900 hover:bg-slate-800 shadow-sm"><Users className="w-4 h-4 mr-2"/> Pacientes</Button>
-          </div>
-        </header>
-
-        {/* ESTRUTURA EM GRID: 12 COLUNAS NO DESKTOP */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          
-          {/* COLUNA ESQUERDA (3/12 no Desktop): AUDITORIA (Sticky) */}
-          <aside className="lg:col-span-4 xl:col-span-3 space-y-6">
-            <div className="lg:sticky lg:top-8 space-y-6">
-              
-              {/* Card de Faltas */}
-              <Card className="p-0 overflow-hidden shadow-sm border-t-4 border-t-rose-500 flex flex-col max-h-[400px]">
-                <div className="bg-rose-50/50 p-4 border-b border-rose-100 flex items-center justify-between">
-                  <h3 className="font-bold text-xs uppercase tracking-wider text-rose-700 flex items-center gap-2"><AlertTriangle className="w-4 h-4"/> Faltas Pendentes</h3>
-                  <Badge className="bg-rose-100 text-rose-700">{faltasPendentes.length}</Badge>
-                </div>
-                <div className="p-3 overflow-y-auto flex-1 space-y-2">
-                  {faltasPendentes.length === 0 ? (
-                    <p className="text-xs text-center text-muted-foreground py-6">Nenhuma falta para auditar.</p>
-                  ) : (
-                    faltasPendentes.map(f => (
-                      <div key={f.id} className="text-sm border border-slate-100 rounded-xl p-3 bg-white shadow-sm hover:border-rose-200 transition-all">
-                        <div className="font-bold text-slate-800 truncate">{f.paciente?.nome}</div>
-                        <div className="text-xs text-muted-foreground mt-1 mb-3 flex justify-between">
-                          <span>{format(new Date(f.data_inicio), "dd/MM 'às' HH:mm")}</span>
-                          <span className="uppercase text-slate-400 font-semibold">{f.profissional?.nome?.split(" ")[0]}</span>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="outline" className="h-8 text-xs flex-1 border-emerald-200 text-emerald-700 hover:bg-emerald-50" onClick={() => processarFalta(f.id, "abonada")}><CheckCircle className="w-3 h-3 mr-1"/> Abonar</Button>
-                          <Button size="sm" variant="outline" className="h-8 text-xs flex-1 border-rose-200 text-rose-700 hover:bg-rose-50" onClick={() => processarFalta(f.id, "cobrada")}><XCircle className="w-3 h-3 mr-1"/> Cobrar</Button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </Card>
-
-              {/* Card de Guias */}
-              <Card className="p-0 overflow-hidden shadow-sm border-t-4 border-t-blue-500 flex flex-col max-h-[300px]">
-                <div className="bg-blue-50/50 p-4 border-b border-blue-100 flex items-center justify-between">
-                  <h3 className="font-bold text-xs uppercase tracking-wider text-blue-700 flex items-center gap-2"><Stethoscope className="w-4 h-4"/> Renovar Guias</h3>
-                  <Badge className="bg-blue-100 text-blue-700">{guiasRenovar.length}</Badge>
-                </div>
-                <div className="p-3 overflow-y-auto flex-1 space-y-2">
-                  {guiasRenovar.length === 0 ? (
-                    <p className="text-xs text-center text-muted-foreground py-6">Nenhum convênio expirando.</p>
-                  ) : (
-                    guiasRenovar.map(g => (
-                      <div key={g.id} className="text-sm border border-slate-100 rounded-xl p-3 bg-white shadow-sm flex flex-col gap-2 hover:border-blue-200 cursor-pointer transition-all" onClick={() => navigate(`/pacientes/${g.paciente_id}`)}>
-                        <div className="font-bold text-slate-800 truncate">{g.paciente?.nome}</div>
-                        <div className="flex justify-between items-center">
-                          <div className="text-xs text-blue-600 font-bold bg-blue-50 px-2 py-1 rounded">{g.autorizacao?.plano}</div>
-                          <span className="text-[10px] font-semibold text-slate-400">Restam {g.sessoes_restantes}</span>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </Card>
-
-            </div>
-          </aside>
-
-          {/* COLUNA DIREITA (9/12 no Desktop): DASHBOARD BI */}
-          <main className="lg:col-span-8 xl:col-span-9 space-y-8">
+        {/* BLOCO: AÇÕES E AUDITORIAS */}
+        <Card className="p-4 shadow-sm lg:col-span-7 space-y-3">
+          <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500 border-b pb-2 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-500" /> Ações e Auditorias (Admin)
+          </h2>
+          <div className="space-y-2 max-h-[450px] overflow-y-auto pr-1">
             
-            {/* Linha de KPIs (4 colunas no Desktop grande, 2 no Tablet) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-              {[
-                { label: "Atendimentos / Mês", val: atendimentosMes.length, icon: Calendar, color: "text-indigo-600", bg: "bg-indigo-50" },
-                { label: "Faturamento Previsto", val: "R$ ---", icon: DollarSign, color: "text-amber-600", bg: "bg-amber-50" },
-                { label: "Ocupação Estimada", val: "---", icon: Activity, color: "text-emerald-600", bg: "bg-emerald-50" },
-                { label: "Evoluções Atrasadas", val: evolucoesAtrasadas.length, icon: Clock, color: "text-rose-600", bg: "bg-rose-50" },
-              ].map((stat, i) => (
-                <Card key={i} className="p-5 flex items-center gap-4 shadow-sm border-slate-200/60 hover:shadow-md transition-shadow">
-                  <div className={`p-3 rounded-xl ${stat.bg} ${stat.color}`}><stat.icon className="w-6 h-6"/></div>
-                  <div>
-                    <p className="text-[10px] md:text-xs uppercase font-bold text-slate-400 tracking-wider mb-0.5">{stat.label}</p>
-                    <p className="text-xl md:text-2xl font-black text-slate-800">{stat.val}</p>
+            {/* AUDITORIA DE FALTAS */}
+            {faltasPendentes.map((f) => (
+              <div key={f.id} className="p-3 border border-rose-200 bg-rose-50/50 rounded-xl flex items-center justify-between gap-3 text-xs hover:bg-rose-100/50 transition-colors">
+                <div className="flex-1 min-w-0">
+                  <span className="font-bold text-rose-700 uppercase block text-[9px] tracking-wide mb-0.5">Auditoria de Falta</span>
+                  <p className="font-bold text-slate-800 truncate text-sm">{f.paciente?.nome}</p>
+                  <p className="text-muted-foreground truncate">{format(new Date(f.data_inicio), "dd/MM 'às' HH:mm")} · Prof: {f.profissional?.nome?.split(" ")[0]}</p>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <Button size="sm" variant="outline" className="h-8 text-[11px] border-emerald-200 text-emerald-700 hover:bg-emerald-50" onClick={() => processarFalta(f.id, "abonada")}><CheckCircle className="w-3 h-3 mr-1"/> Abonar</Button>
+                  <Button size="sm" variant="outline" className="h-8 text-[11px] border-rose-200 text-rose-700 hover:bg-rose-50" onClick={() => processarFalta(f.id, "cobrada")}><XCircle className="w-3 h-3 mr-1"/> Cobrar</Button>
+                </div>
+              </div>
+            ))}
+
+            {/* GUIAS EXPIRANDO */}
+            {guiasExpirando.map((g) => (
+              <div key={g.id} className="p-3 border border-amber-200 bg-amber-50/30 rounded-xl flex items-center justify-between gap-3 text-xs hover:bg-amber-50/50 transition-colors">
+                <div className="flex-1 min-w-0">
+                  <span className="font-bold text-amber-700 uppercase block text-[9px] tracking-wide mb-0.5">Cobrar novo pacote / Renovação</span>
+                  <p className="font-bold text-slate-800 truncate text-sm">{g.paciente?.nome}</p>
+                  <p className="text-muted-foreground truncate">{g.autorizacao ? `Guia do Plano: ${g.autorizacao.plano}` : `Contrato: ${g.pacote?.nome || g.servico?.nome || "Particular"}`}</p>
+                </div>
+                <div className="text-right shrink-0 flex flex-col items-end gap-1">
+                  <Badge className="bg-amber-600 text-white font-bold text-[10px] px-2 h-5">{g.sessoes_restantes} {g.sessoes_restantes === 1 ? "restante" : "restantes"}</Badge>
+                  <Button size="icon" variant="ghost" className="h-7 w-7 text-amber-700 hover:bg-amber-100" onClick={() => navigate(`/pacientes/${g.paciente_id}`)}><ArrowRight className="w-4 h-4" /></Button>
+                </div>
+              </div>
+            ))}
+
+            {/* VÍNCULOS ÓRFÃOS */}
+            {totalOrfaos > 0 && (
+              <div className="p-3 border border-blue-200 bg-blue-50/20 rounded-xl flex items-center justify-between gap-3 text-xs hover:bg-blue-50/40 transition-colors">
+                <div className="flex-1">
+                  <span className="font-bold text-blue-700 uppercase block text-[9px] tracking-wide mb-0.5">Auditoria de Vínculo</span>
+                  <p className="font-bold text-slate-800 text-sm">Existem {totalOrfaos} agendamentos "órfãos"</p>
+                </div>
+                <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white font-semibold shrink-0" onClick={() => navigate("/crm/vinculos")}><Link2 className="w-3.5 h-3.5 mr-1" /> Resolver</Button>
+              </div>
+            )}
+
+            {/* FICHAS INCOMPLETAS */}
+            {fichasIncompletas.map((f) => (
+              <div key={f.id} className="p-3 border border-slate-200 bg-slate-50/50 rounded-xl flex items-center justify-between gap-3 text-xs hover:bg-slate-100/50 transition-colors">
+                <div className="flex-1 min-w-0">
+                  <span className="font-bold text-slate-500 uppercase block text-[9px] tracking-wide mb-0.5">Dados em Falta</span>
+                  <p className="font-bold text-slate-800 truncate text-sm">{f.nome}</p>
+                  <p className="text-red-500 font-semibold text-[11px] mt-0.5">{f.motivo}</p>
+                </div>
+                <Button size="icon" variant="outline" className="h-8 w-8 shrink-0 text-slate-600" onClick={() => navigate(`/pacientes/${f.id}/editar`)}><FileText className="w-4 h-4" /></Button>
+              </div>
+            ))}
+
+            {faltasPendentes.length === 0 && guiasExpirando.length === 0 && totalOrfaos === 0 && fichasIncompletas.length === 0 && (
+              <div className="text-center py-12 text-sm text-muted-foreground border-2 border-dashed rounded-xl bg-slate-50/30">🎉 Tudo em dia! Nenhuma pendência no radar.</div>
+            )}
+          </div>
+        </Card>
+
+        {/* BLOCO: CRM E ANIVERSÁRIOS */}
+        <div className="lg:col-span-5 space-y-4">
+          {aniversariantesHoje.length > 0 && (
+            <Card className="p-3.5 bg-gradient-to-br from-pink-50 to-rose-50 border-rose-200 border text-xs space-y-2.5 shadow-sm">
+              <div className="flex items-center gap-1.5 font-bold text-rose-700 uppercase tracking-wider text-[10px]">
+                <Cake className="w-4 h-4 text-rose-500 animate-bounce" />
+                <span>Aniversariantes de Hoje! 🎂</span>
+              </div>
+              <div className="space-y-1.5">
+                {aniversariantesHoje.map(p => (
+                  <div key={p.id} className="flex items-center justify-between p-2 bg-white rounded-lg border border-rose-100 shadow-sm text-xs">
+                    <span className="font-bold text-slate-700 truncate max-w-[60%]">{p.nome}</span>
+                    <Button size="sm" variant="outline" className="h-7 text-[11px] text-rose-700 border-rose-200 hover:bg-rose-100/50 font-semibold" onClick={() => parabenizar(p)}>
+                      <MessageCircle className="w-3 h-3 mr-1 text-rose-500" /> Mensagem
+                    </Button>
                   </div>
-                </Card>
-              ))}
+                ))}
+              </div>
+            </Card>
+          )}
+
+          <Card className="p-4 shadow-sm border-l-4 border-l-indigo-500 bg-white hover:shadow-md transition-all cursor-pointer group" onClick={() => navigate("/crm")}>
+            <div className="flex justify-between items-center border-b pb-2 mb-3">
+              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                <Users className="w-4 h-4 text-indigo-500" /> CRM: Lembretes de Amanhã
+              </h2>
+              <Badge className="bg-indigo-50 text-indigo-700 border-indigo-200 font-bold px-2 h-5 text-[10px]">{format(dataCrmAlvo, "dd/MM", { locale: ptBR })}</Badge>
             </div>
-
-            {/* Linha de Gráficos */}
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-              
-              {/* Gráfico Ocupação Total */}
-              <Card className="p-6 shadow-sm border-slate-200/60 xl:col-span-2">
-                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-6 flex items-center gap-2"><TrendingUp className="w-4 h-4"/> Ritmo de Atendimentos Mensal</h3>
-                <div className="h-[300px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={dadosGraficoLinha} margin={{ top: 5, right: 20, bottom: 5, left: -20 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                      <XAxis dataKey="dia" tick={{fontSize: 12, fill: '#64748b'}} tickLine={false} axisLine={false} />
-                      <YAxis tick={{fontSize: 12, fill: '#64748b'}} tickLine={false} axisLine={false} />
-                      <ChartTooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                      <Line type="monotone" dataKey="Atendimentos" stroke="#4f46e5" strokeWidth={3} dot={{r: 4, strokeWidth: 2}} activeDot={{r: 6}} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </Card>
-
-              {/* Gráfico Pizza */}
-              <Card className="p-6 shadow-sm border-slate-200/60 flex flex-col">
-                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-2">Receita: Particular vs Planos</h3>
-                <div className="flex-1 min-h-[250px] w-full mt-4">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={distribuicaoConvenios} innerRadius={60} outerRadius={85} paddingAngle={2} dataKey="value">
-                        {distribuicaoConvenios.map((entry, index) => <Cell key={`cell-${index}`} fill={CORES_PIZZA[index % CORES_PIZZA.length]} />)}
-                      </Pie>
-                      <ChartTooltip contentStyle={{ borderRadius: '8px' }} />
-                      <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{ fontSize: '12px' }} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-              </Card>
-
-              {/* Gráfico Barras */}
-              <Card className="p-6 shadow-sm border-slate-200/60 flex flex-col">
-                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-2">Ocupação / Repasses Estimados</h3>
-                <div className="flex-1 min-h-[250px] w-full mt-4">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={dadosOcupacao} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                      <XAxis dataKey="name" tick={{fontSize: 12, fill: '#64748b'}} tickLine={false} axisLine={false} />
-                      <YAxis tick={{fontSize: 12, fill: '#64748b'}} tickLine={false} axisLine={false} />
-                      <ChartTooltip cursor={{fill: '#f8fafc'}} contentStyle={{ borderRadius: '8px' }} />
-                      <Bar dataKey="Atendimentos" fill="#0ea5e9" radius={[6, 6, 0, 0]} maxBarSize={60} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </Card>
-
+            <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
+              {atendimentosAmanha.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-4">Nenhum atendimento agendado para o próximo dia útil.</p>
+              ) : (
+                atendimentosAmanha.map((at) => (
+                  <div key={at.id} className="p-2 border rounded-lg bg-slate-50/50 flex justify-between items-center text-xs">
+                    <div className="truncate font-bold text-slate-700 max-w-[60%]">{at.paciente?.nome || at.nome_paciente_livre || "Particular"}</div>
+                    <div className="text-[11px] text-muted-foreground shrink-0 text-right font-medium">
+                      {at.profissional?.nome?.split(" ")[0]} · <span className="font-bold text-slate-600">{format(new Date(at.data_inicio), "HH:mm")}</span>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
-          </main>
-
+          </Card>
         </div>
+
       </div>
     </div>
   );
