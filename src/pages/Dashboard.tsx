@@ -1,8 +1,8 @@
 import { useEffect, useState, useMemo } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { 
   Calendar, Users, AlertTriangle, CheckCircle, XCircle, 
-  TrendingUp, Activity, DollarSign, Stethoscope, Clock
+  TrendingUp, Activity, DollarSign, Clock, Stethoscope, Briefcase
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -10,7 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { format, startOfMonth, endOfMonth, startOfDay, isBefore } from "date-fns";
+import { format, startOfMonth, endOfMonth, startOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, ResponsiveContainer, 
@@ -46,7 +46,7 @@ export default function Dashboard() {
         const { data: prof } = await supabase.from("profiles").select("nome_completo").eq("id", user.id).maybeSingle();
         setNome(prof?.nome_completo?.split(" ")[0] ?? "");
 
-        // Se não for Admin, não carrega os dados pesados
+        // Otimização: bloqueia o carregamento de dados pesados se não for admin
         if ((isSecretaria && !isAdmin) || (isFisio && !isAdmin && !isSecretaria)) {
           setLoading(false);
           return; 
@@ -59,11 +59,8 @@ export default function Dashboard() {
 
         // 1. Buscas de Auditoria Operacional
         const [resFaltas, resEvolucoes, resGuias] = await Promise.all([
-          // Faltas marcadas pela recepção/fisio
           supabase.from("atendimentos").select("id, data_inicio, paciente:pacientes(nome), profissional:profissionais(nome)").eq("status", "faltou"),
-          // Agendamentos antigos que não foram marcados como "realizado" ou "cancelado" (Esqueceram de evoluir)
           supabase.from("atendimentos").select("id, data_inicio, paciente:pacientes(nome), profissional:profissionais(nome)").eq("status", "agendado").lt("data_inicio", inicioDia),
-          // Pacotes de plano de saúde a acabar com intenção de renovar
           supabase.from("paciente_pacotes").select("id, paciente_id, sessoes_restantes, autorizacao:autorizacoes(plano), paciente:pacientes(nome)").not("autorizacao_id", "is", null).eq("status_renovacao", "vai_renovar")
         ]);
 
@@ -72,11 +69,10 @@ export default function Dashboard() {
         const resPacotesPlano = await supabase.from("paciente_pacotes").select("id, autorizacao:autorizacoes(plano)");
 
         setFaltasPendentes(resFaltas.data || []);
-        setEvolucoesAtrasadas((resEvolucoes.data || []).slice(0, 10)); // Top 10 mais urgentes
+        setEvolucoesAtrasadas((resEvolucoes.data || []).slice(0, 10));
         setGuiasRenovar(resGuias.data || []);
         setAtendimentosMes(resAtendimentosMes.data || []);
 
-        // Processar Dados para o Gráfico de Rosca (Particular vs Planos)
         const contagemPlanos: Record<string, number> = { "Particular": 0 };
         (resPacotesPlano.data || []).forEach(p => {
           if (p.autorizacao?.plano) {
@@ -96,11 +92,10 @@ export default function Dashboard() {
     carregarDashboardAdmin();
   }, [user, isSecretaria, isAdmin, isFisio]);
 
-  // Processamento de Dados dos Gráficos
   const dadosGraficoLinha = useMemo(() => {
     const dias: Record<string, number> = {};
     atendimentosMes.forEach(at => {
-      const dia = format(new Date(at.data_inicio), "dd/MMM", { locale: ptBR });
+      const dia = format(new Date(at.data_inicio), "dd/MM", { locale: ptBR });
       dias[dia] = (dias[dia] || 0) + 1;
     });
     return Object.entries(dias).map(([dia, total]) => ({ dia, Atendimentos: total }));
@@ -115,180 +110,177 @@ export default function Dashboard() {
     return Object.entries(profs).map(([name, Atendimentos]) => ({ name, Atendimentos }));
   }, [atendimentosMes]);
 
-  // Funções de Ação (Gestor)
   const processarFalta = async (id: string, decisao: "cobrada" | "abonada") => {
     try {
       const { error } = await supabase.from("atendimentos").update({ status: `falta_${decisao}` }).eq("id", id);
       if (error) throw error;
-      toast.success(`Falta ${decisao} registada com sucesso!`);
+      toast.success(`Falta ${decisao} registada!`);
       setFaltasPendentes(prev => prev.filter(f => f.id !== id));
-      // Nota: A lógica complexa de subtrair saldo deverá ser acoplada numa Cloud Function no futuro, 
-      // ou tratada aqui expandindo esta função.
     } catch (err: any) {
       toast.error("Erro ao processar falta.");
     }
   };
 
-  // ==========================================
-  // ROTEAMENTO DE UTILIZADORES
-  // ==========================================
+  // ROTEAMENTO INTELIGENTE
   if (isSecretaria && !isAdmin) return <DashboardSecretaria nomeUsuario={nome} />;
   if (isFisio && !isAdmin && !isSecretaria) return <DashboardFisio />;
 
-  // ==========================================
-  // PAINEL GERENCIAL (FELIPE / JULIANA)
-  // ==========================================
-  if (loading) return <div className="p-10 text-center text-muted-foreground animate-pulse">A carregar o Painel de Gestão (BI)...</div>;
+  // SE CHEGOU AQUI, É ADMIN (FELIPE/JULIANA)
+  if (loading) return <div className="p-10 text-center text-muted-foreground animate-pulse">A carregar o Cockpit de Gestão...</div>;
 
   return (
-    <div className="space-y-6 p-2 pb-10 max-w-7xl mx-auto">
-      {/* CABEÇALHO */}
-      <div className="flex justify-between items-end">
-        <div>
-          <h1 className="text-2xl font-black tracking-tight text-slate-800">Diretoria 👋</h1>
-          <p className="text-xs text-muted-foreground font-medium">Bem-vindo(a), {nome}. Este é o seu raio-X da clínica.</p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => navigate("/agenda")} className="shadow-sm"><Calendar className="w-4 h-4 mr-2"/> Agenda</Button>
-          <Button variant="default" size="sm" onClick={() => navigate("/pacientes")} className="shadow-sm bg-slate-800"><Users className="w-4 h-4 mr-2"/> Pacientes</Button>
-        </div>
-      </div>
-
-      {/* 1º ANDAR: AUDITORIA E AÇÕES IMEDIATAS (PRONTO-SOCORRO) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div className="min-h-screen bg-slate-50/50 p-4 md:p-8">
+      {/* Container principal otimizado para monitores largos */}
+      <div className="max-w-[1600px] mx-auto space-y-8">
         
-        {/* Faltas Pendentes */}
-        <Card className="p-0 overflow-hidden shadow-sm border-t-4 border-t-rose-500 flex flex-col h-64">
-          <div className="bg-rose-50/50 p-3 border-b border-rose-100 flex items-center justify-between">
-            <h3 className="font-bold text-xs uppercase tracking-wider text-rose-700 flex items-center gap-1.5"><AlertTriangle className="w-4 h-4"/> Auditoria de Faltas</h3>
-            <Badge className="bg-rose-100 text-rose-700">{faltasPendentes.length}</Badge>
+        {/* HEADER RESPONSIVO */}
+        <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 border-b border-slate-200 pb-6">
+          <div>
+            <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900 tracking-tight">Cockpit de Gestão</h1>
+            <p className="text-sm md:text-base text-slate-500 font-medium mt-1">Olá, {nome}. Este é o panorama gerencial da clínica.</p>
           </div>
-          <div className="p-3 overflow-y-auto flex-1 space-y-2">
-            {faltasPendentes.length === 0 ? (
-              <p className="text-xs text-center text-muted-foreground mt-10">Nenhuma falta para auditar.</p>
-            ) : (
-              faltasPendentes.map(f => (
-                <div key={f.id} className="text-xs border rounded-lg p-2.5 bg-white shadow-sm hover:border-rose-200 transition-all">
-                  <div className="font-bold text-slate-800 truncate mb-1">{f.paciente?.nome}</div>
-                  <div className="text-[10px] text-muted-foreground mb-2 flex justify-between">
-                    <span>{format(new Date(f.data_inicio), "dd/MM 'às' HH:mm")}</span>
-                    <span className="uppercase text-slate-500">{f.profissional?.nome?.split(" ")[0]}</span>
-                  </div>
-                  <div className="flex gap-1.5">
-                    <Button size="sm" variant="outline" className="h-7 text-[10px] flex-1 border-emerald-200 text-emerald-700 hover:bg-emerald-50" onClick={() => processarFalta(f.id, "abonada")}><CheckCircle className="w-3 h-3 mr-1"/> Abonar</Button>
-                    <Button size="sm" variant="outline" className="h-7 text-[10px] flex-1 border-rose-200 text-rose-700 hover:bg-rose-50" onClick={() => processarFalta(f.id, "cobrada")}><XCircle className="w-3 h-3 mr-1"/> Cobrar</Button>
-                  </div>
+          <div className="flex gap-3 w-full md:w-auto">
+            <Button variant="outline" size="lg" onClick={() => navigate("/agenda")} className="flex-1 md:flex-none border-slate-300 shadow-sm"><Calendar className="w-4 h-4 mr-2"/> Agenda</Button>
+            <Button size="lg" onClick={() => navigate("/pacientes")} className="flex-1 md:flex-none bg-slate-900 hover:bg-slate-800 shadow-sm"><Users className="w-4 h-4 mr-2"/> Pacientes</Button>
+          </div>
+        </header>
+
+        {/* ESTRUTURA EM GRID: 12 COLUNAS NO DESKTOP */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          
+          {/* COLUNA ESQUERDA (3/12 no Desktop): AUDITORIA (Sticky) */}
+          <aside className="lg:col-span-4 xl:col-span-3 space-y-6">
+            <div className="lg:sticky lg:top-8 space-y-6">
+              
+              {/* Card de Faltas */}
+              <Card className="p-0 overflow-hidden shadow-sm border-t-4 border-t-rose-500 flex flex-col max-h-[400px]">
+                <div className="bg-rose-50/50 p-4 border-b border-rose-100 flex items-center justify-between">
+                  <h3 className="font-bold text-xs uppercase tracking-wider text-rose-700 flex items-center gap-2"><AlertTriangle className="w-4 h-4"/> Faltas Pendentes</h3>
+                  <Badge className="bg-rose-100 text-rose-700">{faltasPendentes.length}</Badge>
                 </div>
-              ))
-            )}
-          </div>
-        </Card>
-
-        {/* Renovações de Convénios */}
-        <Card className="p-0 overflow-hidden shadow-sm border-t-4 border-t-blue-500 flex flex-col h-64">
-          <div className="bg-blue-50/50 p-3 border-b border-blue-100 flex items-center justify-between">
-            <h3 className="font-bold text-xs uppercase tracking-wider text-blue-700 flex items-center gap-1.5"><Stethoscope className="w-4 h-4"/> Renovar Guias</h3>
-            <Badge className="bg-blue-100 text-blue-700">{guiasRenovar.length}</Badge>
-          </div>
-          <div className="p-3 overflow-y-auto flex-1 space-y-2">
-            {guiasRenovar.length === 0 ? (
-              <p className="text-xs text-center text-muted-foreground mt-10">Nenhum convénio a expirar.</p>
-            ) : (
-              guiasRenovar.map(g => (
-                <div key={g.id} className="text-xs border rounded-lg p-2.5 bg-white shadow-sm flex items-center justify-between hover:border-blue-200 cursor-pointer" onClick={() => navigate(`/pacientes/${g.paciente_id}`)}>
-                  <div className="min-w-0">
-                    <div className="font-bold text-slate-800 truncate">{g.paciente?.nome}</div>
-                    <div className="text-[10px] text-blue-600 font-bold mt-0.5">{g.autorizacao?.plano} ({g.sessoes_restantes} restantes)</div>
-                  </div>
-                  <Button size="sm" className="h-7 text-[10px] bg-blue-600">Pedir Guia</Button>
+                <div className="p-3 overflow-y-auto flex-1 space-y-2">
+                  {faltasPendentes.length === 0 ? (
+                    <p className="text-xs text-center text-muted-foreground py-6">Nenhuma falta para auditar.</p>
+                  ) : (
+                    faltasPendentes.map(f => (
+                      <div key={f.id} className="text-sm border border-slate-100 rounded-xl p-3 bg-white shadow-sm hover:border-rose-200 transition-all">
+                        <div className="font-bold text-slate-800 truncate">{f.paciente?.nome}</div>
+                        <div className="text-xs text-muted-foreground mt-1 mb-3 flex justify-between">
+                          <span>{format(new Date(f.data_inicio), "dd/MM 'às' HH:mm")}</span>
+                          <span className="uppercase text-slate-400 font-semibold">{f.profissional?.nome?.split(" ")[0]}</span>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="outline" className="h-8 text-xs flex-1 border-emerald-200 text-emerald-700 hover:bg-emerald-50" onClick={() => processarFalta(f.id, "abonada")}><CheckCircle className="w-3 h-3 mr-1"/> Abonar</Button>
+                          <Button size="sm" variant="outline" className="h-8 text-xs flex-1 border-rose-200 text-rose-700 hover:bg-rose-50" onClick={() => processarFalta(f.id, "cobrada")}><XCircle className="w-3 h-3 mr-1"/> Cobrar</Button>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
-              ))
-            )}
-          </div>
-        </Card>
+              </Card>
 
-        {/* Evoluções Atrasadas */}
-        <Card className="p-0 overflow-hidden shadow-sm border-t-4 border-t-amber-500 flex flex-col h-64">
-          <div className="bg-amber-50/50 p-3 border-b border-amber-100 flex items-center justify-between">
-            <h3 className="font-bold text-xs uppercase tracking-wider text-amber-700 flex items-center gap-1.5"><Clock className="w-4 h-4"/> Prontuários Atrasados</h3>
-            <Badge className="bg-amber-100 text-amber-700">{evolucoesAtrasadas.length}</Badge>
-          </div>
-          <div className="p-3 overflow-y-auto flex-1 space-y-2">
-            {evolucoesAtrasadas.length === 0 ? (
-              <p className="text-xs text-center text-muted-foreground mt-10">Evoluções em dia!</p>
-            ) : (
-              evolucoesAtrasadas.map(e => (
-                <div key={e.id} className="text-xs border rounded-lg p-2 bg-amber-50/30 border-amber-100 shadow-sm">
-                  <span className="font-bold text-amber-800 block mb-0.5">{e.profissional?.nome?.split(" ")[0] || "Fisio"}</span>
-                  <div className="flex justify-between items-center text-slate-600">
-                    <span className="truncate max-w-[120px]">{e.paciente?.nome}</span>
-                    <span className="text-[10px] bg-white px-1.5 py-0.5 rounded border">{format(new Date(e.data_inicio), "dd/MM")}</span>
-                  </div>
+              {/* Card de Guias */}
+              <Card className="p-0 overflow-hidden shadow-sm border-t-4 border-t-blue-500 flex flex-col max-h-[300px]">
+                <div className="bg-blue-50/50 p-4 border-b border-blue-100 flex items-center justify-between">
+                  <h3 className="font-bold text-xs uppercase tracking-wider text-blue-700 flex items-center gap-2"><Stethoscope className="w-4 h-4"/> Renovar Guias</h3>
+                  <Badge className="bg-blue-100 text-blue-700">{guiasRenovar.length}</Badge>
                 </div>
-              ))
-            )}
-          </div>
-        </Card>
+                <div className="p-3 overflow-y-auto flex-1 space-y-2">
+                  {guiasRenovar.length === 0 ? (
+                    <p className="text-xs text-center text-muted-foreground py-6">Nenhum convênio expirando.</p>
+                  ) : (
+                    guiasRenovar.map(g => (
+                      <div key={g.id} className="text-sm border border-slate-100 rounded-xl p-3 bg-white shadow-sm flex flex-col gap-2 hover:border-blue-200 cursor-pointer transition-all" onClick={() => navigate(`/pacientes/${g.paciente_id}`)}>
+                        <div className="font-bold text-slate-800 truncate">{g.paciente?.nome}</div>
+                        <div className="flex justify-between items-center">
+                          <div className="text-xs text-blue-600 font-bold bg-blue-50 px-2 py-1 rounded">{g.autorizacao?.plano}</div>
+                          <span className="text-[10px] font-semibold text-slate-400">Restam {g.sessoes_restantes}</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </Card>
 
-      </div>
-
-      {/* 2º ANDAR: INDICADORES E GRÁFICOS (BI) */}
-      <h2 className="text-lg font-bold text-slate-800 mt-8 mb-4 border-b pb-2 flex items-center gap-2">
-        <TrendingUp className="w-5 h-5 text-indigo-600"/> Indicadores de Desempenho (Mês Atual)
-      </h2>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
-        {/* Gráfico 1: Ritmo de Atendimentos */}
-        <Card className="p-4 shadow-sm">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-4 text-center">Curva de Atendimentos Mensal</h3>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={dadosGraficoLinha}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis dataKey="dia" tick={{fontSize: 10}} tickLine={false} axisLine={false} />
-                <YAxis tick={{fontSize: 10}} tickLine={false} axisLine={false} />
-                <ChartTooltip contentStyle={{ borderRadius: '8px', fontSize: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                <Line type="monotone" dataKey="Atendimentos" stroke="#4f46e5" strokeWidth={3} dot={{r: 4, strokeWidth: 2}} activeDot={{r: 6}} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Gráfico 2: Particular vs Convénios */}
-          <Card className="p-4 shadow-sm flex flex-col justify-center items-center">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 text-center w-full">Receita: Particular vs Planos</h3>
-            <div className="h-48 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={distribuicaoConvenios} innerRadius={50} outerRadius={70} paddingAngle={3} dataKey="value">
-                    {distribuicaoConvenios.map((entry, index) => <Cell key={`cell-${index}`} fill={CORES_PIZZA[index % CORES_PIZZA.length]} />)}
-                  </Pie>
-                  <ChartTooltip contentStyle={{ fontSize: '12px', borderRadius: '8px' }} />
-                  <Legend verticalAlign="bottom" height={36} wrapperStyle={{ fontSize: '10px', paddingTop: '10px' }} />
-                </PieChart>
-              </ResponsiveContainer>
             </div>
-          </Card>
+          </aside>
 
-          {/* Gráfico 3: Ocupação por Profissional */}
-          <Card className="p-4 shadow-sm flex flex-col justify-center items-center">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 text-center w-full">Ocupação / Repasses Estimados</h3>
-            <div className="h-48 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={dadosOcupacao} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                  <XAxis dataKey="name" tick={{fontSize: 10}} tickLine={false} axisLine={false} />
-                  <YAxis tick={{fontSize: 10}} tickLine={false} axisLine={false} />
-                  <ChartTooltip cursor={{fill: '#f8fafc'}} contentStyle={{ fontSize: '12px', borderRadius: '8px' }} />
-                  <Bar dataKey="Atendimentos" fill="#0ea5e9" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+          {/* COLUNA DIREITA (9/12 no Desktop): DASHBOARD BI */}
+          <main className="lg:col-span-8 xl:col-span-9 space-y-8">
+            
+            {/* Linha de KPIs (4 colunas no Desktop grande, 2 no Tablet) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+              {[
+                { label: "Atendimentos / Mês", val: atendimentosMes.length, icon: Calendar, color: "text-indigo-600", bg: "bg-indigo-50" },
+                { label: "Faturamento Previsto", val: "R$ ---", icon: DollarSign, color: "text-amber-600", bg: "bg-amber-50" },
+                { label: "Ocupação Estimada", val: "---", icon: Activity, color: "text-emerald-600", bg: "bg-emerald-50" },
+                { label: "Evoluções Atrasadas", val: evolucoesAtrasadas.length, icon: Clock, color: "text-rose-600", bg: "bg-rose-50" },
+              ].map((stat, i) => (
+                <Card key={i} className="p-5 flex items-center gap-4 shadow-sm border-slate-200/60 hover:shadow-md transition-shadow">
+                  <div className={`p-3 rounded-xl ${stat.bg} ${stat.color}`}><stat.icon className="w-6 h-6"/></div>
+                  <div>
+                    <p className="text-[10px] md:text-xs uppercase font-bold text-slate-400 tracking-wider mb-0.5">{stat.label}</p>
+                    <p className="text-xl md:text-2xl font-black text-slate-800">{stat.val}</p>
+                  </div>
+                </Card>
+              ))}
             </div>
-          </Card>
+
+            {/* Linha de Gráficos */}
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              
+              {/* Gráfico Ocupação Total */}
+              <Card className="p-6 shadow-sm border-slate-200/60 xl:col-span-2">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-6 flex items-center gap-2"><TrendingUp className="w-4 h-4"/> Ritmo de Atendimentos Mensal</h3>
+                <div className="h-[300px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={dadosGraficoLinha} margin={{ top: 5, right: 20, bottom: 5, left: -20 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="dia" tick={{fontSize: 12, fill: '#64748b'}} tickLine={false} axisLine={false} />
+                      <YAxis tick={{fontSize: 12, fill: '#64748b'}} tickLine={false} axisLine={false} />
+                      <ChartTooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                      <Line type="monotone" dataKey="Atendimentos" stroke="#4f46e5" strokeWidth={3} dot={{r: 4, strokeWidth: 2}} activeDot={{r: 6}} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </Card>
+
+              {/* Gráfico Pizza */}
+              <Card className="p-6 shadow-sm border-slate-200/60 flex flex-col">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-2">Receita: Particular vs Planos</h3>
+                <div className="flex-1 min-h-[250px] w-full mt-4">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={distribuicaoConvenios} innerRadius={60} outerRadius={85} paddingAngle={2} dataKey="value">
+                        {distribuicaoConvenios.map((entry, index) => <Cell key={`cell-${index}`} fill={CORES_PIZZA[index % CORES_PIZZA.length]} />)}
+                      </Pie>
+                      <ChartTooltip contentStyle={{ borderRadius: '8px' }} />
+                      <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{ fontSize: '12px' }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </Card>
+
+              {/* Gráfico Barras */}
+              <Card className="p-6 shadow-sm border-slate-200/60 flex flex-col">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-2">Ocupação / Repasses Estimados</h3>
+                <div className="flex-1 min-h-[250px] w-full mt-4">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={dadosOcupacao} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="name" tick={{fontSize: 12, fill: '#64748b'}} tickLine={false} axisLine={false} />
+                      <YAxis tick={{fontSize: 12, fill: '#64748b'}} tickLine={false} axisLine={false} />
+                      <ChartTooltip cursor={{fill: '#f8fafc'}} contentStyle={{ borderRadius: '8px' }} />
+                      <Bar dataKey="Atendimentos" fill="#0ea5e9" radius={[6, 6, 0, 0]} maxBarSize={60} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </Card>
+
+            </div>
+          </main>
+
         </div>
-
       </div>
     </div>
   );
