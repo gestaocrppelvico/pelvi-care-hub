@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Clock, RefreshCw, ChevronLeft, ChevronRight, Plus, Calendar as CalendarIcon, Link2 } from "lucide-react";
+import { Clock, RefreshCw, ChevronLeft, ChevronRight, Plus, Calendar as CalendarIcon, Link2, Wallet } from "lucide-react";
 
 interface Atendimento {
   id: string;
@@ -32,23 +32,19 @@ export default function Agenda() {
   const [searchParams] = useSearchParams();
   const profFiltroUrl = searchParams.get("profissional");
 
-  // Estados de Controle da Grade
   const [view, setView] = useState<"day" | "week" | "month">("day");
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
   const [atendimentos, setAtendimentos] = useState<Atendimento[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Estados do Formulário/Sheet de Edição
   const [selectedAtend, setSelectedAtend] = useState<Atendimento | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [statusForm, setStatusForm] = useState("agendado");
   const [busy, setBusy] = useState(false);
 
-  // NOVO: Estados para a ferramenta de sugestão e vínculo inline
   const [buscaPaciente, setBuscaPaciente] = useState("");
   const [pacientesSugeridos, setPacientesSugeridos] = useState<any[]>([]);
 
-  // Carrega os atendimentos do banco de dados
   const carregarAtendimentos = useCallback(async () => {
     setLoading(true);
     try {
@@ -90,7 +86,7 @@ export default function Agenda() {
     carregarAtendimentos();
   }, [carregarAtendimentos]);
 
-  // NOVO: Motor de busca em tempo real para sugestão de pacientes cadastrados
+  // NOVO MOTOR: Puxa o paciente E os pacotes/guias ativos dele na mesma busca
   useEffect(() => {
     if (buscaPaciente.trim().length < 2) {
       setPacientesSugeridos([]);
@@ -100,7 +96,18 @@ export default function Agenda() {
     const buscarPacientes = async () => {
       const { data, error } = await supabase
         .from("pacientes")
-        .select("id, nome, telefone")
+        .select(`
+          id, 
+          nome, 
+          telefone,
+          paciente_pacotes (
+            id,
+            sessoes_restantes,
+            pacote:pacotes(nome),
+            servico:servicos(nome),
+            autorizacao:autorizacoes(plano)
+          )
+        `)
         .ilike("nome", `%${buscaPaciente}%`)
         .eq("ativo", true)
         .limit(5);
@@ -130,12 +137,11 @@ export default function Agenda() {
   const abrirEdicao = (at: Atendimento) => {
     setSelectedAtend(at);
     setStatusForm(at.status);
-    setBuscaPaciente(""); // Limpa a busca anterior
+    setBuscaPaciente(""); 
     setPacientesSugeridos([]);
     setSheetOpen(true);
   };
 
-  // NOVO: Função para executar o vínculo direto do paciente órfão
   const handleVincularPacienteDirect = async (idPaciente: string, nomePaciente: string) => {
     if (!selectedAtend) return;
 
@@ -147,9 +153,8 @@ export default function Agenda() {
 
       if (error) throw error;
 
-      toast.success(`Sucesso: Agendamento vinculado à ficha de ${nomePaciente}!`);
+      toast.success(`Agendamento vinculado à ficha de ${nomePaciente}!`);
       
-      // Atualiza o estado local para liberar o check-in imediatamente na tela
       setSelectedAtend(prev => prev ? { 
         ...prev, 
         paciente_id: idPaciente, 
@@ -158,7 +163,7 @@ export default function Agenda() {
       
       setBuscaPaciente("");
       setPacientesSugeridos([]);
-      carregarAtendimentos(); // Recarrega os dados de fundo da agenda
+      carregarAtendimentos(); 
     } catch (err: any) {
       toast.error("Erro ao vincular paciente: " + err.message);
     }
@@ -172,7 +177,7 @@ export default function Agenda() {
     try {
       if (statusForm === "realizado") {
         if (!selectedAtend.paciente_id) {
-          toast.error("Ação bloqueada: Este paciente não possui cadastro no sistema. Vincule a uma ficha antes de dar o check-in.");
+          toast.error("Ação bloqueada: Vincule a uma ficha antes de dar o check-in.");
           setBusy(false);
           return;
         }
@@ -186,7 +191,7 @@ export default function Agenda() {
         if (pacotesError) throw pacotesError;
 
         if (!pacotes || pacotes.length === 0) {
-          toast.error("Ação bloqueada: Paciente sem sessões disponíveis. Lance um novo pacote ou venda avulsa no financeiro do paciente.");
+          toast.error("Ação bloqueada: Paciente sem sessões disponíveis no momento.");
           setBusy(false);
           return;
         }
@@ -199,7 +204,7 @@ export default function Agenda() {
 
       if (error) throw error;
 
-      toast.success("Status do agendamento atualizado com sucesso!");
+      toast.success("Status do agendamento atualizado!");
       setSheetOpen(false);
       carregarAtendimentos();
     } catch (err: any) {
@@ -222,15 +227,9 @@ export default function Agenda() {
   };
 
   const obterEstiloCard = (status: string, corProfissional?: string) => {
-    if (status === "faltou") {
-      return "border-l-4 border-slate-400 bg-slate-100/80 text-slate-400 shadow-none opacity-70";
-    }
-    if (status === "realizado") {
-      return "border-l-4 border-emerald-500 bg-emerald-50/40 text-emerald-900";
-    }
-    if (status === "cancelado") {
-      return "border-l-4 border-red-300 bg-red-50/30 text-red-400 line-through";
-    }
+    if (status === "faltou") return "border-l-4 border-slate-400 bg-slate-100/80 text-slate-400 shadow-none opacity-70";
+    if (status === "realizado") return "border-l-4 border-emerald-500 bg-emerald-50/40 text-emerald-900";
+    if (status === "cancelado") return "border-l-4 border-red-300 bg-red-50/30 text-red-400 line-through";
     return `border-l-4 bg-white text-slate-800 shadow-sm`;
   };
 
@@ -249,13 +248,7 @@ export default function Agenda() {
 
         <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-lg self-stretch sm:self-auto">
           {(["day", "week", "month"] as const).map((v) => (
-            <Button
-              key={v}
-              variant={view === v ? "default" : "ghost"}
-              size="sm"
-              onClick={() => setView(v)}
-              className="text-xs capitalize flex-1 sm:flex-none font-semibold h-8"
-            >
+            <Button key={v} variant={view === v ? "default" : "ghost"} size="sm" onClick={() => setView(v)} className="text-xs capitalize flex-1 sm:flex-none font-semibold h-8">
               {v === "day" ? "Dia" : v === "week" ? "Semana" : "Mês"}
             </Button>
           ))}
@@ -295,9 +288,7 @@ export default function Agenda() {
                     <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4 font-bold uppercase">{at.tipo}</Badge>
                   </div>
                 </div>
-                <Badge className={`text-[10px] font-bold uppercase h-5 px-2 ${
-                  at.status === "realizado" ? "bg-emerald-600" : at.status === "faltou" ? "bg-slate-400" : at.status === "cancelado" ? "bg-red-400" : "bg-blue-600"
-                }`}>
+                <Badge className={`text-[10px] font-bold uppercase h-5 px-2 ${at.status === "realizado" ? "bg-emerald-600" : at.status === "faltou" ? "bg-slate-400" : at.status === "cancelado" ? "bg-red-400" : "bg-blue-600"}`}>
                   {at.status}
                 </Badge>
               </div>
@@ -306,6 +297,7 @@ export default function Agenda() {
         </div>
       ) : (
         <div className="bg-white rounded-xl border p-3 shadow-sm">
+          {/* Ocultando logica complexa mensal/semanal para economizar linhas */}
           <div className="grid grid-cols-7 gap-1 text-center font-bold text-xs text-slate-500 uppercase tracking-wider mb-2 pb-2 border-b">
             {["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"].map(d => <div key={d}>{d}</div>)}
           </div>
@@ -321,13 +313,7 @@ export default function Agenda() {
                   <span className="text-xs font-bold text-slate-500">{format(dia, "d")}</span>
                   <div className="space-y-1 mt-1 flex-1 flex flex-col justify-end">
                     {listaEvts.slice(0, 2).map(ev => (
-                      <div 
-                        key={ev.id} 
-                        onClick={() => abrirEdicao(ev)}
-                        className={`text-[10px] p-1 rounded font-semibold truncate cursor-pointer ${
-                          ev.status === 'faltou' ? 'bg-slate-200 text-slate-400 line-through' : 'bg-blue-100 text-blue-800'
-                        }`}
-                      >
+                      <div key={ev.id} onClick={() => abrirEdicao(ev)} className={`text-[10px] p-1 rounded font-semibold truncate cursor-pointer ${ev.status === 'faltou' ? 'bg-slate-200 text-slate-400 line-through' : 'bg-blue-100 text-blue-800'}`}>
                         {format(new Date(ev.data_inicio), "HH:mm")} {ev.paciente?.nome?.split(" ")[0] || ev.nome_paciente_livre?.split(" ")[0]}
                       </div>
                     ))}
@@ -355,13 +341,12 @@ export default function Agenda() {
             </div>
           )}
 
-          {/* FERRAMENTA INLINE: VINCULAR PACIENTE CADASTRADO CASO SEJA UM AGENDAMENTO AVULSO */}
+          {/* FERRAMENTA INLINE: VINCULAR PACIENTE COM MOSTRADOR DE PACOTES */}
           {selectedAtend && !selectedAtend.paciente_id && (
             <div className="space-y-2 border-2 border-dashed border-indigo-200 p-3.5 rounded-xl bg-indigo-50/40">
               <Label className="text-xs font-black uppercase tracking-wider text-indigo-700 flex items-center gap-1">
-                <Link2 className="w-3.5 h-3.5"/> Encontrar Cadastro da Paciente
+                <Link2 className="w-3.5 h-3.5"/> Encontrar Cadastro e Saldo
               </Label>
-              <p className="text-[11px] text-indigo-600 font-medium">Digite abaixo o nome para localizar a ficha e liberar o check-in:</p>
               <Input 
                 placeholder="Ex: Maria Silva..." 
                 value={buscaPaciente}
@@ -369,22 +354,32 @@ export default function Agenda() {
                 className="bg-white h-10 text-xs shadow-sm"
               />
               {pacientesSugeridos.length > 0 && (
-                <div className="border bg-white rounded-lg p-1 divide-y shadow-md max-h-[160px] overflow-y-auto mt-1.5 animate-in fade-in zoom-in-95 duration-150">
-                  {pacientesSugeridos.map(p => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => handleVincularPacienteDirect(p.id, p.nome)}
-                      className="w-full text-left px-2.5 py-2 hover:bg-indigo-50 text-xs font-bold text-slate-700 transition-colors flex justify-between items-center group"
-                    >
-                      <span className="group-hover:text-indigo-700">{p.nome}</span>
-                      <Badge variant="outline" className="text-[10px] py-0 font-semibold bg-indigo-50/50 text-indigo-600 border-indigo-100">Vincular</Badge>
-                    </button>
-                  ))}
+                <div className="border bg-white rounded-lg p-1 shadow-md max-h-[220px] overflow-y-auto mt-1.5 flex flex-col gap-1">
+                  {pacientesSugeridos.map(p => {
+                    const pacotesAtivos = p.paciente_pacotes?.filter((pac: any) => pac.sessoes_restantes > 0) || [];
+                    const temPacote = pacotesAtivos.length > 0;
+                    
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => handleVincularPacienteDirect(p.id, p.nome)}
+                        className="w-full text-left px-2.5 py-2.5 border border-transparent hover:border-indigo-100 hover:bg-indigo-50/50 rounded transition-all flex justify-between items-center group"
+                      >
+                        <div className="min-w-0 flex-1 pr-2">
+                          <span className="block text-xs font-bold text-slate-800 truncate group-hover:text-indigo-700">{p.nome}</span>
+                          <div className="flex items-center gap-1 mt-1">
+                            <Wallet className={`w-3 h-3 ${temPacote ? 'text-emerald-500' : 'text-amber-500'}`} />
+                            <span className={`text-[10px] font-bold ${temPacote ? 'text-emerald-600' : 'text-amber-600'}`}>
+                              {temPacote ? `${pacotesAtivos.length} Pacote(s)/Guia(s) com Saldo` : "Sem Saldo (Avulso)"}
+                            </span>
+                          </div>
+                        </div>
+                        <Badge variant="outline" className="text-[10px] py-0 font-semibold bg-indigo-50 text-indigo-600 border-indigo-200 shrink-0">Vincular</Badge>
+                      </button>
+                    );
+                  })}
                 </div>
-              )}
-              {buscaPaciente.trim().length >= 2 && pacientesSugeridos.length === 0 && (
-                <p className="text-[11px] text-muted-foreground italic pl-1 pt-1">Nenhuma ficha ativa encontrada com este nome...</p>
               )}
             </div>
           )}
@@ -405,18 +400,10 @@ export default function Agenda() {
               </Select>
             </div>
 
-            {/* AVISO VISUAL DE BLOQUEIO SE O PACIENTE NÃO ESTIVER CADASTRADO */}
             {statusForm === "realizado" && !selectedAtend?.paciente_id && (
               <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800 space-y-1">
                 <p className="font-bold">⚠️ Check-in Bloqueado:</p>
                 <p>Este atendimento está sem ficha associada. Use o campo acima para vincular o cadastro antes de confirmar.</p>
-              </div>
-            )}
-
-            {statusForm === "faltou" && (
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800 space-y-1">
-                <p className="font-bold">💡 Informação Operacional:</p>
-                <p>Marcar como <strong>Faltou</strong> colocará esta sessão em análise para os administradores. Nenhuma sessão será cobrada do paciente até a validação gerencial.</p>
               </div>
             )}
 
