@@ -1,18 +1,27 @@
 import { useEffect, useState, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Calendar, Users, Clock, AlertTriangle, MessageCircle, Cake, ArrowRight, Link2, FileText } from "lucide-react";
+import { 
+  Calendar, Users, AlertTriangle, CheckCircle, XCircle, 
+  TrendingUp, Activity, DollarSign, Stethoscope, Clock
+} from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { abrirWhatsapp } from "@/lib/crm";
-import { format, addDays, startOfDay, endOfDay } from "date-fns";
+import { toast } from "sonner";
+import { format, startOfMonth, endOfMonth, startOfDay, isBefore } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { 
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, ResponsiveContainer, 
+  PieChart, Pie, Cell, BarChart, Bar, Legend
+} from 'recharts';
 
-// Importação dos painéis secundários (Garanta que os dois arquivos existam na mesma pasta)
+// Painéis Secundários
 import DashboardFisio from "./DashboardFisio";
 import DashboardSecretaria from "./DashboardSecretaria";
+
+const CORES_PIZZA = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899'];
 
 export default function Dashboard() {
   const { user, isFisio, isSecretaria, isAdmin } = useAuth();
@@ -20,326 +29,262 @@ export default function Dashboard() {
   const [nome, setNome] = useState("");
   const [loading, setLoading] = useState(true);
 
-  // Estados dos blocos de dados (Painel de Gestão)
-  const [atendimentosHoje, setAtendimentosHoje] = useState<any[]>([]);
-  const [atendimentosAmanha, setAtendimentosAmanha] = useState<any[]>([]);
-  const [aniversariantesHoje, setAniversariantesHoje] = useState<any[]>([]);
-  const [dataCrmAlvo, setDataCrmAlvo] = useState<Date>(new Date());
+  // Estados de Auditoria (Ações)
+  const [faltasPendentes, setFaltasPendentes] = useState<any[]>([]);
+  const [evolucoesAtrasadas, setEvolucoesAtrasadas] = useState<any[]>([]);
+  const [guiasRenovar, setGuiasRenovar] = useState<any[]>([]);
 
-  // Estados dos Gatilhos Inteligentes (Smart Tasks)
-  const [guiasExpirando, setGuiasExpirando] = useState<any[]>([]);
-  const [totalOrfaos, setTotalOrfaos] = useState(0);
-  const [fichasIncompletas, setFichasIncompletas] = useState<any[]>([]);
+  // Estados de BI (Gráficos)
+  const [atendimentosMes, setAtendimentosMes] = useState<any[]>([]);
+  const [distribuicaoConvenios, setDistribuicaoConvenios] = useState<any[]>([]);
 
   useEffect(() => {
-    async function carregarDashboard() {
+    async function carregarDashboardAdmin() {
       if (!user) return;
       setLoading(true);
       try {
-        // 1. Pega o Nome do Usuário
         const { data: prof } = await supabase.from("profiles").select("nome_completo").eq("id", user.id).maybeSingle();
         setNome(prof?.nome_completo?.split(" ")[0] ?? "");
 
-        // 2. OTIMIZAÇÃO: Se for a Íris ou as Fisios, nós encerramos a busca aqui. 
-        // Não precisamos carregar os dados pesados de Admin para elas.
+        // Se não for Admin, não carrega os dados pesados
         if ((isSecretaria && !isAdmin) || (isFisio && !isAdmin && !isSecretaria)) {
           setLoading(false);
           return; 
         }
 
-        // 3. Daqui para baixo, carrega APENAS se for o seu Painel (Admin)
         const hoje = new Date();
-        const startHoje = startOfDay(hoje).toISOString();
-        const endHoje = endOfDay(hoje).toISOString();
+        const inicioMes = startOfMonth(hoje).toISOString();
+        const fimMes = endOfMonth(hoje).toISOString();
+        const inicioDia = startOfDay(hoje).toISOString();
 
-        // Cálculo da Data Inteligente para o CRM
-        const diaSemana = hoje.getDay();
-        let dataProxima = addDays(hoje, 1);
-        if (diaSemana === 5) dataProxima = addDays(hoje, 3);
-        if (diaSemana === 6) dataProxima = addDays(hoje, 2);
-        if (diaSemana === 0) dataProxima = addDays(hoje, 1);
-        setDataCrmAlvo(dataProxima);
-
-        const startProximo = startOfDay(dataProxima).toISOString();
-        const endProximo = endOfDay(dataProxima).toISOString();
-
-        // Busca dados de Admin em paralelo
-        const [
-          resHoje,
-          resProximo,
-          resPacientes,
-          resGuias,
-          resOrfaos
-        ] = await Promise.all([
-          supabase.from("atendimentos").select("id, data_inicio, status, nome_paciente_livre, paciente:pacientes(nome), profissional:profissionais(nome)").gte("data_inicio", startHoje).lte("data_inicio", endHoje).not("status", "eq", "cancelado"),
-          supabase.from("atendimentos").select("id, data_inicio, nome_paciente_livre, paciente:pacientes(nome), profissional:profissionais(nome)").gte("data_inicio", startProximo).lte("data_inicio", endProximo).eq("status", "agendado"),
-          supabase.from("pacientes").select("id, nome, telefone, data_nascimento").eq("ativo", true),
-          supabase.from("paciente_pacotes").select("id, sessoes_restantes, sessoes_totais, paciente_id, paciente:pacientes(nome), pacote:pacotes(nome), servico:servicos(nome), autorizacao:autorizacoes(plano)").gt("sessoes_restantes", 0).lte("sessoes_restantes", 2),
-          supabase.from("atendimentos").select("id", { count: "exact", head: true }).is("paciente_id", null)
+        // 1. Buscas de Auditoria Operacional
+        const [resFaltas, resEvolucoes, resGuias] = await Promise.all([
+          // Faltas marcadas pela recepção/fisio
+          supabase.from("atendimentos").select("id, data_inicio, paciente:pacientes(nome), profissional:profissionais(nome)").eq("status", "faltou"),
+          // Agendamentos antigos que não foram marcados como "realizado" ou "cancelado" (Esqueceram de evoluir)
+          supabase.from("atendimentos").select("id, data_inicio, paciente:pacientes(nome), profissional:profissionais(nome)").eq("status", "agendado").lt("data_inicio", inicioDia),
+          // Pacotes de plano de saúde a acabar com intenção de renovar
+          supabase.from("paciente_pacotes").select("id, paciente_id, sessoes_restantes, autorizacao:autorizacoes(plano), paciente:pacientes(nome)").not("autorizacao_id", "is", null).eq("status_renovacao", "vai_renovar")
         ]);
 
-        setAtendimentosHoje(resHoje.data || []);
-        setAtendimentosAmanha(resProximo.data || []);
-        setTotalOrfaos(resOrfaos.count || 0);
-        setGuiasExpirando(resGuias.data || []);
+        // 2. Buscas para BI e Gráficos
+        const resAtendimentosMes = await supabase.from("atendimentos").select("id, data_inicio, status, profissional:profissionais(nome)").gte("data_inicio", inicioMes).lte("data_inicio", fimMes).not("status", "eq", "cancelado");
+        const resPacotesPlano = await supabase.from("paciente_pacotes").select("id, autorizacao:autorizacoes(plano)");
 
-        const mmDdHoje = format(hoje, "MM-dd");
-        const nivers: any[] = [];
-        const incompletas: any[] = [];
+        setFaltasPendentes(resFaltas.data || []);
+        setEvolucoesAtrasadas((resEvolucoes.data || []).slice(0, 10)); // Top 10 mais urgentes
+        setGuiasRenovar(resGuias.data || []);
+        setAtendimentosMes(resAtendimentosMes.data || []);
 
-        (resPacientes.data || []).forEach((p) => {
-          if (p.data_nascimento && p.data_nascimento.slice(5) === mmDdHoje) {
-            nivers.push(p);
-          }
-          if (!p.telefone || !p.data_nascimento) {
-            incompletas.push({
-              id: p.id,
-              nome: p.nome,
-              motivo: !p.telefone && !p.data_nascimento 
-                ? "Falta Telefone e Nascimento" 
-                : !p.telefone 
-                  ? "Falta Telefone" 
-                  : "Falta Data de Nascimento"
-            });
+        // Processar Dados para o Gráfico de Rosca (Particular vs Planos)
+        const contagemPlanos: Record<string, number> = { "Particular": 0 };
+        (resPacotesPlano.data || []).forEach(p => {
+          if (p.autorizacao?.plano) {
+            contagemPlanos[p.autorizacao.plano] = (contagemPlanos[p.autorizacao.plano] || 0) + 1;
+          } else {
+            contagemPlanos["Particular"] += 1;
           }
         });
-
-        setAniversariantesHoje(nivers);
-        setFichasIncompletas(incompletas.slice(0, 5));
+        setDistribuicaoConvenios(Object.entries(contagemPlanos).map(([name, value]) => ({ name, value })).filter(i => i.value > 0));
 
       } catch (err) {
-        console.error("Erro ao carregar os blocos do dashboard admin:", err);
+        console.error("Erro ao carregar BI:", err);
       } finally {
         setLoading(false);
       }
-    };
-
-    carregarDashboard();
+    }
+    carregarDashboardAdmin();
   }, [user, isSecretaria, isAdmin, isFisio]);
 
-  const atendimentosAgrupadosPorProf = useMemo(() => {
-    const grupos: Record<string, any[]> = {};
-    atendimentosHoje.forEach((at) => {
-      const profNome = at.profissional?.nome || "Profissional Não Definido";
-      if (!grupos[profNome]) grupos[profNome] = [];
-      grupos[profNome].push(at);
+  // Processamento de Dados dos Gráficos
+  const dadosGraficoLinha = useMemo(() => {
+    const dias: Record<string, number> = {};
+    atendimentosMes.forEach(at => {
+      const dia = format(new Date(at.data_inicio), "dd/MMM", { locale: ptBR });
+      dias[dia] = (dias[dia] || 0) + 1;
     });
-    return grupos;
-  }, [atendimentosHoje]);
+    return Object.entries(dias).map(([dia, total]) => ({ dia, Atendimentos: total }));
+  }, [atendimentosMes]);
 
-  const parabenizar = (p: any) => {
-    const msg = `Olá ${p.nome.split(" ")[0]}! 🎉 Nós da clínica CRPPélvico passamos para lhe desejar um feliz aniversário! Que o seu novo ciclo seja repleto de saúde, paz e conquistas. Parabéns! 🎂`;
-    abrirWhatsapp(p.telefone, msg, isSecretaria);
+  const dadosOcupacao = useMemo(() => {
+    const profs: Record<string, number> = {};
+    atendimentosMes.forEach(at => {
+      const nome = at.profissional?.nome?.split(" ")[0] || "Sem Profissional";
+      profs[nome] = (profs[nome] || 0) + 1;
+    });
+    return Object.entries(profs).map(([name, Atendimentos]) => ({ name, Atendimentos }));
+  }, [atendimentosMes]);
+
+  // Funções de Ação (Gestor)
+  const processarFalta = async (id: string, decisao: "cobrada" | "abonada") => {
+    try {
+      const { error } = await supabase.from("atendimentos").update({ status: `falta_${decisao}` }).eq("id", id);
+      if (error) throw error;
+      toast.success(`Falta ${decisao} registada com sucesso!`);
+      setFaltasPendentes(prev => prev.filter(f => f.id !== id));
+      // Nota: A lógica complexa de subtrair saldo deverá ser acoplada numa Cloud Function no futuro, 
+      // ou tratada aqui expandindo esta função.
+    } catch (err: any) {
+      toast.error("Erro ao processar falta.");
+    }
   };
 
-  // =========================================================================
-  // DESVIOS DE ROTA: A MÁGICA ACONTECE AQUI
-  // =========================================================================
+  // ==========================================
+  // ROTEAMENTO DE UTILIZADORES
+  // ==========================================
+  if (isSecretaria && !isAdmin) return <DashboardSecretaria nomeUsuario={nome} />;
+  if (isFisio && !isAdmin && !isSecretaria) return <DashboardFisio />;
 
-  // 1. Se for a Íris, desenha a tela dela e encerra o código aqui.
-  if (isSecretaria && !isAdmin) {
-    return <DashboardSecretaria nomeUsuario={nome} />;
-  }
-
-  // 2. Se for Fisioterapeuta, desenha a tela dela e encerra o código aqui.
-  if (isFisio && !isAdmin && !isSecretaria) {
-    return <DashboardFisio />;
-  }
-
-  // =========================================================================
-  // PAINEL GERENCIAL (FELIPE E JULIANA) - SÓ CHEGA AQUI SE FOR ADMIN
-  // =========================================================================
-
-  if (loading) return <div className="p-8 text-center text-muted-foreground animate-pulse">A carregar o Centro de Comando...</div>;
+  // ==========================================
+  // PAINEL GERENCIAL (FELIPE / JULIANA)
+  // ==========================================
+  if (loading) return <div className="p-10 text-center text-muted-foreground animate-pulse">A carregar o Painel de Gestão (BI)...</div>;
 
   return (
-    <div className="space-y-5 p-2">
-      {/* Cabeçalho de Boas-vindas */}
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-800">Olá, {nome || "Administrador"} 👋</h1>
-        <p className="text-xs text-muted-foreground">Bem-vindo ao seu painel de monitorização diária e auditoria.</p>
+    <div className="space-y-6 p-2 pb-10 max-w-7xl mx-auto">
+      {/* CABEÇALHO */}
+      <div className="flex justify-between items-end">
+        <div>
+          <h1 className="text-2xl font-black tracking-tight text-slate-800">Diretoria 👋</h1>
+          <p className="text-xs text-muted-foreground font-medium">Bem-vindo(a), {nome}. Este é o seu raio-X da clínica.</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => navigate("/agenda")} className="shadow-sm"><Calendar className="w-4 h-4 mr-2"/> Agenda</Button>
+          <Button variant="default" size="sm" onClick={() => navigate("/pacientes")} className="shadow-sm bg-slate-800"><Users className="w-4 h-4 mr-2"/> Pacientes</Button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <Link to="/agenda">
-          <Card className="p-4 flex items-center gap-3 hover:bg-blue-50/50 hover:border-blue-300 transition-all cursor-pointer border shadow-sm">
-            <div className="p-2.5 bg-blue-100 text-blue-600 rounded-xl shrink-0">
-              <Calendar className="w-5 h-5" />
-            </div>
-            <div className="min-w-0">
-              <div className="font-bold text-sm text-slate-800">Ver Agenda</div>
-              <div className="text-xs text-muted-foreground truncate">Horários do dia</div>
-            </div>
-          </Card>
-        </Link>
-
-        <Link to="/pacientes">
-          <Card className="p-4 flex items-center gap-3 hover:bg-emerald-50/50 hover:border-emerald-300 transition-all cursor-pointer border shadow-sm">
-            <div className="p-2.5 bg-emerald-100 text-emerald-600 rounded-xl shrink-0">
-              <Users className="w-5 h-5" />
-            </div>
-            <div className="min-w-0">
-              <div className="font-bold text-sm text-slate-800">Pacientes</div>
-              <div className="text-xs text-muted-foreground truncate">Consultar fichas</div>
-            </div>
-          </Card>
-        </Link>
-      </div>
-
-      {/* BLOCO 1: RESUMO DE ATENDIMENTOS DO DIA */}
-      <Card className="p-4 shadow-sm border-t-4 border-t-blue-600">
-        <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-2">
-          <Clock className="w-4 h-4 text-blue-600" /> Atendimentos Programados para Hoje
-        </h2>
+      {/* 1º ANDAR: AUDITORIA E AÇÕES IMEDIATAS (PRONTO-SOCORRO) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         
-        {atendimentosHoje.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-6 border border-dashed rounded-lg bg-slate-50/50">
-            Nenhum atendimento registado para o dia de hoje.
-          </p>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {Object.entries(atendimentosAgrupadosPorProf).map(([profNome, lista]) => (
-              <Card key={profNome} className="p-3 bg-slate-50/60 border shadow-sm">
-                <div className="font-bold text-xs text-blue-900 border-b pb-2 mb-2 uppercase flex justify-between items-center">
-                  <span className="truncate pr-2">{profNome}</span>
-                  <Badge variant="secondary" className="bg-blue-100 text-blue-800 text-[10px] px-1.5 h-5 shrink-0 font-bold">{lista.length}</Badge>
-                </div>
-                <div className="space-y-1.5 max-h-[200px] overflow-y-auto pr-1">
-                  {lista.map((at) => (
-                    <div key={at.id} className="flex items-center justify-between text-xs p-2 bg-white rounded border shadow-sm hover:border-blue-200 transition-colors">
-                      <div className="truncate font-semibold text-slate-700 max-w-[70%]">
-                        {at.paciente?.nome || at.nome_paciente_livre || "Sem nome"}
-                      </div>
-                      <div className="flex items-center gap-1 font-bold shrink-0 text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">
-                        {format(new Date(at.data_inicio), "HH:mm")}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-            ))}
+        {/* Faltas Pendentes */}
+        <Card className="p-0 overflow-hidden shadow-sm border-t-4 border-t-rose-500 flex flex-col h-64">
+          <div className="bg-rose-50/50 p-3 border-b border-rose-100 flex items-center justify-between">
+            <h3 className="font-bold text-xs uppercase tracking-wider text-rose-700 flex items-center gap-1.5"><AlertTriangle className="w-4 h-4"/> Auditoria de Faltas</h3>
+            <Badge className="bg-rose-100 text-rose-700">{faltasPendentes.length}</Badge>
           </div>
-        )}
-      </Card>
-
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        
-        {/* BLOCO 2: GATILHOS INTELIGENTES (ADMIN) */}
-        <Card className="p-4 shadow-sm lg:col-span-7 space-y-3">
-          <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500 border-b pb-2 flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-500" /> Ações e Auditorias (Admin)
-          </h2>
-
-          <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
-            {guiasExpirando.map((g) => (
-              <div key={g.id} className="p-3 border border-amber-200 bg-amber-50/30 rounded-xl flex items-center justify-between gap-3 text-xs hover:bg-amber-50/50 transition-colors">
-                <div className="flex-1 min-w-0">
-                  <span className="font-bold text-amber-700 uppercase block text-[9px] tracking-wide mb-0.5">Cobrar novo pacote / Renovação</span>
-                  <p className="font-bold text-slate-800 truncate text-sm">{g.paciente?.nome}</p>
-                  <p className="text-muted-foreground truncate">{g.autorizacao ? `Guia do Plano: ${g.autorizacao.plano}` : `Contrato: ${g.pacote?.nome || g.servico?.nome || "Particular"}`}</p>
+          <div className="p-3 overflow-y-auto flex-1 space-y-2">
+            {faltasPendentes.length === 0 ? (
+              <p className="text-xs text-center text-muted-foreground mt-10">Nenhuma falta para auditar.</p>
+            ) : (
+              faltasPendentes.map(f => (
+                <div key={f.id} className="text-xs border rounded-lg p-2.5 bg-white shadow-sm hover:border-rose-200 transition-all">
+                  <div className="font-bold text-slate-800 truncate mb-1">{f.paciente?.nome}</div>
+                  <div className="text-[10px] text-muted-foreground mb-2 flex justify-between">
+                    <span>{format(new Date(f.data_inicio), "dd/MM 'às' HH:mm")}</span>
+                    <span className="uppercase text-slate-500">{f.profissional?.nome?.split(" ")[0]}</span>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <Button size="sm" variant="outline" className="h-7 text-[10px] flex-1 border-emerald-200 text-emerald-700 hover:bg-emerald-50" onClick={() => processarFalta(f.id, "abonada")}><CheckCircle className="w-3 h-3 mr-1"/> Abonar</Button>
+                    <Button size="sm" variant="outline" className="h-7 text-[10px] flex-1 border-rose-200 text-rose-700 hover:bg-rose-50" onClick={() => processarFalta(f.id, "cobrada")}><XCircle className="w-3 h-3 mr-1"/> Cobrar</Button>
+                  </div>
                 </div>
-                <div className="text-right shrink-0 flex flex-col items-end gap-1">
-                  <Badge className="bg-amber-600 text-white font-bold text-[10px] px-2 h-5">
-                    {g.sessoes_restantes} {g.sessoes_restantes === 1 ? "restante" : "restantes"}
-                  </Badge>
-                  <Button size="icon" variant="ghost" className="h-7 w-7 text-amber-700 hover:bg-amber-100" onClick={() => navigate(`/pacientes/${g.paciente_id}`)}>
-                    <ArrowRight className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-            ))}
-
-            {totalOrfaos > 0 && (
-              <div className="p-3 border border-blue-200 bg-blue-50/20 rounded-xl flex items-center justify-between gap-3 text-xs hover:bg-blue-50/40 transition-colors">
-                <div className="flex-1">
-                  <span className="font-bold text-blue-700 uppercase block text-[9px] tracking-wide mb-0.5">Auditoria de Vínculo</span>
-                  <p className="font-bold text-slate-800 text-sm">Existem {totalOrfaos} agendamentos "órfãos"</p>
-                  <p className="text-muted-foreground">Identifique os nomes importados do Google Calendar para liberar repasses.</p>
-                </div>
-                <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white font-semibold shrink-0 shadow-sm" onClick={() => navigate("/crm/vinculos")}>
-                  <Link2 className="w-3.5 h-3.5 mr-1" /> Resolver
-                </Button>
-              </div>
-            )}
-
-            {fichasIncompletas.map((f) => (
-              <div key={f.id} className="p-3 border border-slate-200 bg-slate-50/50 rounded-xl flex items-center justify-between gap-3 text-xs hover:bg-slate-100/50 transition-colors">
-                <div className="flex-1 min-w-0">
-                  <span className="font-bold text-slate-500 uppercase block text-[9px] tracking-wide mb-0.5">Dados em Falta</span>
-                  <p className="font-bold text-slate-800 truncate text-sm">{f.nome}</p>
-                  <p className="text-red-500 font-semibold text-[11px] mt-0.5">{f.motivo}</p>
-                </div>
-                <Button size="icon" variant="outline" className="h-8 w-8 shrink-0 text-slate-600" onClick={() => navigate(`/pacientes/${f.id}/editar`)}>
-                  <FileText className="w-4 h-4" />
-                </Button>
-              </div>
-            ))}
-
-            {guiasExpirando.length === 0 && totalOrfaos === 0 && fichasIncompletas.length === 0 && (
-              <div className="text-center py-12 text-sm text-muted-foreground border-2 border-dashed rounded-xl bg-slate-50/30">
-                🎉 Tudo em dia! Nenhuma pendência de guias ou cadastros pendentes hoje.
-              </div>
+              ))
             )}
           </div>
         </Card>
 
-        {/* BLOCO 3: CRM REDUZIDO & ANIVERSARIANTES */}
-        <div className="lg:col-span-5 space-y-4">
-          {aniversariantesHoje.length > 0 && (
-            <Card className="p-3.5 bg-gradient-to-br from-pink-50 to-rose-50 border-rose-200 border text-xs space-y-2.5 shadow-sm">
-              <div className="flex items-center gap-1.5 font-bold text-rose-700 uppercase tracking-wider text-[10px]">
-                <Cake className="w-4 h-4 text-rose-500 animate-bounce" />
-                <span>Aniversariantes de Hoje! 🎂</span>
-              </div>
-              <div className="space-y-1.5">
-                {aniversariantesHoje.map(p => (
-                  <div key={p.id} className="flex items-center justify-between p-2 bg-white rounded-lg border border-rose-100 shadow-sm text-xs">
-                    <span className="font-bold text-slate-700 truncate max-w-[60%]">{p.nome}</span>
-                    <Button size="sm" variant="outline" className="h-7 text-[11px] text-rose-700 border-rose-200 hover:bg-rose-100/50 font-semibold" onClick={() => parabenizar(p)}>
-                      <MessageCircle className="w-3 h-3 mr-1 text-rose-500" /> Mensagem
-                    </Button>
+        {/* Renovações de Convénios */}
+        <Card className="p-0 overflow-hidden shadow-sm border-t-4 border-t-blue-500 flex flex-col h-64">
+          <div className="bg-blue-50/50 p-3 border-b border-blue-100 flex items-center justify-between">
+            <h3 className="font-bold text-xs uppercase tracking-wider text-blue-700 flex items-center gap-1.5"><Stethoscope className="w-4 h-4"/> Renovar Guias</h3>
+            <Badge className="bg-blue-100 text-blue-700">{guiasRenovar.length}</Badge>
+          </div>
+          <div className="p-3 overflow-y-auto flex-1 space-y-2">
+            {guiasRenovar.length === 0 ? (
+              <p className="text-xs text-center text-muted-foreground mt-10">Nenhum convénio a expirar.</p>
+            ) : (
+              guiasRenovar.map(g => (
+                <div key={g.id} className="text-xs border rounded-lg p-2.5 bg-white shadow-sm flex items-center justify-between hover:border-blue-200 cursor-pointer" onClick={() => navigate(`/pacientes/${g.paciente_id}`)}>
+                  <div className="min-w-0">
+                    <div className="font-bold text-slate-800 truncate">{g.paciente?.nome}</div>
+                    <div className="text-[10px] text-blue-600 font-bold mt-0.5">{g.autorizacao?.plano} ({g.sessoes_restantes} restantes)</div>
                   </div>
-                ))}
-              </div>
-            </Card>
-          )}
+                  <Button size="sm" className="h-7 text-[10px] bg-blue-600">Pedir Guia</Button>
+                </div>
+              ))
+            )}
+          </div>
+        </Card>
 
-          <Card 
-            className="p-4 shadow-sm border-l-4 border-l-indigo-500 bg-white hover:shadow-md transition-all cursor-pointer group"
-            onClick={() => navigate("/crm")}
-          >
-            <div className="flex justify-between items-center border-b pb-2 mb-3">
-              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                <Users className="w-4 h-4 text-indigo-500" /> CRM: Lembretes de Amanhã
-              </h2>
-              <Badge className="bg-indigo-50 text-indigo-700 border-indigo-200 font-bold px-2 h-5 text-[10px] group-hover:bg-indigo-600 group-hover:text-white transition-colors">
-                {format(dataCrmAlvo, "dd/MM", { locale: ptBR })}
-              </Badge>
-            </div>
-
-            <p className="text-[11px] text-muted-foreground mb-3 bg-indigo-50/40 p-2 rounded-lg text-center">
-              Pacientes agendados para <span className="font-bold capitalize text-indigo-700">{format(dataCrmAlvo, "eeee", { locale: ptBR })}</span>. Clique para gerenciar os envios.
-            </p>
-
-            <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
-              {atendimentosAmanha.length === 0 ? (
-                <p className="text-xs text-muted-foreground text-center py-4">Nenhum atendimento agendado para o próximo dia útil.</p>
-              ) : (
-                atendimentosAmanha.map((at) => (
-                  <div key={at.id} className="p-2 border rounded-lg bg-slate-50/50 flex justify-between items-center text-xs">
-                    <div className="truncate font-bold text-slate-700 max-w-[60%]">
-                      {at.paciente?.nome || at.nome_paciente_livre || "Particular"}
-                    </div>
-                    <div className="text-[11px] text-muted-foreground shrink-0 text-right font-medium">
-                      {at.profissional?.nome?.split(" ")[0]} · <span className="font-bold text-slate-600">{format(new Date(at.data_inicio), "HH:mm")}</span>
-                    </div>
+        {/* Evoluções Atrasadas */}
+        <Card className="p-0 overflow-hidden shadow-sm border-t-4 border-t-amber-500 flex flex-col h-64">
+          <div className="bg-amber-50/50 p-3 border-b border-amber-100 flex items-center justify-between">
+            <h3 className="font-bold text-xs uppercase tracking-wider text-amber-700 flex items-center gap-1.5"><Clock className="w-4 h-4"/> Prontuários Atrasados</h3>
+            <Badge className="bg-amber-100 text-amber-700">{evolucoesAtrasadas.length}</Badge>
+          </div>
+          <div className="p-3 overflow-y-auto flex-1 space-y-2">
+            {evolucoesAtrasadas.length === 0 ? (
+              <p className="text-xs text-center text-muted-foreground mt-10">Evoluções em dia!</p>
+            ) : (
+              evolucoesAtrasadas.map(e => (
+                <div key={e.id} className="text-xs border rounded-lg p-2 bg-amber-50/30 border-amber-100 shadow-sm">
+                  <span className="font-bold text-amber-800 block mb-0.5">{e.profissional?.nome?.split(" ")[0] || "Fisio"}</span>
+                  <div className="flex justify-between items-center text-slate-600">
+                    <span className="truncate max-w-[120px]">{e.paciente?.nome}</span>
+                    <span className="text-[10px] bg-white px-1.5 py-0.5 rounded border">{format(new Date(e.data_inicio), "dd/MM")}</span>
                   </div>
-                ))
-              )}
+                </div>
+              ))
+            )}
+          </div>
+        </Card>
+
+      </div>
+
+      {/* 2º ANDAR: INDICADORES E GRÁFICOS (BI) */}
+      <h2 className="text-lg font-bold text-slate-800 mt-8 mb-4 border-b pb-2 flex items-center gap-2">
+        <TrendingUp className="w-5 h-5 text-indigo-600"/> Indicadores de Desempenho (Mês Atual)
+      </h2>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        
+        {/* Gráfico 1: Ritmo de Atendimentos */}
+        <Card className="p-4 shadow-sm">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-4 text-center">Curva de Atendimentos Mensal</h3>
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={dadosGraficoLinha}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="dia" tick={{fontSize: 10}} tickLine={false} axisLine={false} />
+                <YAxis tick={{fontSize: 10}} tickLine={false} axisLine={false} />
+                <ChartTooltip contentStyle={{ borderRadius: '8px', fontSize: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                <Line type="monotone" dataKey="Atendimentos" stroke="#4f46e5" strokeWidth={3} dot={{r: 4, strokeWidth: 2}} activeDot={{r: 6}} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Gráfico 2: Particular vs Convénios */}
+          <Card className="p-4 shadow-sm flex flex-col justify-center items-center">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 text-center w-full">Receita: Particular vs Planos</h3>
+            <div className="h-48 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={distribuicaoConvenios} innerRadius={50} outerRadius={70} paddingAngle={3} dataKey="value">
+                    {distribuicaoConvenios.map((entry, index) => <Cell key={`cell-${index}`} fill={CORES_PIZZA[index % CORES_PIZZA.length]} />)}
+                  </Pie>
+                  <ChartTooltip contentStyle={{ fontSize: '12px', borderRadius: '8px' }} />
+                  <Legend verticalAlign="bottom" height={36} wrapperStyle={{ fontSize: '10px', paddingTop: '10px' }} />
+                </PieChart>
+              </ResponsiveContainer>
             </div>
-            
-            <div className="text-right text-[11px] font-bold text-indigo-600 mt-4 group-hover:underline flex items-center justify-end gap-1">
-              Abrir Painel CRM Completo <ArrowRight className="w-3 h-3" />
+          </Card>
+
+          {/* Gráfico 3: Ocupação por Profissional */}
+          <Card className="p-4 shadow-sm flex flex-col justify-center items-center">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 text-center w-full">Ocupação / Repasses Estimados</h3>
+            <div className="h-48 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={dadosOcupacao} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="name" tick={{fontSize: 10}} tickLine={false} axisLine={false} />
+                  <YAxis tick={{fontSize: 10}} tickLine={false} axisLine={false} />
+                  <ChartTooltip cursor={{fill: '#f8fafc'}} contentStyle={{ fontSize: '12px', borderRadius: '8px' }} />
+                  <Bar dataKey="Atendimentos" fill="#0ea5e9" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
           </Card>
         </div>
