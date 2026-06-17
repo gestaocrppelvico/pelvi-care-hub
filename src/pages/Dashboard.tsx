@@ -10,7 +10,9 @@ import { abrirWhatsapp } from "@/lib/crm";
 import { format, addDays, startOfDay, endOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
+// Importação dos painéis secundários (Garanta que os dois arquivos existam na mesma pasta)
 import DashboardFisio from "./DashboardFisio";
+import DashboardSecretaria from "./DashboardSecretaria";
 
 export default function Dashboard() {
   const { user, isFisio, isSecretaria, isAdmin } = useAuth();
@@ -18,7 +20,7 @@ export default function Dashboard() {
   const [nome, setNome] = useState("");
   const [loading, setLoading] = useState(true);
 
-  // Estados dos blocos de dados
+  // Estados dos blocos de dados (Painel de Gestão)
   const [atendimentosHoje, setAtendimentosHoje] = useState<any[]>([]);
   const [atendimentosAmanha, setAtendimentosAmanha] = useState<any[]>([]);
   const [aniversariantesHoje, setAniversariantesHoje] = useState<any[]>([]);
@@ -34,16 +36,24 @@ export default function Dashboard() {
       if (!user) return;
       setLoading(true);
       try {
-        // 1. Nome do Usuário
+        // 1. Pega o Nome do Usuário
         const { data: prof } = await supabase.from("profiles").select("nome_completo").eq("id", user.id).maybeSingle();
         setNome(prof?.nome_completo?.split(" ")[0] ?? "");
 
+        // 2. OTIMIZAÇÃO: Se for a Íris ou as Fisios, nós encerramos a busca aqui. 
+        // Não precisamos carregar os dados pesados de Admin para elas.
+        if ((isSecretaria && !isAdmin) || (isFisio && !isAdmin && !isSecretaria)) {
+          setLoading(false);
+          return; 
+        }
+
+        // 3. Daqui para baixo, carrega APENAS se for o seu Painel (Admin)
         const hoje = new Date();
         const startHoje = startOfDay(hoje).toISOString();
         const endHoje = endOfDay(hoje).toISOString();
 
-        // Cálculo da Data Inteligente para o CRM Reduzido (Próximo Dia Útil)
-        const diaSemana = hoje.getDay(); // 5 = Sexta, 6 = Sábado, 0 = Domingo
+        // Cálculo da Data Inteligente para o CRM
+        const diaSemana = hoje.getDay();
         let dataProxima = addDays(hoje, 1);
         if (diaSemana === 5) dataProxima = addDays(hoje, 3);
         if (diaSemana === 6) dataProxima = addDays(hoje, 2);
@@ -53,7 +63,7 @@ export default function Dashboard() {
         const startProximo = startOfDay(dataProxima).toISOString();
         const endProximo = endOfDay(dataProxima).toISOString();
 
-        // Executa todas as consultas de auditoria em paralelo para máxima performance
+        // Busca dados de Admin em paralelo
         const [
           resHoje,
           resProximo,
@@ -61,15 +71,10 @@ export default function Dashboard() {
           resGuias,
           resOrfaos
         ] = await Promise.all([
-          // Atendimentos de Hoje
           supabase.from("atendimentos").select("id, data_inicio, status, nome_paciente_livre, paciente:pacientes(nome), profissional:profissionais(nome)").gte("data_inicio", startHoje).lte("data_inicio", endHoje).not("status", "eq", "cancelado"),
-          // Atendimentos do Próximo dia útil (CRM)
           supabase.from("atendimentos").select("id, data_inicio, nome_paciente_livre, paciente:pacientes(nome), profissional:profissionais(nome)").gte("data_inicio", startProximo).lte("data_inicio", endProximo).eq("status", "agendado"),
-          // Todos os pacientes ativos para cálculo de aniversários e fichas incompletas
           supabase.from("pacientes").select("id, nome, telefone, data_nascimento").eq("ativo", true),
-          // Gatilho: Contratos ou guias com saldo terminando (<= 2 sessões)
           supabase.from("paciente_pacotes").select("id, sessoes_restantes, sessoes_totais, paciente_id, paciente:pacientes(nome), pacote:pacotes(nome), servico:servicos(nome), autorizacao:autorizacoes(plano)").gt("sessoes_restantes", 0).lte("sessoes_restantes", 2),
-          // Gatilho: Quantidade de atendimentos sem vínculo
           supabase.from("atendimentos").select("id", { count: "exact", head: true }).is("paciente_id", null)
         ]);
 
@@ -78,17 +83,14 @@ export default function Dashboard() {
         setTotalOrfaos(resOrfaos.count || 0);
         setGuiasExpirando(resGuias.data || []);
 
-        // Processa Aniversariantes e Fichas Incompletas localmente
         const mmDdHoje = format(hoje, "MM-dd");
         const nivers: any[] = [];
         const incompletas: any[] = [];
 
         (resPacientes.data || []).forEach((p) => {
-          // Verifica Aniversário hoje
           if (p.data_nascimento && p.data_nascimento.slice(5) === mmDdHoje) {
             nivers.push(p);
           }
-          // Gatilho: Dados em falta na Ficha (Sem telefone ou sem data de nascimento)
           if (!p.telefone || !p.data_nascimento) {
             incompletas.push({
               id: p.id,
@@ -103,19 +105,18 @@ export default function Dashboard() {
         });
 
         setAniversariantesHoje(nivers);
-        setFichasIncompletas(incompletas.slice(0, 5)); // Exibe no máximo as 5 mais antigas para organizar o layout
+        setFichasIncompletas(incompletas.slice(0, 5));
 
       } catch (err) {
-        console.error("Erro ao carregar os blocos do dashboard:", err);
+        console.error("Erro ao carregar os blocos do dashboard admin:", err);
       } finally {
         setLoading(false);
       }
     };
 
     carregarDashboard();
-  }, [user]);
+  }, [user, isSecretaria, isAdmin, isFisio]);
 
-  // Agrupa os atendimentos de hoje por profissional fisio
   const atendimentosAgrupadosPorProf = useMemo(() => {
     const grupos: Record<string, any[]> = {};
     atendimentosHoje.forEach((at) => {
@@ -131,9 +132,23 @@ export default function Dashboard() {
     abrirWhatsapp(p.telefone, msg, isSecretaria);
   };
 
+  // =========================================================================
+  // DESVIOS DE ROTA: A MÁGICA ACONTECE AQUI
+  // =========================================================================
+
+  // 1. Se for a Íris, desenha a tela dela e encerra o código aqui.
+  if (isSecretaria && !isAdmin) {
+    return <DashboardSecretaria nomeUsuario={nome} />;
+  }
+
+  // 2. Se for Fisioterapeuta, desenha a tela dela e encerra o código aqui.
   if (isFisio && !isAdmin && !isSecretaria) {
     return <DashboardFisio />;
   }
+
+  // =========================================================================
+  // PAINEL GERENCIAL (FELIPE E JULIANA) - SÓ CHEGA AQUI SE FOR ADMIN
+  // =========================================================================
 
   if (loading) return <div className="p-8 text-center text-muted-foreground animate-pulse">A carregar o Centro de Comando...</div>;
 
@@ -141,11 +156,10 @@ export default function Dashboard() {
     <div className="space-y-5 p-2">
       {/* Cabeçalho de Boas-vindas */}
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-800">Olá, {nome || "Secretária"} 👋</h1>
-        <p className="text-xs text-muted-foreground">Bem-vinda ao seu painel de monitorização diária.</p>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-800">Olá, {nome || "Administrador"} 👋</h1>
+        <p className="text-xs text-muted-foreground">Bem-vindo ao seu painel de monitorização diária e auditoria.</p>
       </div>
 
-      {/* CORREÇÃO DO LAYOUT: BOTÃO DA AGENDA E PACIENTES LADO A LADO */}
       <div className="grid grid-cols-2 gap-4">
         <Link to="/agenda">
           <Card className="p-4 flex items-center gap-3 hover:bg-blue-50/50 hover:border-blue-300 transition-all cursor-pointer border shadow-sm">
@@ -172,9 +186,7 @@ export default function Dashboard() {
         </Link>
       </div>
 
-      {/* ---------------------------------------------------------------------- */}
-      {/* BLOCO 1: RESUMO DE ATENDIMENTOS DO DIA (SEPARADO POR PROFISSIONAL) */}
-      {/* ---------------------------------------------------------------------- */}
+      {/* BLOCO 1: RESUMO DE ATENDIMENTOS DO DIA */}
       <Card className="p-4 shadow-sm border-t-4 border-t-blue-600">
         <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-2">
           <Clock className="w-4 h-4 text-blue-600" /> Atendimentos Programados para Hoje
@@ -210,19 +222,15 @@ export default function Dashboard() {
         )}
       </Card>
 
-      {/* PAINEL CENTRAL INFERIOR DIVIDIDO EM DUAS COLUNAS */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         
-        {/* ---------------------------------------------------------------------- */}
-        {/* BLOCO 2: GATILHOS INTELIGENTES (SMART TASKS) */}
-        {/* ---------------------------------------------------------------------- */}
+        {/* BLOCO 2: GATILHOS INTELIGENTES (ADMIN) */}
         <Card className="p-4 shadow-sm lg:col-span-7 space-y-3">
           <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500 border-b pb-2 flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-500" /> Ações e Alertas Pendentes
+            <AlertTriangle className="w-4 h-4 text-amber-500" /> Ações e Auditorias (Admin)
           </h2>
 
           <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
-            {/* Gatilho de Guias/Sessões terminando */}
             {guiasExpirando.map((g) => (
               <div key={g.id} className="p-3 border border-amber-200 bg-amber-50/30 rounded-xl flex items-center justify-between gap-3 text-xs hover:bg-amber-50/50 transition-colors">
                 <div className="flex-1 min-w-0">
@@ -241,7 +249,6 @@ export default function Dashboard() {
               </div>
             ))}
 
-            {/* Gatilho de Vínculos pendentes na Agenda */}
             {totalOrfaos > 0 && (
               <div className="p-3 border border-blue-200 bg-blue-50/20 rounded-xl flex items-center justify-between gap-3 text-xs hover:bg-blue-50/40 transition-colors">
                 <div className="flex-1">
@@ -255,7 +262,6 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* Gatilho de Fichas Incompletas (Falta telefone ou nascimento) */}
             {fichasIncompletas.map((f) => (
               <div key={f.id} className="p-3 border border-slate-200 bg-slate-50/50 rounded-xl flex items-center justify-between gap-3 text-xs hover:bg-slate-100/50 transition-colors">
                 <div className="flex-1 min-w-0">
@@ -269,7 +275,6 @@ export default function Dashboard() {
               </div>
             ))}
 
-            {/* Estado Vazio */}
             {guiasExpirando.length === 0 && totalOrfaos === 0 && fichasIncompletas.length === 0 && (
               <div className="text-center py-12 text-sm text-muted-foreground border-2 border-dashed rounded-xl bg-slate-50/30">
                 🎉 Tudo em dia! Nenhuma pendência de guias ou cadastros pendentes hoje.
@@ -278,12 +283,8 @@ export default function Dashboard() {
           </div>
         </Card>
 
-        {/* ---------------------------------------------------------------------- */}
         {/* BLOCO 3: CRM REDUZIDO & ANIVERSARIANTES */}
-        {/* ---------------------------------------------------------------------- */}
         <div className="lg:col-span-5 space-y-4">
-          
-          {/* Banner Festivo de Aniversariantes */}
           {aniversariantesHoje.length > 0 && (
             <Card className="p-3.5 bg-gradient-to-br from-pink-50 to-rose-50 border-rose-200 border text-xs space-y-2.5 shadow-sm">
               <div className="flex items-center gap-1.5 font-bold text-rose-700 uppercase tracking-wider text-[10px]">
@@ -303,7 +304,6 @@ export default function Dashboard() {
             </Card>
           )}
 
-          {/* Mini-CRM: Confirmações do Próximo Dia Útil */}
           <Card 
             className="p-4 shadow-sm border-l-4 border-l-indigo-500 bg-white hover:shadow-md transition-all cursor-pointer group"
             onClick={() => navigate("/crm")}
