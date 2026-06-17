@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Clock, RefreshCw, ChevronLeft, ChevronRight, Plus, Calendar as CalendarIcon } from "lucide-react";
+import { Clock, RefreshCw, ChevronLeft, ChevronRight, Plus, Calendar as CalendarIcon, Link2 } from "lucide-react";
 
 interface Atendimento {
   id: string;
@@ -43,6 +43,10 @@ export default function Agenda() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [statusForm, setStatusForm] = useState("agendado");
   const [busy, setBusy] = useState(false);
+
+  // NOVO: Estados para a ferramenta de sugestão e vínculo inline
+  const [buscaPaciente, setBuscaPaciente] = useState("");
+  const [pacientesSugeridos, setPacientesSugeridos] = useState<any[]>([]);
 
   // Carrega os atendimentos do banco de dados
   const carregarAtendimentos = useCallback(async () => {
@@ -86,6 +90,33 @@ export default function Agenda() {
     carregarAtendimentos();
   }, [carregarAtendimentos]);
 
+  // NOVO: Motor de busca em tempo real para sugestão de pacientes cadastrados
+  useEffect(() => {
+    if (buscaPaciente.trim().length < 2) {
+      setPacientesSugeridos([]);
+      return;
+    }
+
+    const buscarPacientes = async () => {
+      const { data, error } = await supabase
+        .from("pacientes")
+        .select("id, nome, telefone")
+        .ilike("nome", `%${buscaPaciente}%`)
+        .eq("ativo", true)
+        .limit(5);
+
+      if (!error && data) {
+        setPacientesSugeridos(data);
+      }
+    };
+
+    const delayDebounce = setTimeout(() => {
+      buscarPacientes();
+    }, 300);
+
+    return () => clearTimeout(delayDebounce);
+  }, [buscaPaciente]);
+
   const mapeamentoDias = useMemo(() => {
     const mapa = new Map<string, Atendimento[]>();
     atendimentos.forEach((at) => {
@@ -99,29 +130,53 @@ export default function Agenda() {
   const abrirEdicao = (at: Atendimento) => {
     setSelectedAtend(at);
     setStatusForm(at.status);
+    setBuscaPaciente(""); // Limpa a busca anterior
+    setPacientesSugeridos([]);
     setSheetOpen(true);
   };
 
-  // ----------------------------------------------------------------------
-  // FUNÇÃO REESCRITA COM AS TRAVAS ORIGINAIS DE VERIFICAÇÃO DE SALDO E VÍNCULO
-  // ----------------------------------------------------------------------
+  // NOVO: Função para executar o vínculo direto do paciente órfão
+  const handleVincularPacienteDirect = async (idPaciente: string, nomePaciente: string) => {
+    if (!selectedAtend) return;
+
+    try {
+      const { error } = await supabase
+        .from("atendimentos")
+        .update({ paciente_id: idPaciente })
+        .eq("id", selectedAtend.id);
+
+      if (error) throw error;
+
+      toast.success(`Sucesso: Agendamento vinculado à ficha de ${nomePaciente}!`);
+      
+      // Atualiza o estado local para liberar o check-in imediatamente na tela
+      setSelectedAtend(prev => prev ? { 
+        ...prev, 
+        paciente_id: idPaciente, 
+        paciente: { nome: nomePaciente, telefone: prev.telefone_contato } 
+      } : null);
+      
+      setBuscaPaciente("");
+      setPacientesSugeridos([]);
+      carregarAtendimentos(); // Recarrega os dados de fundo da agenda
+    } catch (err: any) {
+      toast.error("Erro ao vincular paciente: " + err.message);
+    }
+  };
+
   const handleSalvarStatus = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedAtend) return;
 
     setBusy(true);
     try {
-      // REGRA: Apenas aplicar validações se a tentativa for de dar CHECK-IN (Realizado)
       if (statusForm === "realizado") {
-        
-        // 1. O Paciente DEVE estar cadastrado (vínculo de paciente_id existe)
         if (!selectedAtend.paciente_id) {
-          toast.error("Ação bloqueada: Este paciente não possui cadastro no sistema. Edite o agendamento e vincule a uma ficha antes de dar o check-in.");
+          toast.error("Ação bloqueada: Este paciente não possui cadastro no sistema. Vincule a uma ficha antes de dar o check-in.");
           setBusy(false);
           return;
         }
 
-        // 2. O Paciente DEVE ter um pacote ativo com pelo menos 1 sessão restante
         const { data: pacotes, error: pacotesError } = await supabase
           .from("paciente_pacotes")
           .select("id, sessoes_restantes")
@@ -137,7 +192,6 @@ export default function Agenda() {
         }
       }
 
-      // Se passou nas travas (ou se for falta/cancelado), grava a alteração
       const { error } = await supabase
         .from("atendimentos")
         .update({ status: statusForm })
@@ -288,7 +342,7 @@ export default function Agenda() {
 
       {/* PAINEL LATERAL (SHEET) PARA ATUALIZAÇÃO DO STATUS */}
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-        <SheetContent side="right" className="w-full sm:max-w-md p-5 space-y-4">
+        <SheetContent side="right" className="w-full sm:max-w-md p-5 space-y-4 overflow-y-auto">
           <SheetHeader>
             <SheetTitle className="text-lg font-bold text-slate-800">Gerenciar Atendimento</SheetTitle>
           </SheetHeader>
@@ -301,7 +355,41 @@ export default function Agenda() {
             </div>
           )}
 
-          <form onSubmit={handleSalvarStatus} className="space-y-5 pt-2">
+          {/* FERRAMENTA INLINE: VINCULAR PACIENTE CADASTRADO CASO SEJA UM AGENDAMENTO AVULSO */}
+          {selectedAtend && !selectedAtend.paciente_id && (
+            <div className="space-y-2 border-2 border-dashed border-indigo-200 p-3.5 rounded-xl bg-indigo-50/40">
+              <Label className="text-xs font-black uppercase tracking-wider text-indigo-700 flex items-center gap-1">
+                <Link2 className="w-3.5 h-3.5"/> Encontrar Cadastro da Paciente
+              </Label>
+              <p className="text-[11px] text-indigo-600 font-medium">Digite abaixo o nome para localizar a ficha e liberar o check-in:</p>
+              <Input 
+                placeholder="Ex: Maria Silva..." 
+                value={buscaPaciente}
+                onChange={(e) => setBuscaPaciente(e.target.value)}
+                className="bg-white h-10 text-xs shadow-sm"
+              />
+              {pacientesSugeridos.length > 0 && (
+                <div className="border bg-white rounded-lg p-1 divide-y shadow-md max-h-[160px] overflow-y-auto mt-1.5 animate-in fade-in zoom-in-95 duration-150">
+                  {pacientesSugeridos.map(p => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => handleVincularPacienteDirect(p.id, p.nome)}
+                      className="w-full text-left px-2.5 py-2 hover:bg-indigo-50 text-xs font-bold text-slate-700 transition-colors flex justify-between items-center group"
+                    >
+                      <span className="group-hover:text-indigo-700">{p.nome}</span>
+                      <Badge variant="outline" className="text-[10px] py-0 font-semibold bg-indigo-50/50 text-indigo-600 border-indigo-100">Vincular</Badge>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {buscaPaciente.trim().length >= 2 && pacientesSugeridos.length === 0 && (
+                <p className="text-[11px] text-muted-foreground italic pl-1 pt-1">Nenhuma ficha ativa encontrada com este nome...</p>
+              )}
+            </div>
+          )}
+
+          <form onSubmit={handleSalvarStatus} className="space-y-5 pt-1">
             <div className="space-y-2">
               <Label htmlFor="status" className="text-xs font-bold uppercase tracking-wider text-slate-500">Alterar Status da Sessão</Label>
               <Select value={statusForm} onValueChange={setStatusForm}>
@@ -321,11 +409,10 @@ export default function Agenda() {
             {statusForm === "realizado" && !selectedAtend?.paciente_id && (
               <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800 space-y-1">
                 <p className="font-bold">⚠️ Check-in Bloqueado:</p>
-                <p>Este atendimento está sem paciente vinculado. Apenas marcar o nome na agenda não contabiliza o pacote. <strong>Edite o agendamento e vincule a ficha</strong> para liberar o check-in.</p>
+                <p>Este atendimento está sem ficha associada. Use o campo acima para vincular o cadastro antes de confirmar.</p>
               </div>
             )}
 
-            {/* INFORMAÇÃO PARA FALTAS */}
             {statusForm === "faltou" && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800 space-y-1">
                 <p className="font-bold">💡 Informação Operacional:</p>
