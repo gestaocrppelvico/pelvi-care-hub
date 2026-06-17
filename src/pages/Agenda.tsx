@@ -68,7 +68,6 @@ export default function Agenda() {
         .gte("data_inicio", start.toISOString())
         .lte("data_inicio", end.toISOString());
 
-      // Se houver um filtro vindo do clique do card da secretária, filtra por profissional
       if (profFiltroUrl) {
         query = query.eq("profissional_id", profFiltroUrl);
       }
@@ -87,7 +86,6 @@ export default function Agenda() {
     carregarAtendimentos();
   }, [carregarAtendimentos]);
 
-  // Organiza os atendimentos por dia para facilitar renderização nas visões semana/mês
   const mapeamentoDias = useMemo(() => {
     const mapa = new Map<string, Atendimento[]>();
     atendimentos.forEach((at) => {
@@ -98,20 +96,48 @@ export default function Agenda() {
     return mapa;
   }, [atendimentos]);
 
-  // Abre o painel lateral para editar status do atendimento
   const abrirEdicao = (at: Atendimento) => {
     setSelectedAtend(at);
     setStatusForm(at.status);
     setSheetOpen(true);
   };
 
-  // Salva a alteração do status (Tratando a Falta como congelamento)
+  // ----------------------------------------------------------------------
+  // FUNÇÃO REESCRITA COM AS TRAVAS ORIGINAIS DE VERIFICAÇÃO DE SALDO E VÍNCULO
+  // ----------------------------------------------------------------------
   const handleSalvarStatus = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedAtend) return;
 
     setBusy(true);
     try {
+      // REGRA: Apenas aplicar validações se a tentativa for de dar CHECK-IN (Realizado)
+      if (statusForm === "realizado") {
+        
+        // 1. O Paciente DEVE estar cadastrado (vínculo de paciente_id existe)
+        if (!selectedAtend.paciente_id) {
+          toast.error("Ação bloqueada: Este paciente não possui cadastro no sistema. Edite o agendamento e vincule a uma ficha antes de dar o check-in.");
+          setBusy(false);
+          return;
+        }
+
+        // 2. O Paciente DEVE ter um pacote ativo com pelo menos 1 sessão restante
+        const { data: pacotes, error: pacotesError } = await supabase
+          .from("paciente_pacotes")
+          .select("id, sessoes_restantes")
+          .eq("paciente_id", selectedAtend.paciente_id)
+          .gt("sessoes_restantes", 0);
+
+        if (pacotesError) throw pacotesError;
+
+        if (!pacotes || pacotes.length === 0) {
+          toast.error("Ação bloqueada: Paciente sem sessões disponíveis. Lance um novo pacote ou venda avulsa no financeiro do paciente.");
+          setBusy(false);
+          return;
+        }
+      }
+
+      // Se passou nas travas (ou se for falta/cancelado), grava a alteração
       const { error } = await supabase
         .from("atendimentos")
         .update({ status: statusForm })
@@ -119,7 +145,7 @@ export default function Agenda() {
 
       if (error) throw error;
 
-      toast.success("Status do agendamento atualizado!");
+      toast.success("Status do agendamento atualizado com sucesso!");
       setSheetOpen(false);
       carregarAtendimentos();
     } catch (err: any) {
@@ -129,7 +155,6 @@ export default function Agenda() {
     }
   };
 
-  // Navegação de datas
   const handleAnterior = () => {
     if (view === "day") setCurrentDate(prev => addDays(prev, -1));
     else if (view === "week") setCurrentDate(prev => addWeeks(prev, -1));
@@ -142,7 +167,6 @@ export default function Agenda() {
     else setCurrentDate(prev => addMonths(prev, 1));
   };
 
-  // Estilização dinâmica baseada no status do atendimento (CORREÇÃO DA FALTA AQUI)
   const obterEstiloCard = (status: string, corProfissional?: string) => {
     if (status === "faltou") {
       return "border-l-4 border-slate-400 bg-slate-100/80 text-slate-400 shadow-none opacity-70";
@@ -153,14 +177,12 @@ export default function Agenda() {
     if (status === "cancelado") {
       return "border-l-4 border-red-300 bg-red-50/30 text-red-400 line-through";
     }
-    // Status Padrão (Agendado) usa a cor definida para o profissional
     return `border-l-4 bg-white text-slate-800 shadow-sm`;
   };
 
   return (
     <div className="space-y-4 p-2 max-w-7xl mx-auto">
       
-      {/* CABEÇALHO E CONTROLES DA AGENDA */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-white p-3 rounded-xl border shadow-sm">
         <div className="flex items-center gap-2">
           <Button variant="outline" size="icon" onClick={handleAnterior}><ChevronLeft className="w-4 h-4" /></Button>
@@ -193,12 +215,9 @@ export default function Agenda() {
         </div>
       )}
 
-      {/* RENDERIZAÇÃO DAS VISÕES */}
       {loading ? (
         <div className="py-20 text-center text-sm text-muted-foreground animate-pulse">A sintonizar os horários...</div>
       ) : view === "day" ? (
-        
-        /* --- VISÃO DIÁRIA --- */
         <div className="space-y-2">
           {atendimentos.length === 0 ? (
             <div className="text-center py-16 border-2 border-dashed rounded-xl bg-white text-muted-foreground text-sm">Nenhum atendimento agendado para este dia.</div>
@@ -232,8 +251,6 @@ export default function Agenda() {
           )}
         </div>
       ) : (
-        
-        /* --- VISÃO SEMANAL / MENSAL RESUMIDA --- */
         <div className="bg-white rounded-xl border p-3 shadow-sm">
           <div className="grid grid-cols-7 gap-1 text-center font-bold text-xs text-slate-500 uppercase tracking-wider mb-2 pb-2 border-b">
             {["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"].map(d => <div key={d}>{d}</div>)}
@@ -300,12 +317,27 @@ export default function Agenda() {
               </Select>
             </div>
 
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800 space-y-1">
-              <p className="font-bold">💡 Informação Operacional:</p>
-              <p>Marcar como <strong>Faltou</strong> colocará esta sessão em análise para os administradores. Nenhuma sessão será cobrada do paciente até a validação gerencial.</p>
-            </div>
+            {/* AVISO VISUAL DE BLOQUEIO SE O PACIENTE NÃO ESTIVER CADASTRADO */}
+            {statusForm === "realizado" && !selectedAtend?.paciente_id && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800 space-y-1">
+                <p className="font-bold">⚠️ Check-in Bloqueado:</p>
+                <p>Este atendimento está sem paciente vinculado. Apenas marcar o nome na agenda não contabiliza o pacote. <strong>Edite o agendamento e vincule a ficha</strong> para liberar o check-in.</p>
+              </div>
+            )}
 
-            <Button type="submit" className="w-full h-12 text-sm font-bold bg-blue-600 hover:bg-blue-700" disabled={busy}>
+            {/* INFORMAÇÃO PARA FALTAS */}
+            {statusForm === "faltou" && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800 space-y-1">
+                <p className="font-bold">💡 Informação Operacional:</p>
+                <p>Marcar como <strong>Faltou</strong> colocará esta sessão em análise para os administradores. Nenhuma sessão será cobrada do paciente até a validação gerencial.</p>
+              </div>
+            )}
+
+            <Button 
+              type="submit" 
+              className="w-full h-12 text-sm font-bold bg-blue-600 hover:bg-blue-700 disabled:opacity-50" 
+              disabled={busy || (statusForm === "realizado" && !selectedAtend?.paciente_id)}
+            >
               {busy ? "A atualizar..." : "Confirmar Alteração"}
             </Button>
           </form>
