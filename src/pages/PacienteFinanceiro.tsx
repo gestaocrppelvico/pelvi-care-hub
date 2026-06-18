@@ -37,10 +37,15 @@ export default function PacienteFinanceiro() {
   const [lancamentoProfissionalId, setLancamentoProfissionalId] = useState("");
   const [lancamentoPacoteId, setLancamentoPacoteId] = useState("avulso");
   
-  // Estados para o Modal de Edição Direta
+  // Estados para o Modal de Edição Direta (contratos)
   const [modalEdicaoPacote, setModalEdicaoPacote] = useState(false);
   const [pacoteEditando, setPacoteEditando] = useState<any>(null);
   const [editForm, setEditForm] = useState({ sessoes_totais: 0, sessoes_restantes: 0, preco_pago: 0, status_pagamento: "pendente" });
+
+  // Estados para Edição/Exclusão de Pagamentos
+  const [pagamentoEditando, setPagamentoEditando] = useState<any>(null);
+  const [formPag, setFormPag] = useState({ valor: "", forma: "dinheiro", data_pagamento: "", observacoes: "" });
+  const [modalPagAberto, setModalPagAberto] = useState(false);
 
   const [novoPag, setNovoPag] = useState<any>({
     valor: "",
@@ -57,7 +62,6 @@ export default function PacienteFinanceiro() {
       const { data: pac } = await supabase.from("pacientes").select("*").eq("id", pacienteId).maybeSingle();
       setPaciente(pac);
 
-      // CORREÇÃO: Filtramos "cancelado" para não aparecerem "fantasmas"
       const { data: pacs } = await supabase
         .from("paciente_pacotes")
         .select("*, pacote:pacotes(nome), autorizacao:autorizacoes(plano, numero_guia), servico:servicos(nome)")
@@ -116,37 +120,53 @@ export default function PacienteFinanceiro() {
     } catch (err: any) { toast.error("Erro: " + err.message); }
   };
 
-  const realizarLancamentoRetroativo = async () => {
-    if (!lancamentoProfissionalId) { toast.error("Selecione a profissional!"); return; }
-    if (!lancamentoData || !lancamentoHora) { toast.error("Data e hora são obrigatórios!"); return; }
+  // ========== NOVAS FUNÇÕES PARA PAGAMENTOS ==========
 
-    const dataCompleta = new Date(`${lancamentoData}T${lancamentoHora}:00`);
-    const ehConvenio = pacientePacotes.find(p => p.id === lancamentoPacoteId)?.autorizacao !== null;
-    const tipoAtend = (ehConvenio && lancamentoPacoteId !== "avulso") ? "Plano" : "Particular";
-
-    const payloadAtendimento: any = {
-      paciente_id: pacienteId,
-      profissional_id: lancamentoProfissionalId,
-      data_inicio: dataCompleta.toISOString(),
-      data_fim: new Date(dataCompleta.getTime() + 60 * 60000).toISOString(),
-      status: "realizado", 
-      tipo: tipoAtend
-    };
-
-    if (lancamentoPacoteId !== "avulso") payloadAtendimento.paciente_pacote_id = lancamentoPacoteId;
-
-    try {
-      const { error } = await supabase.from("atendimentos").insert(payloadAtendimento);
-      if (error) throw error;
-      toast.success("Lançamento registrado! Repasse gerado com sucesso.");
-      setModalLancamentoAberto(false);
-      carregarDados();
-    } catch (err: any) {
-      toast.error("Erro ao lançar: " + err.message);
-    }
+  const abrirEdicaoPagamento = (pag: any) => {
+    setPagamentoEditando(pag);
+    setFormPag({
+      valor: String(pag.valor),
+      forma: pag.forma || "dinheiro",
+      data_pagamento: pag.data_pagamento || new Date().toISOString().split("T")[0],
+      observacoes: pag.observacoes || ""
+    });
+    setModalPagAberto(true);
   };
 
-  // FUNÇÕES DE EDIÇÃO E EXCLUSÃO
+  const salvarEdicaoPagamento = async () => {
+    if (!pagamentoEditando || !formPag.valor) {
+      toast.error("Preencha o valor.");
+      return;
+    }
+    try {
+      const { error } = await supabase
+        .from("pagamentos")
+        .update({
+          valor: parseFloat(formPag.valor),
+          forma: formPag.forma,
+          data_pagamento: formPag.data_pagamento,
+          observacoes: formPag.observacoes || null
+        })
+        .eq("id", pagamentoEditando.id);
+      if (error) throw error;
+      toast.success("Pagamento atualizado!");
+      setModalPagAberto(false);
+      carregarDados();
+    } catch (err: any) { toast.error("Erro: " + err.message); }
+  };
+
+  const excluirPagamento = async (id: string) => {
+    if (!confirm("Tem certeza que deseja apagar este pagamento permanentemente?")) return;
+    try {
+      const { error } = await supabase.from("pagamentos").delete().eq("id", id);
+      if (error) throw error;
+      toast.success("Pagamento removido.");
+      carregarDados();
+    } catch (err: any) { toast.error("Erro: " + err.message); }
+  };
+
+  // ========== FUNÇÕES PARA CONTRATOS (já existentes) ==========
+
   const abrirEdicaoPacote = (p: any) => {
     setPacoteEditando(p);
     setEditForm({
@@ -192,6 +212,36 @@ export default function PacienteFinanceiro() {
     } catch (err: any) { toast.error("Erro ao apagar: " + err.message); }
   };
 
+  const realizarLancamentoRetroativo = async () => {
+    if (!lancamentoProfissionalId) { toast.error("Selecione a profissional!"); return; }
+    if (!lancamentoData || !lancamentoHora) { toast.error("Data e hora são obrigatórios!"); return; }
+
+    const dataCompleta = new Date(`${lancamentoData}T${lancamentoHora}:00`);
+    const ehConvenio = pacientePacotes.find(p => p.id === lancamentoPacoteId)?.autorizacao !== null;
+    const tipoAtend = (ehConvenio && lancamentoPacoteId !== "avulso") ? "Plano" : "Particular";
+
+    const payloadAtendimento: any = {
+      paciente_id: pacienteId,
+      profissional_id: lancamentoProfissionalId,
+      data_inicio: dataCompleta.toISOString(),
+      data_fim: new Date(dataCompleta.getTime() + 60 * 60000).toISOString(),
+      status: "realizado", 
+      tipo: tipoAtend
+    };
+
+    if (lancamentoPacoteId !== "avulso") payloadAtendimento.paciente_pacote_id = lancamentoPacoteId;
+
+    try {
+      const { error } = await supabase.from("atendimentos").insert(payloadAtendimento);
+      if (error) throw error;
+      toast.success("Lançamento registrado! Repasse gerado com sucesso.");
+      setModalLancamentoAberto(false);
+      carregarDados();
+    } catch (err: any) {
+      toast.error("Erro ao lançar: " + err.message);
+    }
+  };
+
   if (loading) return <div className="p-6 text-center text-sm text-muted-foreground">Carregando dados financeiros...</div>;
 
   return (
@@ -234,7 +284,6 @@ export default function PacienteFinanceiro() {
                   }
                 </div>
                 
-                {/* BOTÕES DE EDIÇÃO E EXCLUSÃO DIRETOS */}
                 {podeGerenciar && (
                   <div className="flex items-center gap-1 shrink-0">
                     <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => abrirEdicaoPacote(p)}>
@@ -351,7 +400,17 @@ export default function PacienteFinanceiro() {
                 <div className="text-xs text-muted-foreground capitalize">{p.forma.replace("_", " ")} · {new Date(p.data_pagamento).toLocaleDateString("pt-BR")}</div>
                 {p.observacoes && <p className="text-[11px] text-slate-500 bg-slate-50 border rounded p-1 mt-1.5 italic">{p.observacoes}</p>}
               </div>
-              <Badge variant="outline" className="text-emerald-700 bg-emerald-50 border-emerald-200 text-[10px] py-0">Recebido</Badge>
+              {/* Botões para administradores/secretárias */}
+              {podeGerenciar && (
+                <div className="flex gap-1 shrink-0">
+                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => abrirEdicaoPagamento(p)}>
+                    <Pencil className="w-3.5 h-3.5 text-blue-600" />
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-7 w-7 hover:bg-red-50" onClick={() => excluirPagamento(p.id)}>
+                    <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                  </Button>
+                </div>
+              )}
             </Card>
           ))}
         </TabsContent>
@@ -395,6 +454,46 @@ export default function PacienteFinanceiro() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setModalEdicaoPacote(false)}>Cancelar</Button>
             <Button onClick={salvarEdicaoPacote} className="bg-blue-600 hover:bg-blue-700">Salvar Alterações</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL DE EDIÇÃO DE PAGAMENTO */}
+      <Dialog open={modalPagAberto} onOpenChange={setModalPagAberto}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Editar Pagamento</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label>Valor (R$)</Label>
+              <Input type="number" step="0.01" value={formPag.valor} onChange={(e) => setFormPag({...formPag, valor: e.target.value})} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Forma</Label>
+              <Select value={formPag.forma} onValueChange={(v) => setFormPag({...formPag, forma: v})}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="dinheiro">Dinheiro</SelectItem>
+                  <SelectItem value="pix">PIX</SelectItem>
+                  <SelectItem value="cartao_credito">Cartão de Crédito</SelectItem>
+                  <SelectItem value="cartao_debito">Cartão de Débito</SelectItem>
+                  <SelectItem value="transferencia">Transferência</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Data</Label>
+              <Input type="date" value={formPag.data_pagamento} onChange={(e) => setFormPag({...formPag, data_pagamento: e.target.value})} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Observações</Label>
+              <Textarea value={formPag.observacoes} onChange={(e) => setFormPag({...formPag, observacoes: e.target.value})} rows={2} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setModalPagAberto(false)}>Cancelar</Button>
+            <Button onClick={salvarEdicaoPagamento} className="bg-blue-600 hover:bg-blue-700">Salvar Alterações</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
