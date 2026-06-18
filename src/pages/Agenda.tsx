@@ -185,8 +185,8 @@ export default function Agenda() {
 
       // Chamada à função RPC
       const { data, error } = await supabase.rpc('consumir_sessao_e_atualizar_atendimento', {
-        p_atendimento_id: selectedAtend.id,
-        p_novo_status: statusForm
+        atendimento_id: selectedAtend.id,
+        novo_status: statusForm
       });
 
       if (error) {
