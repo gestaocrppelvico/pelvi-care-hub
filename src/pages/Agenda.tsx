@@ -86,7 +86,7 @@ export default function Agenda() {
     carregarAtendimentos();
   }, [carregarAtendimentos]);
 
-  // NOVO MOTOR: Puxa o paciente E os pacotes/guias ativos dele na mesma busca
+  // Busca pacientes com pacotes
   useEffect(() => {
     if (buscaPaciente.trim().length < 2) {
       setPacientesSugeridos([]);
@@ -175,34 +175,29 @@ export default function Agenda() {
 
     setBusy(true);
     try {
-      if (statusForm === "realizado") {
-        if (!selectedAtend.paciente_id) {
-          toast.error("Ação bloqueada: Vincule a uma ficha antes de dar o check-in.");
-          setBusy(false);
-          return;
-        }
-
-        const { data: pacotes, error: pacotesError } = await supabase
-          .from("paciente_pacotes")
-          .select("id, sessoes_restantes")
-          .eq("paciente_id", selectedAtend.paciente_id)
-          .gt("sessoes_restantes", 0);
-
-        if (pacotesError) throw pacotesError;
-
-        if (!pacotes || pacotes.length === 0) {
-          toast.error("Ação bloqueada: Paciente sem sessões disponíveis no momento.");
-          setBusy(false);
-          return;
-        }
+      // Verifica se o paciente está vinculado (obrigatório para qualquer alteração?)
+      // Se quiser permitir alterar status mesmo sem paciente, pode remover essa validação
+      if (!selectedAtend.paciente_id) {
+        toast.error("Ação bloqueada: Vincule a uma ficha antes de alterar o status.");
+        setBusy(false);
+        return;
       }
 
-      const { error } = await supabase
-        .from("atendimentos")
-        .update({ status: statusForm })
-        .eq("id", selectedAtend.id);
+      // Chamada à função RPC
+      const { data, error } = await supabase.rpc('consumir_sessao_e_atualizar_atendimento', {
+        p_atendimento_id: selectedAtend.id,
+        p_novo_status: statusForm
+      });
 
-      if (error) throw error;
+      if (error) {
+        // O erro pode vir da função ou do Supabase
+        throw new Error(error.message);
+      }
+
+      // Verifica se a função retornou sucesso (campo success)
+      if (data && data.success === false) {
+        throw new Error(data.error || 'Erro ao processar a solicitação');
+      }
 
       toast.success("Status do agendamento atualizado!");
       setSheetOpen(false);
@@ -297,7 +292,6 @@ export default function Agenda() {
         </div>
       ) : (
         <div className="bg-white rounded-xl border p-3 shadow-sm">
-          {/* Ocultando logica complexa mensal/semanal para economizar linhas */}
           <div className="grid grid-cols-7 gap-1 text-center font-bold text-xs text-slate-500 uppercase tracking-wider mb-2 pb-2 border-b">
             {["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"].map(d => <div key={d}>{d}</div>)}
           </div>
