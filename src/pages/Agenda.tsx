@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Clock, RefreshCw, ChevronLeft, ChevronRight, Plus, Calendar as CalendarIcon, Link2, Wallet } from "lucide-react";
+import { Clock, RefreshCw, ChevronLeft, ChevronRight, Link2, Wallet, Plus, UserPlus } from "lucide-react";
 
 interface Atendimento {
   id: string;
@@ -22,14 +22,14 @@ interface Atendimento {
   nome_paciente_livre: string | null;
   telefone_contato: string | null;
   paciente_id: string | null;
+  paciente_pacote_id: string | null;
   paciente: { nome: string; telefone: string | null } | null;
   profissional: { id: string; nome: string; cor_agenda: string } | null;
   profissional_id: string | null;
-  paciente_pacote_id: string | null; // adicionado
 }
 
 export default function Agenda() {
-  const { isSecretaria, isAdmin } = useAuth();
+  const { user, isSecretaria, isAdmin } = useAuth();
   const [searchParams] = useSearchParams();
   const profFiltroUrl = searchParams.get("profissional");
 
@@ -43,35 +43,35 @@ export default function Agenda() {
   const [statusForm, setStatusForm] = useState("agendado");
   const [busy, setBusy] = useState(false);
 
-  // ========== NOVOS ESTADOS PARA O CHECK-IN ==========
+  // Estados para paciente
   const [buscaPaciente, setBuscaPaciente] = useState("");
   const [pacientesSugeridos, setPacientesSugeridos] = useState<any[]>([]);
   const [pacienteSelecionado, setPacienteSelecionado] = useState<any>(null);
   const [novoNome, setNovoNome] = useState("");
   const [novoTelefone, setNovoTelefone] = useState("");
 
-  // Itens financeiros do paciente
+  // Estados para itens financeiros
   const [itensPaciente, setItensPaciente] = useState<any[]>([]);
   const [itemSelecionadoId, setItemSelecionadoId] = useState<string | null>(null);
 
-  // Sub-formulário de adicionar item
+  // Estados para adicionar novo item
   const [mostrarAdicionarItem, setMostrarAdicionarItem] = useState(false);
   const [tipoAdicionar, setTipoAdicionar] = useState<"plano" | "particular">("plano");
   const [planoSelecionadoId, setPlanoSelecionadoId] = useState("");
   const [numeroGuia, setNumeroGuia] = useState("");
   const [pacoteServicoId, setPacoteServicoId] = useState("");
 
-  // Listas para dropdowns
+  // Listas de apoio
   const [listaPlanos, setListaPlanos] = useState<any[]>([]);
   const [listaPacotesServicos, setListaPacotesServicos] = useState<any[]>([]);
 
-  // Carrega listas ao abrir o sheet
+  // Carregar listas ao abrir sheet
   useEffect(() => {
     if (sheetOpen) {
       supabase.from("planos_saude").select("id, nome").eq("ativo", true).then(({ data }) => setListaPlanos(data || []));
       Promise.all([
-        supabase.from("pacotes").select("id, nome, numero_sessoes").eq("ativo", true),
-        supabase.from("servicos").select("id, nome").eq("ativo", true)
+        supabase.from("pacotes").select("id, nome, numero_sessoes, preco_total").eq("ativo", true),
+        supabase.from("servicos").select("id, nome, preco").eq("ativo", true)
       ]).then(([{ data: pacotes }, { data: servicos }]) => {
         const combined = [
           ...(pacotes || []).map(p => ({ ...p, tipo_item: "pacote" })),
@@ -82,12 +82,30 @@ export default function Agenda() {
     }
   }, [sheetOpen]);
 
+  // Busca pacientes com pacotes
+  useEffect(() => {
+    if (buscaPaciente.trim().length < 2) {
+      setPacientesSugeridos([]);
+      return;
+    }
+    const buscar = async () => {
+      const { data, error } = await supabase
+        .from("pacientes")
+        .select("id, nome, telefone")
+        .ilike("nome", `%${buscaPaciente}%`)
+        .eq("ativo", true)
+        .limit(5);
+      if (!error && data) setPacientesSugeridos(data);
+    };
+    const timeout = setTimeout(buscar, 300);
+    return () => clearTimeout(timeout);
+  }, [buscaPaciente]);
+
+  // Carregar atendimentos
   const carregarAtendimentos = useCallback(async () => {
     setLoading(true);
     try {
-      let start: Date;
-      let end: Date;
-
+      let start: Date, end: Date;
       if (view === "day") {
         start = startOfDay(currentDate);
         end = endOfDay(currentDate);
@@ -101,13 +119,11 @@ export default function Agenda() {
 
       let query = supabase
         .from("atendimentos")
-        .select("id, data_inicio, data_fim, status, tipo, nome_paciente_livre, telefone_contato, paciente_id, paciente:pacientes(nome, telefone), profissional:profissionais(id, nome, cor_agenda), profissional_id, paciente_pacote_id")
+        .select("id, data_inicio, data_fim, status, tipo, nome_paciente_livre, telefone_contato, paciente_id, paciente_pacote_id, paciente:pacientes(nome, telefone), profissional:profissionais(id, nome, cor_agenda), profissional_id")
         .gte("data_inicio", start.toISOString())
         .lte("data_inicio", end.toISOString());
 
-      if (profFiltroUrl) {
-        query = query.eq("profissional_id", profFiltroUrl);
-      }
+      if (profFiltroUrl) query = query.eq("profissional_id", profFiltroUrl);
 
       const { data, error } = await query;
       if (error) throw error;
@@ -123,34 +139,19 @@ export default function Agenda() {
     carregarAtendimentos();
   }, [carregarAtendimentos]);
 
-  // ========== BUSCA DE PACIENTES ==========
-  useEffect(() => {
-    if (buscaPaciente.trim().length < 2) {
-      setPacientesSugeridos([]);
-      return;
-    }
+  // Mapeamento para visão semanal/mensal
+  const mapeamentoDias = useMemo(() => {
+    const mapa = new Map<string, Atendimento[]>();
+    atendimentos.forEach((at) => {
+      const chave = format(new Date(at.data_inicio), "yyyy-MM-dd");
+      if (!mapa.has(chave)) mapa.set(chave, []);
+      mapa.get(chave)!.push(at);
+    });
+    return mapa;
+  }, [atendimentos]);
 
-    const buscarPacientes = async () => {
-      const { data, error } = await supabase
-        .from("pacientes")
-        .select("id, nome, telefone")
-        .ilike("nome", `%${buscaPaciente}%`)
-        .eq("ativo", true)
-        .limit(5);
+  // ===== FUNÇÕES DE CHECK-IN =====
 
-      if (!error && data) {
-        setPacientesSugeridos(data);
-      }
-    };
-
-    const delayDebounce = setTimeout(() => {
-      buscarPacientes();
-    }, 300);
-
-    return () => clearTimeout(delayDebounce);
-  }, [buscaPaciente]);
-
-  // ========== CARREGAR ITENS DO PACIENTE ==========
   const carregarItensPaciente = async (pacienteId: string) => {
     const { data } = await supabase
       .from("paciente_pacotes")
@@ -173,7 +174,6 @@ export default function Agenda() {
     }
   };
 
-  // ========== FUNÇÕES DE VINCULAÇÃO E CRIAÇÃO ==========
   const handleCriarPaciente = async () => {
     if (!novoNome.trim()) {
       toast.error("Informe o nome do paciente");
@@ -191,7 +191,7 @@ export default function Agenda() {
     setPacienteSelecionado(data);
     setNovoNome("");
     setNovoTelefone("");
-    await carregarItensPaciente(data.id);
+    carregarItensPaciente(data.id);
     toast.success(`Paciente ${data.nome} criado com sucesso!`);
   };
 
@@ -204,6 +204,7 @@ export default function Agenda() {
       toast.error("Selecione um pacote ou serviço.");
       return;
     }
+
     const item = listaPacotesServicos.find(p => p.id === pacoteServicoId);
     if (!item) return;
 
@@ -225,7 +226,7 @@ export default function Agenda() {
           })
           .select("id")
           .single();
-        if (errAut) throw new Error(errAut.message);
+        if (errAut) throw errAut;
 
         // Criar paciente_pacote vinculado à autorização
         const { error: errPac } = await supabase
@@ -237,10 +238,10 @@ export default function Agenda() {
             servico_id: item.tipo_item === "servico" ? item.id : null,
             sessoes_totais: item.tipo_item === "pacote" ? item.numero_sessoes : 1,
             sessoes_restantes: item.tipo_item === "pacote" ? item.numero_sessoes : 1,
-            preco_pago: 0,
+            preco_pago: item.tipo_item === "pacote" ? item.preco_total : (item.preco || 0),
             status_pagamento: "pendente"
           });
-        if (errPac) throw new Error(errPac.message);
+        if (errPac) throw errPac;
 
         toast.success("Guia e pacote vinculados ao paciente!");
       } else {
@@ -253,12 +254,12 @@ export default function Agenda() {
               pacote_id: item.id,
               sessoes_totais: item.numero_sessoes,
               sessoes_restantes: item.numero_sessoes,
-              preco_pago: 0,
+              preco_pago: item.preco_total || 0,
               status_pagamento: "pendente"
             });
-          if (error) throw new Error(error.message);
+          if (error) throw error;
         } else {
-          // Serviço avulso: criamos paciente_pacote com servico_id
+          // Serviço avulso – cria um paciente_pacote com servico_id
           const { error } = await supabase
             .from("paciente_pacotes")
             .insert({
@@ -266,10 +267,10 @@ export default function Agenda() {
               servico_id: item.id,
               sessoes_totais: 1,
               sessoes_restantes: 1,
-              preco_pago: 0,
+              preco_pago: item.preco || 0,
               status_pagamento: "pendente"
             });
-          if (error) throw new Error(error.message);
+          if (error) throw error;
         }
         toast.success("Item vinculado ao paciente!");
       }
@@ -289,22 +290,25 @@ export default function Agenda() {
       toast.error("Paciente não selecionado.");
       return;
     }
-    if (itensPaciente.length === 0 && !itemSelecionadoId) {
-      toast.error("Este paciente não possui itens com saldo. Adicione um antes de prosseguir.");
+    if (itensPaciente.length > 0 && !itemSelecionadoId) {
+      toast.error("Selecione um pacote/serviço para consumir.");
       return;
     }
-    if (!itemSelecionadoId) {
-      toast.error("Selecione um pacote/serviço para consumir.");
+    if (itensPaciente.length === 0 && !itemSelecionadoId) {
+      toast.error("Este paciente não possui itens financeiros. Adicione um antes de prosseguir.");
       return;
     }
 
     try {
+      const updateData: any = {
+        paciente_id: pacienteSelecionado.id
+      };
+      if (itemSelecionadoId) {
+        updateData.paciente_pacote_id = itemSelecionadoId;
+      }
       const { error } = await supabase
         .from("atendimentos")
-        .update({
-          paciente_id: pacienteSelecionado.id,
-          paciente_pacote_id: itemSelecionadoId
-        })
+        .update(updateData)
         .eq("id", selectedAtend.id);
       if (error) throw error;
 
@@ -316,20 +320,16 @@ export default function Agenda() {
     }
   };
 
-  // ========== HANDLE SALVAR STATUS (SIMPLIFICADO) ==========
   const handleSalvarStatus = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedAtend) return;
     setBusy(true);
     try {
-      if (statusForm === "realizado") {
-        if (!selectedAtend.paciente_id || !selectedAtend.paciente_pacote_id) {
-          toast.error("Vincule o paciente e o pacote antes de realizar o check-in.");
-          setBusy(false);
-          return;
-        }
+      if (!selectedAtend.paciente_id || !selectedAtend.paciente_pacote_id) {
+        toast.error("Vincule o paciente e o pacote antes de realizar o check-in.");
+        setBusy(false);
+        return;
       }
-      // Apenas atualiza o status – o trigger do banco consumirá a sessão e gerará repasse
       const { error } = await supabase
         .from("atendimentos")
         .update({ status: statusForm })
@@ -345,12 +345,12 @@ export default function Agenda() {
     }
   };
 
+  // Navegação
   const handleAnterior = () => {
     if (view === "day") setCurrentDate(prev => addDays(prev, -1));
     else if (view === "week") setCurrentDate(prev => addWeeks(prev, -1));
     else setCurrentDate(prev => addMonths(prev, -1));
   };
-
   const handleProximo = () => {
     if (view === "day") setCurrentDate(prev => addDays(prev, 1));
     else if (view === "week") setCurrentDate(prev => addWeeks(prev, 1));
@@ -364,10 +364,33 @@ export default function Agenda() {
     return `border-l-4 bg-white text-slate-800 shadow-sm`;
   };
 
-  // ========== RENDER ==========
+  const abrirEdicao = (at: Atendimento) => {
+    setSelectedAtend(at);
+    setStatusForm(at.status);
+    // Resetar estados de check-in
+    setPacienteSelecionado(null);
+    setItensPaciente([]);
+    setItemSelecionadoId(null);
+    setMostrarAdicionarItem(false);
+    setBuscaPaciente("");
+    setNovoNome("");
+    setNovoTelefone("");
+    // Se já tiver paciente_id, carregar seus itens
+    if (at.paciente_id) {
+      supabase.from("pacientes").select("id, nome, telefone").eq("id", at.paciente_id).single()
+        .then(({ data }) => {
+          if (data) {
+            setPacienteSelecionado(data);
+            carregarItensPaciente(data.id);
+          }
+        });
+    }
+    setSheetOpen(true);
+  };
+
   return (
     <div className="space-y-4 p-2 max-w-7xl mx-auto">
-      
+      {/* Cabeçalho da agenda */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-white p-3 rounded-xl border shadow-sm">
         <div className="flex items-center gap-2">
           <Button variant="outline" size="icon" onClick={handleAnterior}><ChevronLeft className="w-4 h-4" /></Button>
@@ -377,7 +400,6 @@ export default function Agenda() {
             {format(currentDate, view === "month" ? "MMMM 'de' yyyy" : "dd 'de' MMMM", { locale: ptBR })}
           </h2>
         </div>
-
         <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-lg self-stretch sm:self-auto">
           {(["day", "week", "month"] as const).map((v) => (
             <Button key={v} variant={view === v ? "default" : "ghost"} size="sm" onClick={() => setView(v)} className="text-xs capitalize flex-1 sm:flex-none font-semibold h-8">
@@ -404,17 +426,7 @@ export default function Agenda() {
             atendimentos.map((at) => (
               <div
                 key={at.id}
-                onClick={() => {
-                  setSelectedAtend(at);
-                  setStatusForm(at.status);
-                  setBuscaPaciente("");
-                  setPacientesSugeridos([]);
-                  setPacienteSelecionado(null);
-                  setItensPaciente([]);
-                  setItemSelecionadoId(null);
-                  setMostrarAdicionarItem(false);
-                  setSheetOpen(true);
-                }}
+                onClick={() => abrirEdicao(at)}
                 className={`p-3 rounded-xl border transition-all cursor-pointer flex justify-between items-center ${obterEstiloCard(at.status)}`}
                 style={at.status !== 'faltou' && at.status !== 'realizado' && at.status !== 'cancelado' && at.profissional?.cor_agenda ? { borderLeftColor: at.profissional.cor_agenda } : {}}
               >
@@ -454,11 +466,7 @@ export default function Agenda() {
                   <span className="text-xs font-bold text-slate-500">{format(dia, "d")}</span>
                   <div className="space-y-1 mt-1 flex-1 flex flex-col justify-end">
                     {listaEvts.slice(0, 2).map(ev => (
-                      <div key={ev.id} onClick={() => {
-                        setSelectedAtend(ev);
-                        setStatusForm(ev.status);
-                        setSheetOpen(true);
-                      }} className={`text-[10px] p-1 rounded font-semibold truncate cursor-pointer ${ev.status === 'faltou' ? 'bg-slate-200 text-slate-400 line-through' : 'bg-blue-100 text-blue-800'}`}>
+                      <div key={ev.id} onClick={() => abrirEdicao(ev)} className={`text-[10px] p-1 rounded font-semibold truncate cursor-pointer ${ev.status === 'faltou' ? 'bg-slate-200 text-slate-400 line-through' : 'bg-blue-100 text-blue-800'}`}>
                         {format(new Date(ev.data_inicio), "HH:mm")} {ev.paciente?.nome?.split(" ")[0] || ev.nome_paciente_livre?.split(" ")[0]}
                       </div>
                     ))}
@@ -471,7 +479,7 @@ export default function Agenda() {
         </div>
       )}
 
-      {/* PAINEL LATERAL (SHEET) */}
+      {/* PAINEL LATERAL (SHEET) – CHECK-IN COMPLETO */}
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
         <SheetContent side="right" className="w-full sm:max-w-md p-5 space-y-4 overflow-y-auto">
           <SheetHeader>
@@ -486,16 +494,17 @@ export default function Agenda() {
             </div>
           )}
 
-          {/* Área de seleção/criação de paciente */}
+          {/* SEÇÃO DE PACIENTE */}
           <div className="space-y-2 border-b pb-3">
             <Label className="text-xs font-bold">Paciente</Label>
             <Input
               placeholder="Buscar por nome..."
               value={buscaPaciente}
               onChange={(e) => setBuscaPaciente(e.target.value)}
+              className="h-10 text-sm"
             />
             {pacientesSugeridos.length > 0 && (
-              <div className="border rounded-lg max-h-40 overflow-y-auto">
+              <div className="border rounded-lg max-h-40 overflow-y-auto bg-white">
                 {pacientesSugeridos.map(p => (
                   <button
                     key={p.id}
@@ -504,29 +513,29 @@ export default function Agenda() {
                       setBuscaPaciente("");
                       carregarItensPaciente(p.id);
                     }}
-                    className="w-full text-left px-3 py-2 hover:bg-blue-50 text-sm"
+                    className="w-full text-left px-3 py-2 hover:bg-blue-50 text-sm border-b last:border-0"
                   >
                     {p.nome} {p.telefone && `(${p.telefone})`}
                   </button>
                 ))}
               </div>
             )}
-            {/* Se não encontrou, campos para criar */}
+            {/* Criar paciente rápido */}
             <div className="flex gap-2 mt-2">
               <Input
                 placeholder="Nome do novo paciente..."
                 value={novoNome}
                 onChange={(e) => setNovoNome(e.target.value)}
-                className="flex-1"
+                className="flex-1 h-9 text-sm"
               />
               <Input
                 placeholder="Telefone"
                 value={novoTelefone}
                 onChange={(e) => setNovoTelefone(e.target.value)}
-                className="w-32"
+                className="w-28 h-9 text-sm"
               />
-              <Button variant="outline" onClick={handleCriarPaciente} disabled={!novoNome.trim()}>
-                Criar
+              <Button variant="outline" size="sm" onClick={handleCriarPaciente} disabled={!novoNome.trim()} className="h-9">
+                <UserPlus className="w-4 h-4 mr-1" /> Criar
               </Button>
             </div>
             {pacienteSelecionado && (
@@ -536,13 +545,13 @@ export default function Agenda() {
             )}
           </div>
 
-          {/* Itens financeiros do paciente */}
+          {/* ITENS FINANCEIROS DO PACIENTE */}
           {pacienteSelecionado && (
             <div className="space-y-2">
               <Label className="text-xs font-bold">Pacote/Serviço a consumir</Label>
               {itensPaciente.length > 0 ? (
                 <Select value={itemSelecionadoId || ""} onValueChange={setItemSelecionadoId}>
-                  <SelectTrigger>
+                  <SelectTrigger className="h-10 text-sm">
                     <SelectValue placeholder="Selecione um item com saldo" />
                   </SelectTrigger>
                   <SelectContent>
@@ -563,6 +572,7 @@ export default function Agenda() {
                 <p className="text-xs text-amber-600">Este paciente não possui itens com saldo. Adicione um abaixo.</p>
               )}
 
+              {/* Adicionar novo item */}
               <Button
                 variant="outline"
                 size="sm"
@@ -599,7 +609,7 @@ export default function Agenda() {
                   {tipoAdicionar === "plano" && (
                     <>
                       <Select value={planoSelecionadoId} onValueChange={setPlanoSelecionadoId}>
-                        <SelectTrigger><SelectValue placeholder="Plano de saúde" /></SelectTrigger>
+                        <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Plano de saúde" /></SelectTrigger>
                         <SelectContent>
                           {listaPlanos.map(p => <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>)}
                         </SelectContent>
@@ -608,12 +618,13 @@ export default function Agenda() {
                         placeholder="Número da guia"
                         value={numeroGuia}
                         onChange={(e) => setNumeroGuia(e.target.value)}
+                        className="h-9 text-sm"
                       />
                     </>
                   )}
 
                   <Select value={pacoteServicoId} onValueChange={setPacoteServicoId}>
-                    <SelectTrigger><SelectValue placeholder="Selecione o pacote/serviço" /></SelectTrigger>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Selecione o pacote/serviço" /></SelectTrigger>
                     <SelectContent>
                       {listaPacotesServicos.map(item => (
                         <SelectItem key={item.id} value={item.id}>
@@ -629,14 +640,14 @@ export default function Agenda() {
                 </div>
               )}
 
-              <Button onClick={handleSalvarVinculacao} className="w-full" disabled={!itemSelecionadoId && itensPaciente.length > 0}>
+              <Button onClick={handleSalvarVinculacao} className="w-full" disabled={itensPaciente.length > 0 && !itemSelecionadoId}>
                 Vincular e Preparar Check-in
               </Button>
             </div>
           )}
 
-          {/* Formulário de alteração de status (sempre visível) */}
-          <form onSubmit={handleSalvarStatus} className="space-y-5 pt-3 border-t">
+          {/* ALTERAR STATUS */}
+          <form onSubmit={handleSalvarStatus} className="space-y-4 pt-2 border-t">
             <div className="space-y-2">
               <Label htmlFor="status" className="text-xs font-bold uppercase tracking-wider text-slate-500">Alterar Status da Sessão</Label>
               <Select value={statusForm} onValueChange={setStatusForm}>
@@ -652,17 +663,17 @@ export default function Agenda() {
               </Select>
             </div>
 
-            {statusForm === "realizado" && !selectedAtend?.paciente_id && (
+            {statusForm === "realizado" && (!selectedAtend?.paciente_id || !selectedAtend?.paciente_pacote_id) && (
               <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800 space-y-1">
                 <p className="font-bold">⚠️ Check-in Bloqueado:</p>
-                <p>Este atendimento está sem ficha associada. Use o campo acima para vincular o cadastro antes de confirmar.</p>
+                <p>Vincule o paciente e o pacote antes de confirmar.</p>
               </div>
             )}
 
-            <Button 
-              type="submit" 
-              className="w-full h-12 text-sm font-bold bg-blue-600 hover:bg-blue-700 disabled:opacity-50" 
-              disabled={busy || (statusForm === "realizado" && !selectedAtend?.paciente_id)}
+            <Button
+              type="submit"
+              className="w-full h-12 text-sm font-bold bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+              disabled={busy || (statusForm === "realizado" && (!selectedAtend?.paciente_id || !selectedAtend?.paciente_pacote_id))}
             >
               {busy ? "A atualizar..." : "Confirmar Alteração"}
             </Button>
