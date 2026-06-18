@@ -43,6 +43,9 @@ export default function Agenda() {
   const [statusForm, setStatusForm] = useState("agendado");
   const [busy, setBusy] = useState(false);
 
+  // Estado para armazenar o ID do profissional logado (se for fisioterapeuta)
+  const [profissionalId, setProfissionalId] = useState<string | null>(null);
+
   // Estados para paciente
   const [buscaPaciente, setBuscaPaciente] = useState("");
   const [pacientesSugeridos, setPacientesSugeridos] = useState<any[]>([]);
@@ -81,6 +84,22 @@ export default function Agenda() {
       });
     }
   }, [sheetOpen]);
+
+  // Buscar o ID do profissional logado (se for fisioterapeuta)
+  useEffect(() => {
+    if (!user) return;
+    const fetchProfissional = async () => {
+      const { data, error } = await supabase
+        .from("profissionais")
+        .select("id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (!error && data) {
+        setProfissionalId(data.id);
+      }
+    };
+    fetchProfissional();
+  }, [user]);
 
   // Busca pacientes com pacotes
   useEffect(() => {
@@ -123,7 +142,13 @@ export default function Agenda() {
         .gte("data_inicio", start.toISOString())
         .lte("data_inicio", end.toISOString());
 
-      if (profFiltroUrl) query = query.eq("profissional_id", profFiltroUrl);
+      // Filtro para fisioterapeuta: vê apenas seus atendimentos
+      if (!isAdmin && !isSecretaria && profissionalId) {
+        query = query.eq("profissional_id", profissionalId);
+      } else if (profFiltroUrl) {
+        // Admin/secretária podem filtrar por profissional via URL
+        query = query.eq("profissional_id", profFiltroUrl);
+      }
 
       const { data, error } = await query;
       if (error) throw error;
@@ -133,7 +158,7 @@ export default function Agenda() {
     } finally {
       setLoading(false);
     }
-  }, [view, currentDate, profFiltroUrl]);
+  }, [view, currentDate, profFiltroUrl, profissionalId, isAdmin, isSecretaria]);
 
   useEffect(() => {
     carregarAtendimentos();
@@ -410,7 +435,7 @@ export default function Agenda() {
         </div>
       </div>
 
-      {profFiltroUrl && (
+      {profFiltroUrl && isAdmin && (
         <div className="bg-blue-50 border border-blue-200 text-blue-800 p-2 rounded-lg text-xs font-semibold text-center">
           📌 A filtrar agenda por profissional selecionado no painel.
         </div>
