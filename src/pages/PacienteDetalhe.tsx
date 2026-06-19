@@ -165,7 +165,7 @@ export default function PacienteDetalhe() {
           <TabsTrigger value="autorizacoes" className="text-xs sm:text-sm">Guias</TabsTrigger>
         </TabsList>
 
-        {/* ============ ABA HISTÓRICO (MODIFICADA) ============ */}
+        {/* ============ ABA HISTÓRICO ============ */}
         <TabsContent value="historico" className="space-y-4 mt-4">
           <div className="grid grid-cols-3 gap-2 sm:gap-4">
             <Card className="p-3 border-l-4 border-l-emerald-500 shadow-sm bg-emerald-50/30">
@@ -291,7 +291,7 @@ export default function PacienteDetalhe() {
           </div>
         </TabsContent>
 
-        {/* ============ ABA PRONTUÁRIO (MODIFICADA) ============ */}
+        {/* ============ ABA PRONTUÁRIO ============ */}
         <TabsContent value="prontuario" className="mt-4">
           {pront.length === 0 ? (
             <Card className="p-10 flex flex-col items-center justify-center text-center space-y-4 shadow-sm border-dashed">
@@ -343,20 +343,31 @@ export default function PacienteDetalhe() {
                         {anamnese.atendimento?.profissional?.nome && ` por ${anamnese.atendimento.profissional.nome}`}
                       </div>
                     </div>
-                    <Button 
-                      size="sm" 
-                      variant="ghost" 
-                      className="h-7 px-2 text-xs"
-                      onClick={() => navigate(`/paciente/${id}/prontuario/${anamnese.id}`)}
-                    >
-                      <Eye className="w-3 h-3 mr-1" /> Ver
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button 
+                        size="sm" 
+                        variant="ghost" 
+                        className="h-7 px-2 text-xs"
+                        onClick={() => navigate(`/paciente/${id}/prontuario/${anamnese.id}`)}
+                      >
+                        <Eye className="w-3 h-3 mr-1" /> Ver
+                      </Button>
+                      {/* 🔥 BOTÃO DE EDIÇÃO DA ANAMNESE */}
+                      <Button 
+                        size="sm" 
+                        variant="outline" 
+                        className="h-7 px-2 text-xs border-blue-300 text-blue-700 hover:bg-blue-50"
+                        onClick={() => navigate(`/paciente/${id}/anamnese/editar/${anamnese.id}`)}
+                      >
+                        <Pencil className="w-3 h-3 mr-1" /> Editar
+                      </Button>
+                    </div>
                   </div>
                   <div className="text-sm text-slate-700 bg-white/50 p-3 rounded border whitespace-pre-wrap">
                     <strong>Queixa:</strong> {anamnese.queixa_principal || '—'}<br />
                     <strong>Diagnóstico:</strong> {anamnese.diagnostico || '—'}<br />
                     <strong>Dor:</strong> {anamnese.escala_dor ?? '—'} / 10<br />
-                    {anamnese.avaliacao_funcional && <><strong>Observações:</strong> {anamnese.avaliacao_funcional}</>}
+                    {anamnese.evolucao_livre && <><strong>Observações:</strong> {anamnese.evolucao_livre}</>}
                   </div>
                 </Card>
               )}
