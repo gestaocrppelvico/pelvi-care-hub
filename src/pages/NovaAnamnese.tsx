@@ -1,153 +1,219 @@
-import { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import * as z from 'zod';
-import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/hooks/useAuth';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { toast } from 'sonner';
-import { salvarProntuario } from '@/lib/supabaseFunctions';
-
-const schema = z.object({
-  queixa_principal: z.string().min(1, 'Queixa principal é obrigatória'),
-  diagnostico: z.string().optional(),
-  escala_dor: z.coerce.number().min(0).max(10).optional(),
-  idade: z.coerce.number().min(0).optional(),
-  sexo: z.string().optional(),
-  medico_indicou: z.string().optional(),
-  observacoes: z.string().optional(),
-});
-
-type FormData = z.infer<typeof schema>;
+import { useEffect, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { ArrowLeft, Save, X, AlertCircle } from "lucide-react";
+import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export default function NovaAnamnese() {
-  const { id: pacienteId } = useParams();
+  const { id: pacienteId } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
+
   const [loading, setLoading] = useState(false);
+  const [profissionalId, setProfissionalId] = useState<string | null>(null);
 
-  const { register, handleSubmit, setValue, formState: { errors } } = useForm<FormData>({
-    resolver: zodResolver(schema),
-  });
+  // Campos do formulário (ajustados para nomes reais da tabela)
+  const [diagnostico, setDiagnostico] = useState("");
+  const [queixaPrincipal, setQueixaPrincipal] = useState("");
+  const [escalaDor, setEscalaDor] = useState<number | null>(null);
+  const [idade, setIdade] = useState<number | null>(null);
+  const [sexo, setSexo] = useState<string>("");
+  const [medicoIndicou, setMedicoIndicou] = useState("");
+  const [observacoes, setObservacoes] = useState("");
 
-  async function onSubmit(data: FormData) {
-    if (!pacienteId || !user) {
-      toast.error('Dados insuficientes');
+  // Buscar profissional logado
+  useEffect(() => {
+    if (!user) return;
+    const fetchProfissional = async () => {
+      const { data, error } = await supabase
+        .from("profissionais")
+        .select("id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (error) {
+        console.error("Erro ao buscar profissional:", error);
+        toast.error("Você não está vinculado a um profissional. Contate o admin.");
+        return;
+      }
+      if (data) setProfissionalId(data.id);
+    };
+    fetchProfissional();
+  }, [user]);
+
+  const handleSalvar = async () => {
+    if (!pacienteId) {
+      toast.error("Paciente não identificado.");
+      return;
+    }
+    if (!profissionalId) {
+      toast.error("Profissional não identificado. Faça login novamente.");
+      return;
+    }
+    if (!queixaPrincipal.trim()) {
+      toast.error("A queixa principal é obrigatória.");
       return;
     }
 
     setLoading(true);
     try {
-      // Buscar primeiro atendimento (checkin) do paciente
-      const { data: primeiroAtendimento, error: atendError } = await supabase
-        .from('atendimentos')
-        .select('id')
-        .eq('paciente_id', pacienteId)
-        .eq('status', 'realizado')
-        .order('data_inicio', { ascending: true })
-        .limit(1);
-
-      if (atendError) throw atendError;
-      let atendimentoId;
-      if (!primeiroAtendimento || primeiroAtendimento.length === 0) {
-        // Criar atendimento automático para avaliação
-        const { data: novoAtend, error: createError } = await supabase
-          .from('atendimentos')
-          .insert({
-            paciente_id: pacienteId,
-            profissional_id: user.id,
-            data_inicio: new Date().toISOString(),
-            tipo: 'avaliacao',
-            status: 'realizado',
-          })
-          .select('id')
-          .single();
-
-        if (createError) throw createError;
-        atendimentoId = novoAtend.id;
-      } else {
-        atendimentoId = primeiroAtendimento[0].id;
-      }
-
-      await salvarProntuario({
-        atendimento_id: atendimentoId,
+      const payload = {
         paciente_id: pacienteId,
-        profissional_id: user.id,
-        tipo: 'avaliacao',
-        queixa_principal: data.queixa_principal,
-        escala_dor: data.escala_dor,
-        diagnostico: data.diagnostico,
-        idade: data.idade,
-        sexo: data.sexo,
-        medico_indicou: data.medico_indicou,
-        observacoes: data.observacoes,
-      });
+        profissional_id: profissionalId, // 🔥 AGORA PREENCHIDO
+        tipo: "avaliacao",
+        queixa_principal: queixaPrincipal.trim(),
+        diagnostico: diagnostico.trim() || null,
+        escala_dor: escalaDor,
+        // Ajuste os nomes dos campos conforme sua tabela:
+        // Se sua coluna se chamar "observacoes", mantenha;
+        // Se for "descricao" ou "evolucao_livre", altere abaixo.
+        observacoes: observacoes.trim() || null,
+        // Campos extras (se existirem na tabela)
+        idade: idade,
+        sexo: sexo || null,
+        medico_solicitante: medicoIndicou.trim() || null,
+      };
 
-      toast.success('Anamnese salva com sucesso!');
-      navigate(`/paciente/${pacienteId}`);
-    } catch (error: any) {
-      toast.error('Erro ao salvar anamnese: ' + error.message);
+      const { error } = await supabase.from("prontuarios").insert(payload);
+      if (error) throw error;
+
+      toast.success("Anamnese salva com sucesso!");
+      navigate(`/pacientes/${pacienteId}`);
+    } catch (err: any) {
+      toast.error("Erro ao salvar anamnese: " + err.message);
+      console.error(err);
     } finally {
       setLoading(false);
     }
-  }
+  };
+
+  const handleCancelar = () => {
+    if (confirm("Deseja cancelar? As alterações não serão salvas.")) {
+      navigate(-1);
+    }
+  };
 
   return (
-    <div className="container max-w-2xl py-8">
-      <h1 className="text-2xl font-bold mb-6">Nova Anamnese</h1>
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-        <div>
-          <Label htmlFor="queixa_principal">Queixa principal *</Label>
-          <Textarea id="queixa_principal" {...register('queixa_principal')} />
-          {errors.queixa_principal && <p className="text-red-500 text-sm">{errors.queixa_principal.message}</p>}
+    <div className="space-y-4 pb-20">
+      <div className="flex items-center gap-2">
+        <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+          <ArrowLeft className="w-5 h-5" />
+        </Button>
+        <h1 className="text-2xl font-bold">Nova Anamnese</h1>
+      </div>
+
+      <Card className="p-4 space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="queixa">Queixa principal *</Label>
+          <Textarea
+            id="queixa"
+            placeholder="Descreva a queixa do paciente..."
+            value={queixaPrincipal}
+            onChange={(e) => setQueixaPrincipal(e.target.value)}
+            rows={3}
+            className="resize-none"
+          />
         </div>
-        <div>
+
+        <div className="space-y-2">
           <Label htmlFor="diagnostico">Diagnóstico</Label>
-          <Input id="diagnostico" {...register('diagnostico')} />
+          <Input
+            id="diagnostico"
+            placeholder="Diagnóstico clínico..."
+            value={diagnostico}
+            onChange={(e) => setDiagnostico(e.target.value)}
+          />
         </div>
-        <div>
-          <Label htmlFor="escala_dor">Escala de dor (0-10)</Label>
-          <Input id="escala_dor" type="number" {...register('escala_dor')} />
+
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="escala_dor">Escala de dor (0-10)</Label>
+            <Input
+              id="escala_dor"
+              type="number"
+              min={0}
+              max={10}
+              value={escalaDor ?? ""}
+              onChange={(e) => setEscalaDor(Number(e.target.value) || null)}
+              placeholder="0-10"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="idade">Idade</Label>
+            <Input
+              id="idade"
+              type="number"
+              min={0}
+              value={idade ?? ""}
+              onChange={(e) => setIdade(Number(e.target.value) || null)}
+              placeholder="Idade"
+            />
+          </div>
         </div>
-        <div>
-          <Label htmlFor="idade">Idade</Label>
-          <Input id="idade" type="number" {...register('idade')} />
+
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="sexo">Sexo</Label>
+            <Select value={sexo} onValueChange={setSexo}>
+              <SelectTrigger id="sexo">
+                <SelectValue placeholder="Selecione" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Masculino">Masculino</SelectItem>
+                <SelectItem value="Feminino">Feminino</SelectItem>
+                <SelectItem value="Outro">Outro</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="medico">Médico que indicou</Label>
+            <Input
+              id="medico"
+              placeholder="Nome do médico"
+              value={medicoIndicou}
+              onChange={(e) => setMedicoIndicou(e.target.value)}
+            />
+          </div>
         </div>
-        <div>
-          <Label htmlFor="sexo">Sexo</Label>
-          <Select onValueChange={(val) => setValue('sexo', val)}>
-            <SelectTrigger>
-              <SelectValue placeholder="Selecione" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="feminino">Feminino</SelectItem>
-              <SelectItem value="masculino">Masculino</SelectItem>
-              <SelectItem value="outro">Outro</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div>
-          <Label htmlFor="medico_indicou">Médico que indicou</Label>
-          <Input id="medico_indicou" {...register('medico_indicou')} />
-        </div>
-        <div>
+
+        <div className="space-y-2">
           <Label htmlFor="observacoes">Observações complementares</Label>
-          <Textarea id="observacoes" {...register('observacoes')} />
+          <Textarea
+            id="observacoes"
+            placeholder="Observações adicionais..."
+            value={observacoes}
+            onChange={(e) => setObservacoes(e.target.value)}
+            rows={3}
+            className="resize-none"
+          />
         </div>
-        <div className="flex gap-2 pt-4">
-          <Button type="submit" disabled={loading}>
-            {loading ? 'Salvando...' : 'Salvar Anamnese'}
+
+        <div className="flex flex-col sm:flex-row gap-3 pt-2">
+          <Button
+            onClick={handleSalvar}
+            disabled={loading || !queixaPrincipal.trim() || !profissionalId}
+            className="flex-1 bg-blue-600 hover:bg-blue-700"
+          >
+            {loading ? "Salvando..." : <><Save className="w-4 h-4 mr-2" /> Salvar Anamnese</>}
           </Button>
-          <Button type="button" variant="outline" onClick={() => navigate(`/paciente/${pacienteId}`)}>
-            Cancelar
+          <Button variant="outline" onClick={handleCancelar} className="flex-1">
+            <X className="w-4 h-4 mr-2" /> Cancelar
           </Button>
         </div>
-      </form>
+
+        {!profissionalId && (
+          <div className="bg-red-50 border border-red-200 p-3 rounded-lg text-red-700 text-sm flex items-center gap-2">
+            <AlertCircle className="w-4 h-4" />
+            Você não está vinculado a um profissional. Contate o administrador.
+          </div>
+        )}
+      </Card>
     </div>
   );
 }
