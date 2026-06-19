@@ -22,11 +22,13 @@ export default function NovaEvolucao() {
   const [profissionalId, setProfissionalId] = useState<string | null>(null);
   const [pacoteInfo, setPacoteInfo] = useState<any>(null);
 
-  // Campos do formulário
+  // Campos do formulário (com nomes reais da tabela)
   const [conduta, setConduta] = useState("");
-  const [observacoes, setObservacoes] = useState("");
+  const [evolucaoLivre, setEvolucaoLivre] = useState(""); // antes "observacoes"
   const [escalaDor, setEscalaDor] = useState<number | null>(null);
   const [altaMedica, setAltaMedica] = useState(false);
+  const [exerciciosPrescritos, setExerciciosPrescritos] = useState("");
+  const [proximosPassos, setProximosPassos] = useState("");
 
   // Buscar profissional logado
   useEffect(() => {
@@ -96,13 +98,15 @@ export default function NovaEvolucao() {
     try {
       const payload = {
         paciente_id: pacienteId,
-        profissional_id: profissionalId, // 🔥 AGORA PREENCHIDO
+        profissional_id: profissionalId,
         atendimento_id: atendimentoId || null,
         tipo: "evolucao",
         conduta: conduta.trim(),
-        observacoes: observacoes.trim() || null,
+        evolucao_livre: evolucaoLivre.trim() || null,
         escala_dor: escalaDor,
         alta_medica: altaMedica,
+        exercicios_prescritos: exerciciosPrescritos.trim() || null,
+        proximos_passos: proximosPassos.trim() || null,
       };
 
       const { error } = await supabase.from("prontuarios").insert(payload);
@@ -165,15 +169,40 @@ export default function NovaEvolucao() {
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="observacoes">Observações complementares</Label>
+          <Label htmlFor="evolucao_livre">Evolução / Observações complementares</Label>
           <Textarea
-            id="observacoes"
-            placeholder="Observações adicionais (opcional)..."
-            value={observacoes}
-            onChange={(e) => setObservacoes(e.target.value)}
+            id="evolucao_livre"
+            placeholder="Evolução do paciente, observações adicionais..."
+            value={evolucaoLivre}
+            onChange={(e) => setEvolucaoLivre(e.target.value)}
             rows={3}
             className="resize-none"
           />
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="exercicios">Exercícios prescritos</Label>
+            <Textarea
+              id="exercicios"
+              placeholder="Exercícios recomendados..."
+              value={exerciciosPrescritos}
+              onChange={(e) => setExerciciosPrescritos(e.target.value)}
+              rows={2}
+              className="resize-none"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="proximos_passos">Próximos passos</Label>
+            <Textarea
+              id="proximos_passos"
+              placeholder="Plano para próxima sessão..."
+              value={proximosPassos}
+              onChange={(e) => setProximosPassos(e.target.value)}
+              rows={2}
+              className="resize-none"
+            />
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
