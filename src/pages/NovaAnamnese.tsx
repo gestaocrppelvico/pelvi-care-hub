@@ -19,14 +19,14 @@ export default function NovaAnamnese() {
   const [loading, setLoading] = useState(false);
   const [profissionalId, setProfissionalId] = useState<string | null>(null);
 
-  // Campos do formulário (ajustados para nomes reais da tabela)
-  const [diagnostico, setDiagnostico] = useState("");
+  // Campos do formulário (com nomes reais da tabela)
   const [queixaPrincipal, setQueixaPrincipal] = useState("");
+  const [diagnostico, setDiagnostico] = useState("");
   const [escalaDor, setEscalaDor] = useState<number | null>(null);
   const [idade, setIdade] = useState<number | null>(null);
   const [sexo, setSexo] = useState<string>("");
   const [medicoIndicou, setMedicoIndicou] = useState("");
-  const [observacoes, setObservacoes] = useState("");
+  const [evolucaoLivre, setEvolucaoLivre] = useState(""); // antes "observacoes"
 
   // Buscar profissional logado
   useEffect(() => {
@@ -65,19 +65,15 @@ export default function NovaAnamnese() {
     try {
       const payload = {
         paciente_id: pacienteId,
-        profissional_id: profissionalId, // 🔥 AGORA PREENCHIDO
+        profissional_id: profissionalId,
         tipo: "avaliacao",
         queixa_principal: queixaPrincipal.trim(),
         diagnostico: diagnostico.trim() || null,
         escala_dor: escalaDor,
-        // Ajuste os nomes dos campos conforme sua tabela:
-        // Se sua coluna se chamar "observacoes", mantenha;
-        // Se for "descricao" ou "evolucao_livre", altere abaixo.
-        observacoes: observacoes.trim() || null,
-        // Campos extras (se existirem na tabela)
         idade: idade,
         sexo: sexo || null,
-        medico_solicitante: medicoIndicou.trim() || null,
+        medico_indicou: medicoIndicou.trim() || null,
+        evolucao_livre: evolucaoLivre.trim() || null, // observações complementares
       };
 
       const { error } = await supabase.from("prontuarios").insert(payload);
@@ -187,8 +183,8 @@ export default function NovaAnamnese() {
           <Textarea
             id="observacoes"
             placeholder="Observações adicionais..."
-            value={observacoes}
-            onChange={(e) => setObservacoes(e.target.value)}
+            value={evolucaoLivre}
+            onChange={(e) => setEvolucaoLivre(e.target.value)}
             rows={3}
             className="resize-none"
           />
