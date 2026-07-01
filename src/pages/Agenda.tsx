@@ -177,7 +177,8 @@ export default function Agenda() {
 
   // ===== FUNÇÕES DE CHECK-IN =====
 
-  const carregarItensPaciente = async (pacienteId: string) => {
+  // 🔥 MODIFICADO: aceita um parâmetro opcional para selecionar um item específico
+  const carregarItensPaciente = async (pacienteId: string, itemIdParaSelecionar?: string | null) => {
     const { data } = await supabase
       .from("paciente_pacotes")
       .select(`
@@ -191,9 +192,17 @@ export default function Agenda() {
       .eq("paciente_id", pacienteId)
       .gt("sessoes_restantes", 0)
       .order("created_at", { ascending: false });
+    
     setItensPaciente(data || []);
+    
     if (data && data.length > 0) {
-      setItemSelecionadoId(data[0].id);
+      // Se houver um ID para selecionar e ele estiver na lista, selecione-o
+      if (itemIdParaSelecionar && data.some(item => item.id === itemIdParaSelecionar)) {
+        setItemSelecionadoId(itemIdParaSelecionar);
+      } else {
+        // Senão, seleciona o primeiro
+        setItemSelecionadoId(data[0].id);
+      }
     } else {
       setItemSelecionadoId(null);
     }
@@ -220,6 +229,7 @@ export default function Agenda() {
     toast.success(`Paciente ${data.nome} criado com sucesso!`);
   };
 
+  // 🔥 MODIFICADO: captura o ID do novo item para selecioná-lo depois
   const handleAdicionarItem = async () => {
     if (!pacienteSelecionado) {
       toast.error("Selecione ou crie um paciente primeiro.");
@@ -234,6 +244,8 @@ export default function Agenda() {
     if (!item) return;
 
     try {
+      let novoItemId: string | null = null;
+
       if (tipoAdicionar === "plano") {
         if (!planoSelecionadoId) { toast.error("Selecione o plano de saúde."); return; }
         if (!numeroGuia.trim()) { toast.error("Informe o número da guia."); return; }
@@ -253,8 +265,8 @@ export default function Agenda() {
           .single();
         if (errAut) throw errAut;
 
-        // Criar paciente_pacote vinculado à autorização
-        const { error: errPac } = await supabase
+        // Criar paciente_pacote vinculado à autorização e capturar o ID
+        const { data: pacoteCriado, error: errPac } = await supabase
           .from("paciente_pacotes")
           .insert({
             paciente_id: pacienteSelecionado.id,
@@ -265,14 +277,17 @@ export default function Agenda() {
             sessoes_restantes: item.tipo_item === "pacote" ? item.numero_sessoes : 1,
             preco_pago: item.tipo_item === "pacote" ? item.preco_total : (item.preco || 0),
             status_pagamento: "pendente"
-          });
+          })
+          .select("id")
+          .single();
         if (errPac) throw errPac;
+        novoItemId = pacoteCriado.id;
 
         toast.success("Guia e pacote vinculados ao paciente!");
       } else {
         // Particular
         if (item.tipo_item === "pacote") {
-          const { error } = await supabase
+          const { data: pacoteCriado, error } = await supabase
             .from("paciente_pacotes")
             .insert({
               paciente_id: pacienteSelecionado.id,
@@ -281,11 +296,14 @@ export default function Agenda() {
               sessoes_restantes: item.numero_sessoes,
               preco_pago: item.preco_total || 0,
               status_pagamento: "pendente"
-            });
+            })
+            .select("id")
+            .single();
           if (error) throw error;
+          novoItemId = pacoteCriado.id;
         } else {
           // Serviço avulso – cria um paciente_pacote com servico_id
-          const { error } = await supabase
+          const { data: pacoteCriado, error } = await supabase
             .from("paciente_pacotes")
             .insert({
               paciente_id: pacienteSelecionado.id,
@@ -294,13 +312,21 @@ export default function Agenda() {
               sessoes_restantes: 1,
               preco_pago: item.preco || 0,
               status_pagamento: "pendente"
-            });
+            })
+            .select("id")
+            .single();
           if (error) throw error;
+          novoItemId = pacoteCriado.id;
         }
         toast.success("Item vinculado ao paciente!");
       }
 
+      // Recarregar itens e selecionar o novo item criado
       await carregarItensPaciente(pacienteSelecionado.id);
+      if (novoItemId) {
+        setItemSelecionadoId(novoItemId);
+      }
+      
       setMostrarAdicionarItem(false);
       setPlanoSelecionadoId("");
       setNumeroGuia("");
@@ -389,6 +415,7 @@ export default function Agenda() {
     return `border-l-4 bg-white text-slate-800 shadow-sm`;
   };
 
+  // 🔥 MODIFICADO: ao abrir edição, se houver paciente_id e paciente_pacote_id, passa este último para seleção
   const abrirEdicao = (at: Atendimento) => {
     setSelectedAtend(at);
     setStatusForm(at.status);
@@ -400,13 +427,14 @@ export default function Agenda() {
     setBuscaPaciente("");
     setNovoNome("");
     setNovoTelefone("");
-    // Se já tiver paciente_id, carregar seus itens
+    
     if (at.paciente_id) {
       supabase.from("pacientes").select("id, nome, telefone").eq("id", at.paciente_id).single()
         .then(({ data }) => {
           if (data) {
             setPacienteSelecionado(data);
-            carregarItensPaciente(data.id);
+            // Passa o paciente_pacote_id que já está no atendimento para selecioná-lo
+            carregarItensPaciente(data.id, at.paciente_pacote_id);
           }
         });
     }
@@ -665,7 +693,12 @@ export default function Agenda() {
                 </div>
               )}
 
-              <Button onClick={handleSalvarVinculacao} className="w-full" disabled={itensPaciente.length > 0 && !itemSelecionadoId}>
+              {/* 🔥 BOTÃO "Vincular" com disabled melhorado */}
+              <Button 
+                onClick={handleSalvarVinculacao} 
+                className="w-full" 
+                disabled={!pacienteSelecionado || (itensPaciente.length > 0 && !itemSelecionadoId)}
+              >
                 Vincular e Preparar Check-in
               </Button>
             </div>
