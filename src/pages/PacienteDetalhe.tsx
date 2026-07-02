@@ -28,7 +28,7 @@ export default function PacienteDetalhe() {
 
   const [pac, setPac] = useState<any>(null);
   const [pront, setPront] = useState<any[]>([]);
-  const [atendimentos, setAtendimentos] = useState<any[]>([]);
+  const [atendimentos, setAtendimentos] = useState<any[]>([]); // SEMPRE ARRAY
   const [loading, setLoading] = useState(true);
   const [anamnese, setAnamnese] = useState<any>(null);
   const [evolucoes, setEvolucoes] = useState<any[]>([]);
@@ -81,8 +81,10 @@ export default function PacienteDetalhe() {
       if (error) {
         console.error("Erro ao buscar atendimentos:", error);
         toast.error("Erro ao carregar sessões");
+        setAtendimentos([]); // Garante array
       } else {
-        setAtendimentos(atendimentosComEvolucao || []);
+        // 🔥 GARANTE QUE É UM ARRAY
+        setAtendimentos(Array.isArray(atendimentosComEvolucao) ? atendimentosComEvolucao : []);
       }
 
       // 4. Listas de serviços e pacotes
@@ -140,10 +142,13 @@ export default function PacienteDetalhe() {
     } catch (err: any) { toast.error(err.message); }
   };
 
+  // 🔥 USANDO useMemo COM SEGURANÇA
   const statsHistorico = useMemo(() => {
-    const realizados = atendimentos.filter(a => a.status === "realizado");
-    const faltas = atendimentos.filter(a => a.status === "falta" || a.status === "ausente");
-    const cancelados = atendimentos.filter(a => a.status === "cancelado" || a.status === "remarcado");
+    // Garantir que atendimentos é um array
+    const lista = Array.isArray(atendimentos) ? atendimentos : [];
+    const realizados = lista.filter(a => a.status === "realizado");
+    const faltas = lista.filter(a => a.status === "falta" || a.status === "ausente");
+    const cancelados = lista.filter(a => a.status === "cancelado" || a.status === "remarcado");
     const profs = Array.from(new Set(realizados.map(a => a.profissional?.nome).filter(Boolean)));
     const primeiraSessao = realizados.length > 0 ? realizados[realizados.length - 1].data_inicio : null;
     return { total: realizados.length, faltas: faltas.length, cancelados: cancelados.length, profissionais: profs, primeiraSessao };
