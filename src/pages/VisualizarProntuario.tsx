@@ -36,16 +36,17 @@ export default function VisualizarProntuario() {
   if (loading) return <div>Carregando...</div>;
   if (!prontuario) return <div>Prontuário não encontrado.</div>;
 
-  // 🔥 Determina qual data exibir
   const dataExibicao = prontuario.data_sessao || prontuario.created_at;
 
   return (
     <div className="container max-w-3xl py-8">
       <div className="flex items-center justify-between">
-        <Button variant="ghost" onClick={() => navigate(`/paciente/${pacienteId}`)}>
+        <Button 
+          variant="ghost" 
+          onClick={() => navigate(`/pacientes/${pacienteId}`)} // 🔥 VOLTA PARA A FICHA DO PACIENTE
+        >
           <ArrowLeft className="w-4 h-4 mr-2" /> Voltar à ficha
         </Button>
-        {/* 🔥 Botão Editar (se for evolução) */}
         {prontuario.tipo === 'evolucao' && (
           <Button
             variant="outline"
@@ -63,7 +64,6 @@ export default function VisualizarProntuario() {
             {prontuario.alta_medica && ' 🏁 Alta'}
           </CardTitle>
           <p className="text-sm text-muted-foreground">
-            {/* 🔥 Exibe a data da sessão (se existir) ou a data de criação */}
             Sessão de {format(parseISO(dataExibicao), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
           </p>
         </CardHeader>
