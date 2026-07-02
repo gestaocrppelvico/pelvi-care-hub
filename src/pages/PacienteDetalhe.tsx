@@ -20,9 +20,7 @@ import { toast } from "sonner";
 
 import PacienteFinanceiro from "./PacienteFinanceiro";
 import PacienteAutorizacoes from "./PacienteAutorizacoes";
-
-// Import das novas funções (vamos criar esse arquivo depois)
-import { buscarAtendimentosComEvolucao, buscarPacoteAtivo } from "@/lib/supabaseFunctions";
+import { buscarAtendimentosComEvolucao } from "@/lib/supabaseFunctions";
 
 export default function PacienteDetalhe() {
   const { id } = useParams<{ id: string }>();
@@ -31,13 +29,12 @@ export default function PacienteDetalhe() {
   const podeGerenciar = isAdmin || isSecretaria;
 
   const [pac, setPac] = useState<any>(null);
-  const [pront, setPront] = useState<any[]>([]);          // todos os prontuários
-  const [atendimentos, setAtendimentos] = useState<any[]>([]); // com info de evolução
+  const [pront, setPront] = useState<any[]>([]);
+  const [atendimentos, setAtendimentos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [anamnese, setAnamnese] = useState<any>(null);   // prontuário tipo 'avaliacao'
-  const [evolucoes, setEvolucoes] = useState<any[]>([]); // prontuários tipo 'evolucao'
+  const [anamnese, setAnamnese] = useState<any>(null);
+  const [evolucoes, setEvolucoes] = useState<any[]>([]);
 
-  // Estados do lançamento de serviços (já existentes)
   const [itemTipo, setItemTipo] = useState<"servico" | "pacote">("servico");
   const [listaServicos, setListaServicos] = useState<any[]>([]);
   const [listaPacotes, setListaPacotes] = useState<any[]>([]);
@@ -49,11 +46,9 @@ export default function PacienteDetalhe() {
     if (!id) return;
     setLoading(true);
     try {
-      // 1. Paciente
       const { data: p } = await supabase.from("pacientes").select("*").eq("id", id).maybeSingle();
       setPac(p);
 
-      // 2. Prontuários (todos) com atendimento e profissional
       const { data: pr } = await supabase
         .from("prontuarios")
         .select("*, atendimento:atendimentos(data_inicio, profissional:profissionais(nome))")
@@ -61,17 +56,14 @@ export default function PacienteDetalhe() {
         .order("created_at", { ascending: false });
       setPront(pr || []);
 
-      // Separar anamnese e evoluções
       const anam = pr?.find(r => r.tipo === 'avaliacao') || null;
       setAnamnese(anam);
       const evos = pr?.filter(r => r.tipo === 'evolucao') || [];
       setEvolucoes(evos);
 
-      // 3. Atendimentos com info de evolução (usando a função que criaremos)
       const atendimentosComEvolucao = await buscarAtendimentosComEvolucao(id);
       setAtendimentos(atendimentosComEvolucao || []);
 
-      // 4. Listas de serviços e pacotes (para o lançamento)
       const [{ data: s }, { data: pks }] = await Promise.all([
         supabase.from("servicos").select("id, nome, preco").eq("ativo", true),
         supabase.from("pacotes").select("id, nome, numero_sessoes, preco_total").eq("ativo", true)
@@ -122,7 +114,7 @@ export default function PacienteDetalhe() {
       }
       toast.success("Lançado com sucesso!");
       setIdItemSelecionado("");
-      carregarDados(); // recarregar
+      carregarDados();
     } catch (err: any) { toast.error(err.message); }
   };
 
@@ -132,7 +124,6 @@ export default function PacienteDetalhe() {
     const cancelados = atendimentos.filter(a => a.status === "cancelado" || a.status === "remarcado");
     const profs = Array.from(new Set(realizados.map(a => a.profissional?.nome).filter(Boolean)));
     const primeiraSessao = realizados.length > 0 ? realizados[realizados.length - 1].data_inicio : null;
-    
     return { total: realizados.length, faltas: faltas.length, cancelados: cancelados.length, profissionais: profs, primeiraSessao };
   }, [atendimentos]);
 
@@ -224,7 +215,7 @@ export default function PacienteDetalhe() {
               </div>
             </Card>
 
-            {/* Card de Sessões com indicador de evolução - RENOMEADO */}
+            {/* Card de Sessões com indicador de evolução */}
             <Card className="p-4 shadow-sm h-[350px] flex flex-col">
               <h3 className="font-semibold text-sm flex items-center gap-2 border-b pb-2 mb-3">
                 <Calendar className="w-4 h-4 text-primary" /> Sessões
@@ -248,7 +239,6 @@ export default function PacienteDetalhe() {
                           </span>
                         </div>
                         <div className="text-xs text-muted-foreground truncate">{a.profissional?.nome || "Profissional não atribuído"}</div>
-                        {/* NOVO: indicador de evolução e botões */}
                         {a.status === 'realizado' && (
                           <div className="mt-1 flex items-center gap-2">
                             {temEvolucao ? (
@@ -329,7 +319,6 @@ export default function PacienteDetalhe() {
                 </div>
               </div>
 
-              {/* Exibir anamnese se existir */}
               {anamnese && (
                 <Card className="p-4 shadow-sm border-l-4 border-l-purple-500 bg-purple-50/20">
                   <div className="flex justify-between items-start mb-2">
@@ -352,7 +341,6 @@ export default function PacienteDetalhe() {
                       >
                         <Eye className="w-3 h-3 mr-1" /> Ver
                       </Button>
-                      {/* 🔥 BOTÃO DE EDIÇÃO DA ANAMNESE */}
                       <Button 
                         size="sm" 
                         variant="outline" 
@@ -372,7 +360,6 @@ export default function PacienteDetalhe() {
                 </Card>
               )}
 
-              {/* Lista de evoluções */}
               {evolucoes.length === 0 && !anamnese && (
                 <p className="text-sm text-muted-foreground text-center py-4">Nenhuma evolução registrada.</p>
               )}
@@ -381,7 +368,7 @@ export default function PacienteDetalhe() {
                   <div className="flex justify-between items-start mb-2">
                     <div>
                       <div className="font-semibold text-sm text-slate-800 flex items-center gap-2">
-                        Evolução · {format(parseISO(p.created_at), "dd/MM/yyyy")}
+                        Evolução · {format(parseISO(p.data_sessao || p.created_at), "dd/MM/yyyy")}
                         {p.alta_medica && <Badge variant="destructive" className="text-[10px]">🏁 Alta</Badge>}
                       </div>
                       <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
@@ -406,7 +393,6 @@ export default function PacienteDetalhe() {
           )}
         </TabsContent>
 
-        {/* Abas existentes (Serviços, Financeiro, Guias) - mantidas intactas */}
         <TabsContent value="servicos" className="mt-4">
           <Card className="p-4 space-y-4 shadow-sm">
             <h3 className="font-semibold flex items-center gap-2"><ShoppingBag className="w-4 h-4 text-primary" /> Lançar Novo Item (Venda)</h3>
