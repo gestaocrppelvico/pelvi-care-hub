@@ -44,39 +44,32 @@ export default function PacienteDetalhe() {
     if (!id) return;
     setLoading(true);
     try {
-      // 1. Paciente
+      // 1. Buscar paciente
       const { data: p } = await supabase.from("pacientes").select("*").eq("id", id).maybeSingle();
       setPac(p);
 
-      // 2. Prontuários
+      // 2. Buscar todos os prontuários do paciente
       const { data: pr } = await supabase
         .from("prontuarios")
         .select("*, atendimento:atendimentos(data_inicio, profissional:profissionais(nome))")
         .eq("paciente_id", id)
         .order("created_at", { ascending: false });
       
-      // 🔥 GARANTE QUE prontuários seja sempre um array
-      const prontuariosData = pr || [];
-      setPront(prontuariosData);
+      const prontuarios = pr || [];
+      setPront(prontuarios);
 
-      const anam = prontuariosData.find((r: any) => r.tipo === 'avaliacao') || null;
+      // Separar anamnese e evoluções
+      const anam = prontuarios.find((r: any) => r.tipo === 'avaliacao') || null;
       setAnamnese(anam);
-      const evos = prontuariosData.filter((r: any) => r.tipo === 'evolucao') || [];
+      const evos = prontuarios.filter((r: any) => r.tipo === 'evolucao') || [];
       setEvolucoes(evos);
 
-      // 3. Atendimentos com prontuários (query direta) - 🔥 COM TRATAMENTO DE ERRO
-      const { data: atendimentosComEvolucao, error } = await supabase
+      // 3. Buscar atendimentos do paciente (sem prontuários aninhados)
+      const { data: atendimentosRaw, error } = await supabase
         .from("atendimentos")
         .select(`
           *,
-          profissional:profissionais(nome),
-          prontuarios (
-            id,
-            conduta,
-            created_at,
-            data_sessao,
-            tipo
-          )
+          profissional:profissionais(nome)
         `)
         .eq("paciente_id", id)
         .order("data_inicio", { ascending: false });
@@ -86,8 +79,16 @@ export default function PacienteDetalhe() {
         toast.error("Erro ao carregar sessões");
         setAtendimentos([]);
       } else {
-        // 🔥 GARANTE QUE atendimentos seja sempre um array
-        setAtendimentos(atendimentosComEvolucao || []);
+        // 🔥 COMBINAR MANUALMENTE: associar cada atendimento com suas evoluções
+        const atendimentosComEvolucao = (atendimentosRaw || []).map((atendimento: any) => {
+          // Filtra as evoluções que têm o atendimento_id igual ao id do atendimento
+          const evolucoesDoAtendimento = evos.filter((e: any) => e.atendimento_id === atendimento.id);
+          return {
+            ...atendimento,
+            prontuarios: evolucoesDoAtendimento
+          };
+        });
+        setAtendimentos(atendimentosComEvolucao);
       }
 
       // 4. Listas de serviços e pacotes
@@ -146,7 +147,6 @@ export default function PacienteDetalhe() {
   };
 
   const statsHistorico = useMemo(() => {
-    // 🔥 GARANTE QUE atendimentos seja um array antes de filtrar
     const lista = Array.isArray(atendimentos) ? atendimentos : [];
     const realizados = lista.filter(a => a.status === "realizado");
     const faltas = lista.filter(a => a.status === "falta" || a.status === "ausente");
@@ -254,9 +254,10 @@ export default function PacienteDetalhe() {
                   <div className="text-center text-sm text-muted-foreground mt-10">Nenhuma sessão encontrada.</div>
                 ) : (
                   atendimentos.map((a: any) => {
-                    // 🔥 GARANTE QUE prontuarios seja um array
-                    const pronts = Array.isArray(a.prontuarios) ? a.prontuarios : [];
-                    const evolucoesDaSessao = pronts.filter((p: any) => p.tipo === 'evolucao');
+                    // 🔥 Verifica se há evoluções associadas a este atendimento
+                    const evolucoesDaSessao = Array.isArray(a.prontuarios) 
+                      ? a.prontuarios.filter((p: any) => p.tipo === 'evolucao')
+                      : [];
                     const temEvolucao = evolucoesDaSessao.length > 0;
                     const prontuarioId = temEvolucao ? evolucoesDaSessao[0].id : null;
 
