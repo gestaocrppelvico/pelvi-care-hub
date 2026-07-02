@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Save, X, AlertCircle, CheckCircle } from "lucide-react";
+import { ArrowLeft, Save, X, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -21,10 +21,11 @@ export default function NovaEvolucao() {
   const [loading, setLoading] = useState(false);
   const [profissionalId, setProfissionalId] = useState<string | null>(null);
   const [pacoteInfo, setPacoteInfo] = useState<any>(null);
+  const [dataSessao, setDataSessao] = useState<string | null>(null); // 🔥 DATA DA SESSÃO
 
-  // Campos do formulário (com nomes reais da tabela)
+  // Campos do formulário
   const [conduta, setConduta] = useState("");
-  const [evolucaoLivre, setEvolucaoLivre] = useState(""); // antes "observacoes"
+  const [evolucaoLivre, setEvolucaoLivre] = useState("");
   const [escalaDor, setEscalaDor] = useState<number | null>(null);
   const [altaMedica, setAltaMedica] = useState(false);
   const [exerciciosPrescritos, setExerciciosPrescritos] = useState("");
@@ -49,14 +50,15 @@ export default function NovaEvolucao() {
     fetchProfissional();
   }, [user]);
 
-  // Buscar informações do atendimento e pacote ativo
+  // Buscar informações do atendimento e pacote ativo, além da data da sessão
   useEffect(() => {
     if (!pacienteId || !atendimentoId) return;
 
-    const fetchPacote = async () => {
+    const fetchDados = async () => {
       const { data, error } = await supabase
         .from("atendimentos")
         .select(`
+          data_inicio,
           paciente_pacote_id,
           paciente_pacotes (
             sessoes_restantes,
@@ -69,15 +71,18 @@ export default function NovaEvolucao() {
         .maybeSingle();
 
       if (error) {
-        console.error("Erro ao buscar pacote:", error);
+        console.error("Erro ao buscar atendimento:", error);
         return;
       }
-      if (data?.paciente_pacotes) {
-        setPacoteInfo(data.paciente_pacotes);
+      if (data) {
+        setDataSessao(data.data_inicio); // 🔥 Guarda a data da sessão
+        if (data.paciente_pacotes) {
+          setPacoteInfo(data.paciente_pacotes);
+        }
       }
     };
 
-    fetchPacote();
+    fetchDados();
   }, [pacienteId, atendimentoId]);
 
   const handleSalvar = async () => {
@@ -107,6 +112,7 @@ export default function NovaEvolucao() {
         alta_medica: altaMedica,
         exercicios_prescritos: exerciciosPrescritos.trim() || null,
         proximos_passos: proximosPassos.trim() || null,
+        data_sessao: dataSessao, // 🔥 INCLUI A DATA DA SESSÃO
       };
 
       const { error } = await supabase.from("prontuarios").insert(payload);
@@ -136,6 +142,16 @@ export default function NovaEvolucao() {
         </Button>
         <h1 className="text-2xl font-bold">Nova Evolução</h1>
       </div>
+
+      {/* 🔥 EXIBE A DATA DA SESSÃO NO TOPO */}
+      {dataSessao && (
+        <Card className="p-3 border-l-4 border-l-amber-500 bg-amber-50/30">
+          <div className="text-sm">
+            <span className="font-semibold">Sessão de </span>
+            {format(parseISO(dataSessao), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+          </div>
+        </Card>
+      )}
 
       {pacoteInfo && (
         <Card className="p-4 border-l-4 border-l-blue-500 bg-blue-50/30">
