@@ -20,7 +20,6 @@ import { toast } from "sonner";
 
 import PacienteFinanceiro from "./PacienteFinanceiro";
 import PacienteAutorizacoes from "./PacienteAutorizacoes";
-import { buscarAtendimentosComEvolucao } from "@/lib/supabaseFunctions";
 
 export default function PacienteDetalhe() {
   const { id } = useParams<{ id: string }>();
@@ -35,6 +34,7 @@ export default function PacienteDetalhe() {
   const [anamnese, setAnamnese] = useState<any>(null);
   const [evolucoes, setEvolucoes] = useState<any[]>([]);
 
+  // Estados do lançamento de serviços
   const [itemTipo, setItemTipo] = useState<"servico" | "pacote">("servico");
   const [listaServicos, setListaServicos] = useState<any[]>([]);
   const [listaPacotes, setListaPacotes] = useState<any[]>([]);
@@ -46,9 +46,11 @@ export default function PacienteDetalhe() {
     if (!id) return;
     setLoading(true);
     try {
+      // 1. Paciente
       const { data: p } = await supabase.from("pacientes").select("*").eq("id", id).maybeSingle();
       setPac(p);
 
+      // 2. Prontuários (todos) com atendimento e profissional
       const { data: pr } = await supabase
         .from("prontuarios")
         .select("*, atendimento:atendimentos(data_inicio, profissional:profissionais(nome))")
@@ -61,9 +63,31 @@ export default function PacienteDetalhe() {
       const evos = pr?.filter(r => r.tipo === 'evolucao') || [];
       setEvolucoes(evos);
 
-      const atendimentosComEvolucao = await buscarAtendimentosComEvolucao(id);
-      setAtendimentos(atendimentosComEvolucao || []);
+      // 3. 🔥 ATENDIMENTOS COM PRONTUÁRIOS (QUERY DIRETA)
+      const { data: atendimentosComEvolucao, error } = await supabase
+        .from("atendimentos")
+        .select(`
+          *,
+          profissional:profissionais(nome),
+          prontuarios (
+            id,
+            conduta,
+            created_at,
+            data_sessao,
+            tipo
+          )
+        `)
+        .eq("paciente_id", id)
+        .order("data_inicio", { ascending: false });
 
+      if (error) {
+        console.error("Erro ao buscar atendimentos:", error);
+        toast.error("Erro ao carregar sessões");
+      } else {
+        setAtendimentos(atendimentosComEvolucao || []);
+      }
+
+      // 4. Listas de serviços e pacotes (para o lançamento)
       const [{ data: s }, { data: pks }] = await Promise.all([
         supabase.from("servicos").select("id, nome, preco").eq("ativo", true),
         supabase.from("pacotes").select("id, nome, numero_sessoes, preco_total").eq("ativo", true)
@@ -215,7 +239,7 @@ export default function PacienteDetalhe() {
               </div>
             </Card>
 
-            {/* Card de Sessões com indicador de evolução */}
+            {/* ============ CARD DE SESSÕES ============ */}
             <Card className="p-4 shadow-sm h-[350px] flex flex-col">
               <h3 className="font-semibold text-sm flex items-center gap-2 border-b pb-2 mb-3">
                 <Calendar className="w-4 h-4 text-primary" /> Sessões
@@ -223,8 +247,11 @@ export default function PacienteDetalhe() {
               <div className="flex-1 overflow-y-auto pr-2 space-y-3">
                 {atendimentos.length === 0 && <div className="text-center text-sm text-muted-foreground mt-10">Nenhuma sessão encontrada.</div>}
                 {atendimentos.map(a => {
-                  const temEvolucao = a.prontuarios && a.prontuarios.length > 0;
-                  const prontuarioId = temEvolucao ? a.prontuarios[0].id : null;
+                  // 🔥 VERIFICA SE EXISTEM PRONTUÁRIOS DO TIPO 'evolucao' ASSOCIADOS
+                  const evolucoesDaSessao = a.prontuarios?.filter((p: any) => p.tipo === 'evolucao') || [];
+                  const temEvolucao = evolucoesDaSessao.length > 0;
+                  const prontuarioId = temEvolucao ? evolucoesDaSessao[0].id : null;
+
                   return (
                     <div key={a.id} className="flex items-start gap-3 border-l-2 border-slate-100 pl-3 py-1">
                       <div className="w-2 h-2 rounded-full mt-1.5 -ml-[17px] border-2 border-white ring-2 ring-slate-100" 
@@ -239,6 +266,8 @@ export default function PacienteDetalhe() {
                           </span>
                         </div>
                         <div className="text-xs text-muted-foreground truncate">{a.profissional?.nome || "Profissional não atribuído"}</div>
+                        
+                        {/* 🔥 INDICADOR DE EVOLUÇÃO */}
                         {a.status === 'realizado' && (
                           <div className="mt-1 flex items-center gap-2">
                             {temEvolucao ? (
@@ -363,36 +392,41 @@ export default function PacienteDetalhe() {
               {evolucoes.length === 0 && !anamnese && (
                 <p className="text-sm text-muted-foreground text-center py-4">Nenhuma evolução registrada.</p>
               )}
-              {evolucoes.length > 0 && evolucoes.map(p => (
-                <Card key={p.id} className="p-4 shadow-sm border-l-4 border-l-blue-500">
-                  <div className="flex justify-between items-start mb-2">
-                    <div>
-                      <div className="font-semibold text-sm text-slate-800 flex items-center gap-2">
-                        Evolução · {format(parseISO(p.data_sessao || p.created_at), "dd/MM/yyyy")}
-                        {p.alta_medica && <Badge variant="destructive" className="text-[10px]">🏁 Alta</Badge>}
+              {evolucoes.length > 0 && evolucoes.map(p => {
+                // 🔥 USA data_sessao se existir, senão usa created_at
+                const dataExibicao = p.data_sessao || p.created_at;
+                return (
+                  <Card key={p.id} className="p-4 shadow-sm border-l-4 border-l-blue-500">
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <div className="font-semibold text-sm text-slate-800 flex items-center gap-2">
+                          Evolução · {format(parseISO(dataExibicao), "dd/MM/yyyy")}
+                          {p.alta_medica && <Badge variant="destructive" className="text-[10px]">🏁 Alta</Badge>}
+                        </div>
+                        <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                          <UserCircle className="w-3 h-3" /> Registrado por {p.atendimento?.profissional?.nome || "Profissional"}
+                        </div>
                       </div>
-                      <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-                        <UserCircle className="w-3 h-3" /> Registrado por {p.atendimento?.profissional?.nome || "Profissional"}
-                      </div>
+                      <Button 
+                        size="sm" 
+                        variant="ghost" 
+                        className="h-7 px-2 text-xs"
+                        onClick={() => navigate(`/paciente/${id}/prontuario/${p.id}`)}
+                      >
+                        <Eye className="w-3 h-3 mr-1" /> Ver
+                      </Button>
                     </div>
-                    <Button 
-                      size="sm" 
-                      variant="ghost" 
-                      className="h-7 px-2 text-xs"
-                      onClick={() => navigate(`/paciente/${id}/prontuario/${p.id}`)}
-                    >
-                      <Eye className="w-3 h-3 mr-1" /> Ver
-                    </Button>
-                  </div>
-                  <div className="text-sm text-slate-600 bg-slate-50 p-3 rounded border whitespace-pre-wrap">
-                    {p.conduta || p.evolucao_livre || p.descricao || p.observacoes || "Nenhum detalhe escrito."}
-                  </div>
-                </Card>
-              ))}
+                    <div className="text-sm text-slate-600 bg-slate-50 p-3 rounded border whitespace-pre-wrap">
+                      {p.conduta || p.evolucao_livre || p.descricao || p.observacoes || "Nenhum detalhe escrito."}
+                    </div>
+                  </Card>
+                );
+              })}
             </div>
           )}
         </TabsContent>
 
+        {/* Abas existentes (Serviços, Financeiro, Guias) */}
         <TabsContent value="servicos" className="mt-4">
           <Card className="p-4 space-y-4 shadow-sm">
             <h3 className="font-semibold flex items-center gap-2"><ShoppingBag className="w-4 h-4 text-primary" /> Lançar Novo Item (Venda)</h3>
