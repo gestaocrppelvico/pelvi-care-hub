@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { format, parseISO } from "date-fns";
+import { ptBR } from "date-fns/locale";
 import { ArrowLeft, Save, X, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -21,9 +23,8 @@ export default function NovaEvolucao() {
   const [loading, setLoading] = useState(false);
   const [profissionalId, setProfissionalId] = useState<string | null>(null);
   const [pacoteInfo, setPacoteInfo] = useState<any>(null);
-  const [dataSessao, setDataSessao] = useState<string | null>(null); // 🔥 DATA DA SESSÃO
+  const [dataSessao, setDataSessao] = useState<string | null>(null);
 
-  // Campos do formulário
   const [conduta, setConduta] = useState("");
   const [evolucaoLivre, setEvolucaoLivre] = useState("");
   const [escalaDor, setEscalaDor] = useState<number | null>(null);
@@ -31,7 +32,6 @@ export default function NovaEvolucao() {
   const [exerciciosPrescritos, setExerciciosPrescritos] = useState("");
   const [proximosPassos, setProximosPassos] = useState("");
 
-  // Buscar profissional logado
   useEffect(() => {
     if (!user) return;
     const fetchProfissional = async () => {
@@ -50,7 +50,6 @@ export default function NovaEvolucao() {
     fetchProfissional();
   }, [user]);
 
-  // Buscar informações do atendimento e pacote ativo, além da data da sessão
   useEffect(() => {
     if (!pacienteId || !atendimentoId) return;
 
@@ -75,7 +74,7 @@ export default function NovaEvolucao() {
         return;
       }
       if (data) {
-        setDataSessao(data.data_inicio); // 🔥 Guarda a data da sessão
+        setDataSessao(data.data_inicio);
         if (data.paciente_pacotes) {
           setPacoteInfo(data.paciente_pacotes);
         }
@@ -112,7 +111,7 @@ export default function NovaEvolucao() {
         alta_medica: altaMedica,
         exercicios_prescritos: exerciciosPrescritos.trim() || null,
         proximos_passos: proximosPassos.trim() || null,
-        data_sessao: dataSessao, // 🔥 INCLUI A DATA DA SESSÃO
+        data_sessao: dataSessao,
       };
 
       const { error } = await supabase.from("prontuarios").insert(payload);
@@ -143,7 +142,6 @@ export default function NovaEvolucao() {
         <h1 className="text-2xl font-bold">Nova Evolução</h1>
       </div>
 
-      {/* 🔥 EXIBE A DATA DA SESSÃO NO TOPO */}
       {dataSessao && (
         <Card className="p-3 border-l-4 border-l-amber-500 bg-amber-50/30">
           <div className="text-sm">
