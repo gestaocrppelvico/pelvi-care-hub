@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Clock, RefreshCw, ChevronLeft, ChevronRight, Link2, Wallet, Plus, UserPlus } from "lucide-react";
+import { Clock, RefreshCw, ChevronLeft, ChevronRight, Link2, Wallet, Plus, UserPlus, CheckCircle2, AlertCircle } from "lucide-react";
 
 interface Atendimento {
   id: string;
@@ -43,32 +43,26 @@ export default function Agenda() {
   const [statusForm, setStatusForm] = useState("agendado");
   const [busy, setBusy] = useState(false);
 
-  // Estado para armazenar o ID do profissional logado (se for fisioterapeuta)
   const [profissionalId, setProfissionalId] = useState<string | null>(null);
 
-  // Estados para paciente
   const [buscaPaciente, setBuscaPaciente] = useState("");
   const [pacientesSugeridos, setPacientesSugeridos] = useState<any[]>([]);
   const [pacienteSelecionado, setPacienteSelecionado] = useState<any>(null);
   const [novoNome, setNovoNome] = useState("");
   const [novoTelefone, setNovoTelefone] = useState("");
 
-  // Estados para itens financeiros
   const [itensPaciente, setItensPaciente] = useState<any[]>([]);
   const [itemSelecionadoId, setItemSelecionadoId] = useState<string | null>(null);
 
-  // Estados para adicionar novo item
   const [mostrarAdicionarItem, setMostrarAdicionarItem] = useState(false);
   const [tipoAdicionar, setTipoAdicionar] = useState<"plano" | "particular">("plano");
   const [planoSelecionadoId, setPlanoSelecionadoId] = useState("");
   const [numeroGuia, setNumeroGuia] = useState("");
   const [pacoteServicoId, setPacoteServicoId] = useState("");
 
-  // Listas de apoio
   const [listaPlanos, setListaPlanos] = useState<any[]>([]);
   const [listaPacotesServicos, setListaPacotesServicos] = useState<any[]>([]);
 
-  // Carregar listas ao abrir sheet
   useEffect(() => {
     if (sheetOpen) {
       supabase.from("planos_saude").select("id, nome").eq("ativo", true).then(({ data }) => setListaPlanos(data || []));
@@ -85,7 +79,6 @@ export default function Agenda() {
     }
   }, [sheetOpen]);
 
-  // Buscar o ID do profissional logado (se for fisioterapeuta)
   useEffect(() => {
     if (!user) return;
     const fetchProfissional = async () => {
@@ -101,7 +94,6 @@ export default function Agenda() {
     fetchProfissional();
   }, [user]);
 
-  // Busca pacientes com pacotes
   useEffect(() => {
     if (buscaPaciente.trim().length < 2) {
       setPacientesSugeridos([]);
@@ -120,7 +112,6 @@ export default function Agenda() {
     return () => clearTimeout(timeout);
   }, [buscaPaciente]);
 
-  // Carregar atendimentos
   const carregarAtendimentos = useCallback(async () => {
     setLoading(true);
     try {
@@ -142,11 +133,9 @@ export default function Agenda() {
         .gte("data_inicio", start.toISOString())
         .lte("data_inicio", end.toISOString());
 
-      // Filtro para fisioterapeuta: vê apenas seus atendimentos
       if (!isAdmin && !isSecretaria && profissionalId) {
         query = query.eq("profissional_id", profissionalId);
       } else if (profFiltroUrl) {
-        // Admin/secretária podem filtrar por profissional via URL
         query = query.eq("profissional_id", profFiltroUrl);
       }
 
@@ -164,7 +153,6 @@ export default function Agenda() {
     carregarAtendimentos();
   }, [carregarAtendimentos]);
 
-  // Mapeamento para visão semanal/mensal
   const mapeamentoDias = useMemo(() => {
     const mapa = new Map<string, Atendimento[]>();
     atendimentos.forEach((at) => {
@@ -177,7 +165,6 @@ export default function Agenda() {
 
   // ===== FUNÇÕES DE CHECK-IN =====
 
-  // 🔥 MODIFICADO: aceita um parâmetro opcional para selecionar um item específico
   const carregarItensPaciente = async (pacienteId: string, itemIdParaSelecionar?: string | null) => {
     const { data } = await supabase
       .from("paciente_pacotes")
@@ -196,11 +183,9 @@ export default function Agenda() {
     setItensPaciente(data || []);
     
     if (data && data.length > 0) {
-      // Se houver um ID para selecionar e ele estiver na lista, selecione-o
       if (itemIdParaSelecionar && data.some(item => item.id === itemIdParaSelecionar)) {
         setItemSelecionadoId(itemIdParaSelecionar);
       } else {
-        // Senão, seleciona o primeiro
         setItemSelecionadoId(data[0].id);
       }
     } else {
@@ -229,7 +214,6 @@ export default function Agenda() {
     toast.success(`Paciente ${data.nome} criado com sucesso!`);
   };
 
-  // 🔥 MODIFICADO: captura o ID do novo item para selecioná-lo depois
   const handleAdicionarItem = async () => {
     if (!pacienteSelecionado) {
       toast.error("Selecione ou crie um paciente primeiro.");
@@ -250,7 +234,6 @@ export default function Agenda() {
         if (!planoSelecionadoId) { toast.error("Selecione o plano de saúde."); return; }
         if (!numeroGuia.trim()) { toast.error("Informe o número da guia."); return; }
 
-        // Criar autorização
         const { data: aut, error: errAut } = await supabase
           .from("autorizacoes")
           .insert({
@@ -265,7 +248,6 @@ export default function Agenda() {
           .single();
         if (errAut) throw errAut;
 
-        // Criar paciente_pacote vinculado à autorização e capturar o ID
         const { data: pacoteCriado, error: errPac } = await supabase
           .from("paciente_pacotes")
           .insert({
@@ -285,7 +267,6 @@ export default function Agenda() {
 
         toast.success("Guia e pacote vinculados ao paciente!");
       } else {
-        // Particular
         if (item.tipo_item === "pacote") {
           const { data: pacoteCriado, error } = await supabase
             .from("paciente_pacotes")
@@ -302,7 +283,6 @@ export default function Agenda() {
           if (error) throw error;
           novoItemId = pacoteCriado.id;
         } else {
-          // Serviço avulso – cria um paciente_pacote com servico_id
           const { data: pacoteCriado, error } = await supabase
             .from("paciente_pacotes")
             .insert({
@@ -321,7 +301,6 @@ export default function Agenda() {
         toast.success("Item vinculado ao paciente!");
       }
 
-      // Recarregar itens e selecionar o novo item criado
       await carregarItensPaciente(pacienteSelecionado.id);
       if (novoItemId) {
         setItemSelecionadoId(novoItemId);
@@ -363,6 +342,9 @@ export default function Agenda() {
         .eq("id", selectedAtend.id);
       if (error) throw error;
 
+      // 🔥 ATUALIZA O selectedAtend LOCALMENTE
+      setSelectedAtend(prev => prev ? { ...prev, ...updateData } : null);
+
       toast.success("Atendimento vinculado ao paciente e ao pacote!");
       setSheetOpen(false);
       carregarAtendimentos();
@@ -396,7 +378,6 @@ export default function Agenda() {
     }
   };
 
-  // Navegação
   const handleAnterior = () => {
     if (view === "day") setCurrentDate(prev => addDays(prev, -1));
     else if (view === "week") setCurrentDate(prev => addWeeks(prev, -1));
@@ -415,11 +396,9 @@ export default function Agenda() {
     return `border-l-4 bg-white text-slate-800 shadow-sm`;
   };
 
-  // 🔥 MODIFICADO: ao abrir edição, se houver paciente_id e paciente_pacote_id, passa este último para seleção
   const abrirEdicao = (at: Atendimento) => {
     setSelectedAtend(at);
     setStatusForm(at.status);
-    // Resetar estados de check-in
     setPacienteSelecionado(null);
     setItensPaciente([]);
     setItemSelecionadoId(null);
@@ -433,13 +412,17 @@ export default function Agenda() {
         .then(({ data }) => {
           if (data) {
             setPacienteSelecionado(data);
-            // Passa o paciente_pacote_id que já está no atendimento para selecioná-lo
             carregarItensPaciente(data.id, at.paciente_pacote_id);
           }
         });
     }
     setSheetOpen(true);
   };
+
+  // 🔥 VERIFICA SE PACIENTE E PACOTE JÁ ESTÃO SALVOS NO ATENDIMENTO
+  const pacienteVinculado = selectedAtend?.paciente_id !== null && selectedAtend?.paciente_id !== undefined;
+  const pacoteVinculado = selectedAtend?.paciente_pacote_id !== null && selectedAtend?.paciente_pacote_id !== undefined;
+  const prontoParaCheckin = pacienteVinculado && pacoteVinculado;
 
   return (
     <div className="space-y-4 p-2 max-w-7xl mx-auto">
@@ -540,11 +523,42 @@ export default function Agenda() {
           </SheetHeader>
           
           {selectedAtend && (
-            <div className="bg-slate-50 p-3 rounded-xl border space-y-1 text-xs">
-              <p className="font-bold text-sm text-slate-700">{selectedAtend.paciente?.nome || selectedAtend.nome_paciente_livre}</p>
-              <p className="text-muted-foreground"><Clock className="w-3 h-3 inline mr-1" />{format(new Date(selectedAtend.data_inicio), "dd 'de' MMMM 'às' HH:mm", { locale: ptBR })}</p>
-              <p className="text-muted-foreground uppercase font-semibold text-[10px] tracking-wide text-blue-600 mt-1">Profissional: {selectedAtend.profissional?.nome || "Não definido"}</p>
-            </div>
+            <>
+              <div className="bg-slate-50 p-3 rounded-xl border space-y-1 text-xs">
+                <p className="font-bold text-sm text-slate-700">{selectedAtend.paciente?.nome || selectedAtend.nome_paciente_livre}</p>
+                <p className="text-muted-foreground"><Clock className="w-3 h-3 inline mr-1" />{format(new Date(selectedAtend.data_inicio), "dd 'de' MMMM 'às' HH:mm", { locale: ptBR })}</p>
+                <p className="text-muted-foreground uppercase font-semibold text-[10px] tracking-wide text-blue-600 mt-1">Profissional: {selectedAtend.profissional?.nome || "Não definido"}</p>
+              </div>
+
+              {/* 🔥 INDICADORES DE STATUS DE VINCULAÇÃO */}
+              <div className="flex flex-col gap-1.5 bg-slate-50 p-3 rounded-xl border text-xs">
+                <div className="flex items-center gap-2">
+                  {pacienteVinculado ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-amber-500" />
+                  )}
+                  <span className={pacienteVinculado ? "text-emerald-700 font-medium" : "text-amber-700 font-medium"}>
+                    {pacienteVinculado ? "Paciente vinculado" : "Paciente não vinculado"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {pacoteVinculado ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-amber-500" />
+                  )}
+                  <span className={pacoteVinculado ? "text-emerald-700 font-medium" : "text-amber-700 font-medium"}>
+                    {pacoteVinculado ? "Pacote vinculado" : "Pacote não vinculado"}
+                  </span>
+                </div>
+                {prontoParaCheckin && (
+                  <div className="mt-1 text-emerald-600 font-semibold text-[11px] flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Pronto para check-in
+                  </div>
+                )}
+              </div>
+            </>
           )}
 
           {/* SEÇÃO DE PACIENTE */}
@@ -573,7 +587,6 @@ export default function Agenda() {
                 ))}
               </div>
             )}
-            {/* Criar paciente rápido */}
             <div className="flex gap-2 mt-2">
               <Input
                 placeholder="Nome do novo paciente..."
@@ -625,7 +638,6 @@ export default function Agenda() {
                 <p className="text-xs text-amber-600">Este paciente não possui itens com saldo. Adicione um abaixo.</p>
               )}
 
-              {/* Adicionar novo item */}
               <Button
                 variant="outline"
                 size="sm"
@@ -693,13 +705,21 @@ export default function Agenda() {
                 </div>
               )}
 
-              {/* 🔥 BOTÃO "Vincular" com disabled melhorado */}
+              {/* 🔥 BOTÃO VINCULAR COM COR VERDE QUANDO PRONTO */}
               <Button 
                 onClick={handleSalvarVinculacao} 
-                className="w-full" 
+                className="w-full"
+                variant={itensPaciente.length > 0 && itemSelecionadoId ? "default" : "outline"}
                 disabled={!pacienteSelecionado || (itensPaciente.length > 0 && !itemSelecionadoId)}
               >
-                Vincular e Preparar Check-in
+                {itensPaciente.length > 0 && itemSelecionadoId ? (
+                  <>
+                    <CheckCircle2 className="w-4 h-4 mr-2" />
+                    Vincular e Preparar Check-in
+                  </>
+                ) : (
+                  "Vincular e Preparar Check-in"
+                )}
               </Button>
             </div>
           )}
@@ -721,7 +741,7 @@ export default function Agenda() {
               </Select>
             </div>
 
-            {statusForm === "realizado" && (!selectedAtend?.paciente_id || !selectedAtend?.paciente_pacote_id) && (
+            {statusForm === "realizado" && !prontoParaCheckin && (
               <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800 space-y-1">
                 <p className="font-bold">⚠️ Check-in Bloqueado:</p>
                 <p>Vincule o paciente e o pacote antes de confirmar.</p>
@@ -731,7 +751,7 @@ export default function Agenda() {
             <Button
               type="submit"
               className="w-full h-12 text-sm font-bold bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
-              disabled={busy || (statusForm === "realizado" && (!selectedAtend?.paciente_id || !selectedAtend?.paciente_pacote_id))}
+              disabled={busy || (statusForm === "realizado" && !prontoParaCheckin)}
             >
               {busy ? "A atualizar..." : "Confirmar Alteração"}
             </Button>
