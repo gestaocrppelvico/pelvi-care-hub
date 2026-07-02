@@ -37,6 +37,8 @@ import NovaAnamnese from './pages/NovaAnamnese';
 import NovaEvolucao from './pages/NovaEvolucao';
 import VisualizarProntuario from './pages/VisualizarProntuario';
 import EditarAnamnese from "./pages/EditarAnamnese";
+import EditarEvolucao from "./pages/EditarEvolucao";
+
 
 
 
@@ -75,6 +77,7 @@ const App = () => (
             <Route path="/paciente/:id/evolucao/nova" element={<NovaEvolucao />} />
             <Route path="/paciente/:id/prontuario/:prontuarioId" element={<VisualizarProntuario />} />
             <Route path="/paciente/:id/anamnese/editar/:prontuarioId" element={<EditarAnamnese />} />
+            <Route path="/paciente/:id/evolucao/editar/:prontuarioId" element={<EditarEvolucao />} />
             
             {/* ROTAS DO FINANCEIRO */}
             <Route path="/financeiro" element={<Financeiro />} />
