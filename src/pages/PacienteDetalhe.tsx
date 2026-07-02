@@ -28,7 +28,7 @@ export default function PacienteDetalhe() {
 
   const [pac, setPac] = useState<any>(null);
   const [pront, setPront] = useState<any[]>([]);
-  const [atendimentos, setAtendimentos] = useState<any[]>([]); // SEMPRE ARRAY
+  const [atendimentos, setAtendimentos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [anamnese, setAnamnese] = useState<any>(null);
   const [evolucoes, setEvolucoes] = useState<any[]>([]);
@@ -54,14 +54,17 @@ export default function PacienteDetalhe() {
         .select("*, atendimento:atendimentos(data_inicio, profissional:profissionais(nome))")
         .eq("paciente_id", id)
         .order("created_at", { ascending: false });
-      setPront(pr || []);
+      
+      // 🔥 GARANTE QUE prontuários seja sempre um array
+      const prontuariosData = pr || [];
+      setPront(prontuariosData);
 
-      const anam = pr?.find(r => r.tipo === 'avaliacao') || null;
+      const anam = prontuariosData.find((r: any) => r.tipo === 'avaliacao') || null;
       setAnamnese(anam);
-      const evos = pr?.filter(r => r.tipo === 'evolucao') || [];
+      const evos = prontuariosData.filter((r: any) => r.tipo === 'evolucao') || [];
       setEvolucoes(evos);
 
-      // 3. Atendimentos com prontuários (query direta)
+      // 3. Atendimentos com prontuários (query direta) - 🔥 COM TRATAMENTO DE ERRO
       const { data: atendimentosComEvolucao, error } = await supabase
         .from("atendimentos")
         .select(`
@@ -81,10 +84,10 @@ export default function PacienteDetalhe() {
       if (error) {
         console.error("Erro ao buscar atendimentos:", error);
         toast.error("Erro ao carregar sessões");
-        setAtendimentos([]); // Garante array
+        setAtendimentos([]);
       } else {
-        // 🔥 GARANTE QUE É UM ARRAY
-        setAtendimentos(Array.isArray(atendimentosComEvolucao) ? atendimentosComEvolucao : []);
+        // 🔥 GARANTE QUE atendimentos seja sempre um array
+        setAtendimentos(atendimentosComEvolucao || []);
       }
 
       // 4. Listas de serviços e pacotes
@@ -142,9 +145,8 @@ export default function PacienteDetalhe() {
     } catch (err: any) { toast.error(err.message); }
   };
 
-  // 🔥 USANDO useMemo COM SEGURANÇA
   const statsHistorico = useMemo(() => {
-    // Garantir que atendimentos é um array
+    // 🔥 GARANTE QUE atendimentos seja um array antes de filtrar
     const lista = Array.isArray(atendimentos) ? atendimentos : [];
     const realizados = lista.filter(a => a.status === "realizado");
     const faltas = lista.filter(a => a.status === "falta" || a.status === "ausente");
@@ -248,63 +250,68 @@ export default function PacienteDetalhe() {
                 <Calendar className="w-4 h-4 text-primary" /> Sessões
               </h3>
               <div className="flex-1 overflow-y-auto pr-2 space-y-3">
-                {atendimentos.length === 0 && <div className="text-center text-sm text-muted-foreground mt-10">Nenhuma sessão encontrada.</div>}
-                {atendimentos.map(a => {
-                  const evolucoesDaSessao = a.prontuarios?.filter((p: any) => p.tipo === 'evolucao') || [];
-                  const temEvolucao = evolucoesDaSessao.length > 0;
-                  const prontuarioId = temEvolucao ? evolucoesDaSessao[0].id : null;
+                {!Array.isArray(atendimentos) || atendimentos.length === 0 ? (
+                  <div className="text-center text-sm text-muted-foreground mt-10">Nenhuma sessão encontrada.</div>
+                ) : (
+                  atendimentos.map((a: any) => {
+                    // 🔥 GARANTE QUE prontuarios seja um array
+                    const pronts = Array.isArray(a.prontuarios) ? a.prontuarios : [];
+                    const evolucoesDaSessao = pronts.filter((p: any) => p.tipo === 'evolucao');
+                    const temEvolucao = evolucoesDaSessao.length > 0;
+                    const prontuarioId = temEvolucao ? evolucoesDaSessao[0].id : null;
 
-                  return (
-                    <div key={a.id} className="flex items-start gap-3 border-l-2 border-slate-100 pl-3 py-1">
-                      <div className="w-2 h-2 rounded-full mt-1.5 -ml-[17px] border-2 border-white ring-2 ring-slate-100" 
-                           style={{ backgroundColor: a.status === 'realizado' ? '#10b981' : a.status === 'falta' ? '#f59e0b' : '#94a3b8' }} />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium flex items-center justify-between">
-                          {format(parseISO(a.data_inicio), "dd/MM/yyyy HH:mm")}
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded capitalize font-semibold
-                            ${a.status === 'realizado' ? 'bg-emerald-100 text-emerald-700' : 
-                              a.status === 'falta' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
-                            {a.status}
-                          </span>
-                        </div>
-                        <div className="text-xs text-muted-foreground truncate">{a.profissional?.nome || "Profissional não atribuído"}</div>
-                        {a.status === 'realizado' && (
-                          <div className="mt-1 flex items-center gap-2">
-                            {temEvolucao ? (
-                              <>
-                                <Badge variant="outline" className="text-emerald-600 border-emerald-300 bg-emerald-50 text-[10px]">
-                                  <BadgeCheck className="w-3 h-3 mr-1" /> Evoluído
-                                </Badge>
-                                <Button 
-                                  size="sm" 
-                                  variant="ghost" 
-                                  className="h-6 px-2 text-xs"
-                                  onClick={() => navigate(`/paciente/${id}/prontuario/${prontuarioId}`)}
-                                >
-                                  <Eye className="w-3 h-3 mr-1" /> Ver
-                                </Button>
-                              </>
-                            ) : (
-                              <>
-                                <Badge variant="destructive" className="text-[10px]">
-                                  <CircleAlert className="w-3 h-3 mr-1" /> Pendente
-                                </Badge>
-                                <Button 
-                                  size="sm" 
-                                  variant="outline" 
-                                  className="h-6 px-2 text-xs bg-blue-50 hover:bg-blue-100 border-blue-300 text-blue-700"
-                                  onClick={() => navigate(`/paciente/${id}/evolucao/nova?atendimento=${a.id}`)}
-                                >
-                                  <ClipboardEdit className="w-3 h-3 mr-1" /> Evoluir
-                                </Button>
-                              </>
-                            )}
+                    return (
+                      <div key={a.id} className="flex items-start gap-3 border-l-2 border-slate-100 pl-3 py-1">
+                        <div className="w-2 h-2 rounded-full mt-1.5 -ml-[17px] border-2 border-white ring-2 ring-slate-100" 
+                             style={{ backgroundColor: a.status === 'realizado' ? '#10b981' : a.status === 'falta' ? '#f59e0b' : '#94a3b8' }} />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium flex items-center justify-between">
+                            {format(parseISO(a.data_inicio), "dd/MM/yyyy HH:mm")}
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded capitalize font-semibold
+                              ${a.status === 'realizado' ? 'bg-emerald-100 text-emerald-700' : 
+                                a.status === 'falta' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
+                              {a.status}
+                            </span>
                           </div>
-                        )}
+                          <div className="text-xs text-muted-foreground truncate">{a.profissional?.nome || "Profissional não atribuído"}</div>
+                          {a.status === 'realizado' && (
+                            <div className="mt-1 flex items-center gap-2">
+                              {temEvolucao ? (
+                                <>
+                                  <Badge variant="outline" className="text-emerald-600 border-emerald-300 bg-emerald-50 text-[10px]">
+                                    <BadgeCheck className="w-3 h-3 mr-1" /> Evoluído
+                                  </Badge>
+                                  <Button 
+                                    size="sm" 
+                                    variant="ghost" 
+                                    className="h-6 px-2 text-xs"
+                                    onClick={() => navigate(`/paciente/${id}/prontuario/${prontuarioId}`)}
+                                  >
+                                    <Eye className="w-3 h-3 mr-1" /> Ver
+                                  </Button>
+                                </>
+                              ) : (
+                                <>
+                                  <Badge variant="destructive" className="text-[10px]">
+                                    <CircleAlert className="w-3 h-3 mr-1" /> Pendente
+                                  </Badge>
+                                  <Button 
+                                    size="sm" 
+                                    variant="outline" 
+                                    className="h-6 px-2 text-xs bg-blue-50 hover:bg-blue-100 border-blue-300 text-blue-700"
+                                    onClick={() => navigate(`/paciente/${id}/evolucao/nova?atendimento=${a.id}`)}
+                                  >
+                                    <ClipboardEdit className="w-3 h-3 mr-1" /> Evoluir
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                )}
               </div>
             </Card>
           </div>
@@ -392,7 +399,7 @@ export default function PacienteDetalhe() {
               {evolucoes.length === 0 && !anamnese && (
                 <p className="text-sm text-muted-foreground text-center py-4">Nenhuma evolução registrada.</p>
               )}
-              {evolucoes.length > 0 && evolucoes.map(p => {
+              {evolucoes.length > 0 && evolucoes.map((p: any) => {
                 const dataExibicao = p.data_sessao || p.created_at;
                 return (
                   <Card key={p.id} className="p-4 shadow-sm border-l-4 border-l-blue-500">
