@@ -224,13 +224,13 @@ export default function PacienteDetalhe() {
               </div>
             </Card>
 
-            {/* Card de Últimas Consultas com indicador de evolução */}
+            {/* Card de Sessões com indicador de evolução - RENOMEADO */}
             <Card className="p-4 shadow-sm h-[350px] flex flex-col">
               <h3 className="font-semibold text-sm flex items-center gap-2 border-b pb-2 mb-3">
-                <Calendar className="w-4 h-4 text-primary" /> Últimas Consultas
+                <Calendar className="w-4 h-4 text-primary" /> Sessões
               </h3>
               <div className="flex-1 overflow-y-auto pr-2 space-y-3">
-                {atendimentos.length === 0 && <div className="text-center text-sm text-muted-foreground mt-10">Nenhum agendamento encontrado.</div>}
+                {atendimentos.length === 0 && <div className="text-center text-sm text-muted-foreground mt-10">Nenhuma sessão encontrada.</div>}
                 {atendimentos.map(a => {
                   const temEvolucao = a.prontuarios && a.prontuarios.length > 0;
                   const prontuarioId = temEvolucao ? a.prontuarios[0].id : null;
