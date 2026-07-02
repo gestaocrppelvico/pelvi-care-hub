@@ -25,7 +25,6 @@ export default function PacienteDetalhe() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { isAdmin, isSecretaria } = useAuth();
-  const podeGerenciar = isAdmin || isSecretaria;
 
   const [pac, setPac] = useState<any>(null);
   const [pront, setPront] = useState<any[]>([]);
@@ -34,7 +33,6 @@ export default function PacienteDetalhe() {
   const [anamnese, setAnamnese] = useState<any>(null);
   const [evolucoes, setEvolucoes] = useState<any[]>([]);
 
-  // Estados do lançamento de serviços
   const [itemTipo, setItemTipo] = useState<"servico" | "pacote">("servico");
   const [listaServicos, setListaServicos] = useState<any[]>([]);
   const [listaPacotes, setListaPacotes] = useState<any[]>([]);
@@ -50,7 +48,7 @@ export default function PacienteDetalhe() {
       const { data: p } = await supabase.from("pacientes").select("*").eq("id", id).maybeSingle();
       setPac(p);
 
-      // 2. Prontuários (todos) com atendimento e profissional
+      // 2. Prontuários
       const { data: pr } = await supabase
         .from("prontuarios")
         .select("*, atendimento:atendimentos(data_inicio, profissional:profissionais(nome))")
@@ -63,7 +61,7 @@ export default function PacienteDetalhe() {
       const evos = pr?.filter(r => r.tipo === 'evolucao') || [];
       setEvolucoes(evos);
 
-      // 3. 🔥 ATENDIMENTOS COM PRONTUÁRIOS (QUERY DIRETA)
+      // 3. Atendimentos com prontuários (query direta)
       const { data: atendimentosComEvolucao, error } = await supabase
         .from("atendimentos")
         .select(`
@@ -87,7 +85,7 @@ export default function PacienteDetalhe() {
         setAtendimentos(atendimentosComEvolucao || []);
       }
 
-      // 4. Listas de serviços e pacotes (para o lançamento)
+      // 4. Listas de serviços e pacotes
       const [{ data: s }, { data: pks }] = await Promise.all([
         supabase.from("servicos").select("id, nome, preco").eq("ativo", true),
         supabase.from("pacotes").select("id, nome, numero_sessoes, preco_total").eq("ativo", true)
@@ -239,7 +237,7 @@ export default function PacienteDetalhe() {
               </div>
             </Card>
 
-            {/* ============ CARD DE SESSÕES ============ */}
+            {/* Card de Sessões */}
             <Card className="p-4 shadow-sm h-[350px] flex flex-col">
               <h3 className="font-semibold text-sm flex items-center gap-2 border-b pb-2 mb-3">
                 <Calendar className="w-4 h-4 text-primary" /> Sessões
@@ -247,7 +245,6 @@ export default function PacienteDetalhe() {
               <div className="flex-1 overflow-y-auto pr-2 space-y-3">
                 {atendimentos.length === 0 && <div className="text-center text-sm text-muted-foreground mt-10">Nenhuma sessão encontrada.</div>}
                 {atendimentos.map(a => {
-                  // 🔥 VERIFICA SE EXISTEM PRONTUÁRIOS DO TIPO 'evolucao' ASSOCIADOS
                   const evolucoesDaSessao = a.prontuarios?.filter((p: any) => p.tipo === 'evolucao') || [];
                   const temEvolucao = evolucoesDaSessao.length > 0;
                   const prontuarioId = temEvolucao ? evolucoesDaSessao[0].id : null;
@@ -266,8 +263,6 @@ export default function PacienteDetalhe() {
                           </span>
                         </div>
                         <div className="text-xs text-muted-foreground truncate">{a.profissional?.nome || "Profissional não atribuído"}</div>
-                        
-                        {/* 🔥 INDICADOR DE EVOLUÇÃO */}
                         {a.status === 'realizado' && (
                           <div className="mt-1 flex items-center gap-2">
                             {temEvolucao ? (
@@ -393,7 +388,6 @@ export default function PacienteDetalhe() {
                 <p className="text-sm text-muted-foreground text-center py-4">Nenhuma evolução registrada.</p>
               )}
               {evolucoes.length > 0 && evolucoes.map(p => {
-                // 🔥 USA data_sessao se existir, senão usa created_at
                 const dataExibicao = p.data_sessao || p.created_at;
                 return (
                   <Card key={p.id} className="p-4 shadow-sm border-l-4 border-l-blue-500">
@@ -426,7 +420,6 @@ export default function PacienteDetalhe() {
           )}
         </TabsContent>
 
-        {/* Abas existentes (Serviços, Financeiro, Guias) */}
         <TabsContent value="servicos" className="mt-4">
           <Card className="p-4 space-y-4 shadow-sm">
             <h3 className="font-semibold flex items-center gap-2"><ShoppingBag className="w-4 h-4 text-primary" /> Lançar Novo Item (Venda)</h3>
