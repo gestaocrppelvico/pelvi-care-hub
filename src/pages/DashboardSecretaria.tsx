@@ -6,21 +6,19 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { abrirWhatsapp } from "@/lib/crm";
-import { format, addDays, startOfDay, endOfDay } from "date-fns";
+import { format, addDays, startOfDay, endOfDay, startOfMonth, endOfMonth } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
 export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: string }) {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
 
-  // Estados dos blocos de dados
   const [atendimentosHoje, setAtendimentosHoje] = useState<any[]>([]);
   const [totalConfirmacoesAmanha, setTotalConfirmacoesAmanha] = useState(0);
   const [aniversariantesHoje, setAniversariantesHoje] = useState<any[]>([]);
   const [dataCrmAlvo, setDataCrmAlvo] = useState<Date>(new Date());
 
-  // Estados dos Gatilhos Inteligentes (Apenas Operacional e Particulares)
-  const [totalOrfaos, setTotalOrfaos] = useState(0);
+  const [totalOrfaosMes, setTotalOrfaosMes] = useState(0); // 🔥 renomeado e filtrado por mês
   const [fichasIncompletas, setFichasIncompletas] = useState<any[]>([]);
   const [renovacoesParticulares, setRenovacoesParticulares] = useState<any[]>([]);
 
@@ -32,7 +30,10 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
         const startHoje = startOfDay(hoje).toISOString();
         const endHoje = endOfDay(hoje).toISOString();
 
-        // Lógica de próximo dia útil para o CRM
+        // Mês corrente para órfãos
+        const startMes = startOfMonth(hoje).toISOString();
+        const endMes = endOfMonth(hoje).toISOString();
+
         const diaSemana = hoje.getDay();
         let dataProxima = addDays(hoje, 1);
         if (diaSemana === 5) dataProxima = addDays(hoje, 3);
@@ -43,22 +44,20 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
         const startProximo = startOfDay(dataProxima).toISOString();
         const endProximo = endOfDay(dataProxima).toISOString();
 
-        // Buscas no Supabase
-        const [resHoje, resProximo, resPacientes, resOrfaos, resRenovacoes] = await Promise.all([
+        const [resHoje, resProximo, resPacientes, resOrfaosMes, resRenovacoes] = await Promise.all([
           supabase.from("atendimentos").select("id, profissional:profissionais(id, nome)").gte("data_inicio", startHoje).lte("data_inicio", endHoje).not("status", "eq", "cancelado"),
           supabase.from("atendimentos").select("id", { count: "exact", head: true }).gte("data_inicio", startProximo).lte("data_inicio", endProximo).eq("status", "agendado"),
           supabase.from("pacientes").select("id, nome, telefone, data_nascimento").eq("ativo", true),
-          supabase.from("atendimentos").select("id", { count: "exact", head: true }).is("paciente_id", null),
-          // A MÁGICA AQUI: Busca pacotes marcados pelas fisios como "vai_renovar", mas APENAS se não tiver guia de convênio (autorizacao_id null)
+          // 🔥 contagem de órfãos apenas no mês corrente
+          supabase.from("atendimentos").select("id", { count: "exact", head: true }).is("paciente_id", null).gte("data_inicio", startMes).lte("data_inicio", endMes),
           supabase.from("paciente_pacotes").select("id, paciente_id, sessoes_restantes, sessoes_totais, paciente:pacientes(nome)").eq("status_renovacao", "vai_renovar").is("autorizacao_id", null)
         ]);
 
         setAtendimentosHoje(resHoje.data || []);
         setTotalConfirmacoesAmanha(resProximo.count || 0);
-        setTotalOrfaos(resOrfaos.count || 0);
+        setTotalOrfaosMes(resOrfaosMes.count || 0);
         setRenovacoesParticulares(resRenovacoes.data || []);
 
-        // Processamento local de pacientes (Aniversários e Fichas)
         const mmDdHoje = format(hoje, "MM-dd");
         const nivers: any[] = [];
         const incompletas: any[] = [];
@@ -87,7 +86,6 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
     carregarDashboard();
   }, []);
 
-  // Agrupa os atendimentos mostrando apenas a contagem por profissional
   const resumoProfissionais = useMemo(() => {
     const contagem: Record<string, { id: string, total: number }> = {};
     atendimentosHoje.forEach((at) => {
@@ -135,7 +133,7 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
         </Link>
       </div>
 
-      {/* BLOCO 1: RESUMO DE AGENDA (APENAS NÚMEROS) */}
+      {/* RESUMO DE AGENDA */}
       <Card className="p-4 shadow-sm border-t-4 border-t-blue-600">
         <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-2">
           <Users className="w-4 h-4 text-blue-600" /> Pacientes Hoje por Profissional
@@ -176,14 +174,14 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
               </div>
             ))}
 
-            {/* VÍNCULOS ÓRFÃOS */}
-            {totalOrfaos > 0 && (
+            {/* 🔥 VÍNCULOS ÓRFÃOS (APENAS DO MÊS) */}
+            {totalOrfaosMes > 0 && (
               <div className="p-3 border border-blue-200 bg-blue-50/20 rounded-xl flex items-center justify-between gap-3 text-xs">
                 <div className="flex-1">
                   <span className="font-bold text-blue-700 uppercase block text-[9px] tracking-wide mb-0.5">Auditoria de Vínculo</span>
-                  <p className="font-bold text-slate-800 text-sm">Existem {totalOrfaos} agendamentos "órfãos"</p>
+                  <p className="font-bold text-slate-800 text-sm">Existem {totalOrfaosMes} agendamentos órfãos neste mês</p>
                 </div>
-                <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white font-semibold shrink-0" onClick={() => navigate("/crm/vinculos")}>
+                <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white font-semibold shrink-0" onClick={() => navigate("/financeiro/vincular")}>
                   <Link2 className="w-3.5 h-3.5 mr-1" /> Resolver
                 </Button>
               </div>
@@ -204,7 +202,7 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
             ))}
 
             {/* ESTADO VAZIO */}
-            {totalOrfaos === 0 && fichasIncompletas.length === 0 && renovacoesParticulares.length === 0 && (
+            {totalOrfaosMes === 0 && fichasIncompletas.length === 0 && renovacoesParticulares.length === 0 && (
               <div className="text-center py-6 text-sm text-muted-foreground border-2 border-dashed rounded-xl bg-slate-50/30">
                 <CheckCircle className="w-6 h-6 text-emerald-400 mx-auto mb-2" /> Tudo em dia!
               </div>
@@ -212,7 +210,7 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
           </div>
         </Card>
 
-        {/* BLOCO 3: CRM SIMPLIFICADO */}
+        {/* BLOCO 3: CRM SIMPLIFICADO (mantido) */}
         <div className="space-y-4">
           <Card className="p-4 shadow-sm border-l-4 border-l-indigo-500 bg-white hover:shadow-md transition-all cursor-pointer group" onClick={() => navigate("/crm")}>
             <div className="flex justify-between items-center border-b pb-2 mb-3">
