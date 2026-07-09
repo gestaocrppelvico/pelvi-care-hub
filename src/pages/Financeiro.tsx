@@ -11,9 +11,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Wallet, Package, Settings, CheckCircle2, Activity, Undo2, Pencil } from "lucide-react";
+import { Wallet, Package, Settings, CheckCircle2, Activity, Undo2, Pencil, Search, ArrowUpDown } from "lucide-react";
 import { toast } from "sonner";
 import { startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval, parseISO, startOfDay, endOfDay, format } from "date-fns";
+import { ptBR } from "date-fns/locale";
 
 interface RepasseRow {
   id: string;
@@ -33,6 +34,8 @@ interface RepasseRow {
   };
 }
 
+type Ordenacao = "data_desc" | "data_asc" | "paciente_asc" | "valor_repasse_desc" | "valor_repasse_asc" | "valor_atendimento_desc";
+
 export default function Financeiro() {
   const { isAdmin, isSecretaria, isFisio } = useAuth();
   const podeGerenciar = isAdmin || isSecretaria;
@@ -41,6 +44,8 @@ export default function Financeiro() {
   const [loading, setLoading] = useState(true);
   const [filtroProfissional, setFiltroProfissional] = useState<string>("todos");
   const [filtroPeriodo, setFiltroPeriodo] = useState<string>("semana");
+  const [buscaPaciente, setBuscaPaciente] = useState<string>("");
+  const [ordenacao, setOrdenacao] = useState<Ordenacao>("data_desc");
   
   const [dataInicio, setDataInicio] = useState<string>("");
   const [dataFim, setDataFim] = useState<string>("");
@@ -54,7 +59,6 @@ export default function Financeiro() {
 
   async function carregar() {
     setLoading(true);
-    // ATUALIZADO: select puxando data_inicio e google_event_id do atendimento para auditoria
     const { data } = await supabase
       .from("repasses_atendimento")
       .select(`*, profissional:profissionais(id, nome, cor_agenda), atendimento:atendimentos(tipo, data_inicio, google_event_id, paciente:pacientes(nome))`)
@@ -75,10 +79,12 @@ export default function Financeiro() {
   const repassesFiltrados = useMemo(() => {
     let filtrados = repasses;
     
+    // Filtro profissional
     if (filtroProfissional !== "todos") {
       filtrados = filtrados.filter(r => r.profissional_id === filtroProfissional);
     }
     
+    // Filtro período
     if (filtroPeriodo !== "todos") {
       const hoje = new Date();
       let start, end;
@@ -98,9 +104,39 @@ export default function Financeiro() {
         filtrados = filtrados.filter(r => isWithinInterval(parseISO(r.created_at), { start, end }));
       }
     }
-    
-    return filtrados;
-  }, [repasses, filtroProfissional, filtroPeriodo, dataInicio, dataFim]);
+
+    // Busca por paciente (nome)
+    if (buscaPaciente.trim() !== "") {
+      const termo = buscaPaciente.trim().toLowerCase();
+      filtrados = filtrados.filter(r => 
+        r.atendimento?.paciente?.nome?.toLowerCase().includes(termo) ?? false
+      );
+    }
+
+    // Ordenação
+    const comparar = (a: RepasseRow, b: RepasseRow) => {
+      switch (ordenacao) {
+        case "data_desc":
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        case "data_asc":
+          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        case "paciente_asc":
+          const nomeA = a.atendimento?.paciente?.nome || "";
+          const nomeB = b.atendimento?.paciente?.nome || "";
+          return nomeA.localeCompare(nomeB);
+        case "valor_repasse_desc":
+          return Number(b.valor_repasse) - Number(a.valor_repasse);
+        case "valor_repasse_asc":
+          return Number(a.valor_repasse) - Number(b.valor_repasse);
+        case "valor_atendimento_desc":
+          return Number(b.valor_atendimento) - Number(a.valor_atendimento);
+        default:
+          return 0;
+      }
+    };
+
+    return [...filtrados].sort(comparar);
+  }, [repasses, filtroProfissional, filtroPeriodo, dataInicio, dataFim, buscaPaciente, ordenacao]);
 
   const pendentes = repassesFiltrados.filter((r) => r.status === "pendente");
   const conferidos = repassesFiltrados.filter((r) => r.status === "pago");
@@ -128,7 +164,6 @@ export default function Financeiro() {
 
   async function salvarEdicao() {
     if (!editando) return;
-    // ATUALIZADO: Salvando o motivo da alteração na coluna 'observacoes'
     const { error } = await supabase.from("repasses_atendimento")
       .update({ 
         valor_atendimento: parseFloat(valorAtendimento), 
@@ -175,9 +210,10 @@ export default function Financeiro() {
         <Link to="/financeiro/relatorios"><Card className="p-3 flex items-center gap-2 hover:bg-emerald-50 transition-colors h-full border-emerald-200"><Activity className="w-5 h-5 text-emerald-600" /><div className="font-medium text-sm text-emerald-800">Relatórios</div></Card></Link>
       </div>
 
+      {/* Filtros existentes + novos */}
       <div className="flex flex-col sm:flex-row gap-3 p-3 bg-muted/50 rounded-lg border flex-wrap items-center">
         <Select value={filtroPeriodo} onValueChange={setFiltroPeriodo}>
-          <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-full sm:w-[180px]"><SelectValue placeholder="Período" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="semana">Esta Semana</SelectItem>
             <SelectItem value="mes">Este Mês</SelectItem>
@@ -201,6 +237,33 @@ export default function Financeiro() {
             <Input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} className="h-8 border-none focus-visible:ring-0 w-[130px] text-sm" />
           </div>
         )}
+
+        {/* Busca por paciente */}
+        <div className="relative w-full sm:w-[200px]">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Buscar paciente..."
+            value={buscaPaciente}
+            onChange={(e) => setBuscaPaciente(e.target.value)}
+            className="pl-8 h-8 text-sm"
+          />
+        </div>
+
+        {/* Ordenação */}
+        <Select value={ordenacao} onValueChange={(v) => setOrdenacao(v as Ordenacao)}>
+          <SelectTrigger className="w-full sm:w-[200px]">
+            <ArrowUpDown className="w-4 h-4 mr-1" />
+            <SelectValue placeholder="Ordenar por" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="data_desc">Data (mais recente)</SelectItem>
+            <SelectItem value="data_asc">Data (mais antiga)</SelectItem>
+            <SelectItem value="paciente_asc">Paciente (A-Z)</SelectItem>
+            <SelectItem value="valor_repasse_desc">Repasse (maior)</SelectItem>
+            <SelectItem value="valor_repasse_asc">Repasse (menor)</SelectItem>
+            <SelectItem value="valor_atendimento_desc">Atendimento (maior)</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="grid grid-cols-3 gap-2">
@@ -219,12 +282,11 @@ export default function Financeiro() {
             <Card key={r.id} className="p-4 flex items-center gap-4">
               <div className="flex-1">
                 <div className="font-semibold text-slate-800">{r.profissional?.nome}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">Pacote/Sessão: {r.atendimento?.paciente?.nome || "—"}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">Paciente: {r.atendimento?.paciente?.nome || "—"}</div>
                 
-                {/* ATUALIZADO: Mostra Data e Tag de Lançamento Manual */}
                 {r.atendimento?.data_inicio && (
                   <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
-                    <span>Data: {format(parseISO(r.atendimento.data_inicio), "dd/MM/yyyy HH:mm")}</span>
+                    <span>Data: {format(parseISO(r.atendimento.data_inicio), "dd/MM/yyyy HH:mm", { locale: ptBR })}</span>
                     {!r.atendimento?.google_event_id && (
                       <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-[10px] h-4 py-0 px-1.5 font-medium hover:bg-amber-50">
                         Lançamento Manual
@@ -235,10 +297,9 @@ export default function Financeiro() {
                 
                 <div className="font-bold text-amber-600 mt-1.5">{formatBRL(Number(r.valor_repasse))}</div>
                 
-                {/* ATUALIZADO: Mostra justificativa se houver */}
                 {r.observacoes && (
                   <div className="text-[11px] text-slate-600 italic bg-amber-50/40 border border-amber-100 rounded px-2 py-1 mt-1.5 max-w-md">
-                    Motivo alteração: {r.observacoes}
+                    Motivo: {r.observacoes}
                   </div>
                 )}
               </div>
@@ -247,7 +308,7 @@ export default function Financeiro() {
                   setEditando(r); 
                   setValorAtendimento(String(r.valor_atendimento)); 
                   setValorRepasse(String(r.valor_repasse)); 
-                  setJustificativa(r.observacoes || ""); // Resgata justificativa antiga se houver
+                  setJustificativa(r.observacoes || "");
                   
                   const vAtend = Number(r.valor_atendimento);
                   const vRep = Number(r.valor_repasse);
@@ -265,18 +326,17 @@ export default function Financeiro() {
           ))}
         </TabsContent>
 
-        {/* ABA: CONFERIDOS (TURBINADA - IGUAL À DE PENDENTES) */}
+        {/* ABA: CONFERIDOS */}
         <TabsContent value="conferidos" className="space-y-3 mt-3">
           {conferidos.map((r) => (
             <Card key={r.id} className="p-4 flex items-center gap-4 bg-slate-50/70 border-slate-100">
               <div className="flex-1">
                 <div className="font-semibold text-slate-700">{r.profissional?.nome}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">Pacote/Sessão: {r.atendimento?.paciente?.nome || "—"}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">Paciente: {r.atendimento?.paciente?.nome || "—"}</div>
                 
-                {/* ATUALIZADO: Mesma exibição de Data e Tag Manual na aba de Conferidos */}
                 {r.atendimento?.data_inicio && (
                   <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
-                    <span>Data: {format(parseISO(r.atendimento.data_inicio), "dd/MM/yyyy HH:mm")}</span>
+                    <span>Data: {format(parseISO(r.atendimento.data_inicio), "dd/MM/yyyy HH:mm", { locale: ptBR })}</span>
                     {!r.atendimento?.google_event_id && (
                       <Badge variant="outline" className="bg-amber-50/50 text-amber-700 border-amber-200/60 text-[10px] h-4 py-0 px-1.5 font-medium">
                         Lançamento Manual
@@ -287,15 +347,13 @@ export default function Financeiro() {
                 
                 <div className="font-bold text-emerald-600 mt-1.5">{formatBRL(Number(r.valor_repasse))}</div>
                 
-                {/* ATUALIZADO: Mesma exibição de justificativa na aba de Conferidos */}
                 {r.observacoes && (
                   <div className="text-[11px] text-slate-600 italic bg-background border rounded px-2 py-1 mt-1.5 max-w-md">
-                    Motivo alteração: {r.observacoes}
+                    Motivo: {r.observacoes}
                   </div>
                 )}
               </div>
               <div className="flex gap-2">
-                {/* Permite re-editar os valores mesmo depois de conferido */}
                 <Button size="sm" variant="ghost" onClick={() => { 
                   setEditando(r); 
                   setValorAtendimento(String(r.valor_atendimento)); 
@@ -315,7 +373,7 @@ export default function Financeiro() {
         </TabsContent>
       </Tabs>
 
-      {/* MODAL DE EDIÇÃO ATUALIZADO */}
+      {/* MODAL DE EDIÇÃO */}
       <Dialog open={!!editando} onOpenChange={() => setEditando(null)}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader><DialogTitle>Editar Valores de Repasse</DialogTitle></DialogHeader>
@@ -335,7 +393,6 @@ export default function Financeiro() {
               />
             </div>
             
-            {/* ATUALIZADO: Novo campo de texto para justificativa da alteração */}
             <div className="space-y-1.5">
               <Label>Justificativa / Motivo da Alteração</Label>
               <Textarea 
