@@ -6,28 +6,41 @@ import { useAuth } from "@/hooks/useAuth";
 export function BottomNav() {
   const { isAdmin, isSecretaria, isFisio } = useAuth();
 
-  // Define os itens fixos (sempre visíveis)
-  const fixedItems = [
-    { to: "/", icon: Home, label: "Início" },
-    { to: "/agenda", icon: Calendar, label: "Agenda" },
-    { to: "/medicos", icon: Stethoscope, label: "Médicos" },
-    { to: "/explorar", icon: MapPin, label: "Explorar" },
-    { to: "/mais", icon: Menu, label: "Mais" },
+  // Define os itens base (sempre nessa ordem)
+  const allItems = [
+    { to: "/", icon: Home, label: "Início", key: "home" },
+    { to: "/agenda", icon: Calendar, label: "Agenda", key: "agenda" },
+    { to: "/medicos", icon: Stethoscope, label: "Médicos", key: "medicos" },
+    { to: "/explorar", icon: MapPin, label: "Explorar", key: "explorar" },
+    { to: "/pacientes", icon: Users, label: "Pacientes", key: "pacientes" },
+    { to: "/mais", icon: Menu, label: "Mais", key: "mais" },
   ];
 
-  // Define os itens condicionais (aparecem conforme permissão)
-  const conditionalItems = [];
+  // Filtra com base no perfil
+  let filteredItems = [];
 
-  // Pacientes – visível para admin, secretária e fisioterapeutas
-  if (isAdmin || isSecretaria || isFisio) {
-    conditionalItems.push({ to: "/pacientes", icon: Users, label: "Pacientes" });
+  if (isAdmin) {
+    // Admin vê todos, com "Mais" na última posição
+    filteredItems = allItems;
+  } else if (isSecretaria) {
+    // Secretária vê: Início, Agenda, Pacientes e Mais
+    filteredItems = allItems.filter(item => 
+      ["home", "agenda", "pacientes", "mais"].includes(item.key)
+    );
+  } else if (isFisio) {
+    // Fisioterapeuta vê: Início, Agenda e Pacientes (sem Mais)
+    filteredItems = allItems.filter(item => 
+      ["home", "agenda", "pacientes"].includes(item.key)
+    );
+  } else {
+    // Fallback (caso nenhum perfil seja detectado) – mostra só o essencial
+    filteredItems = allItems.filter(item => 
+      ["home", "agenda"].includes(item.key)
+    );
   }
 
-  // Junta tudo: primeiro os fixos, depois os condicionais
-  const allItems = [...fixedItems, ...conditionalItems];
-
   // Define o número de colunas dinamicamente
-  const gridCols = allItems.length <= 5 ? 5 : allItems.length;
+  const gridCols = filteredItems.length;
 
   return (
     <nav className="fixed bottom-0 inset-x-0 z-40 bg-card border-t shadow-bottom-nav safe-bottom">
@@ -38,7 +51,7 @@ export function BottomNav() {
           gridTemplateColumns: `repeat(${gridCols}, 1fr)`,
         }}
       >
-        {allItems.map(({ to, icon: Icon, label }) => (
+        {filteredItems.map(({ to, icon: Icon, label }) => (
           <li key={to}>
             <NavLink
               to={to}
