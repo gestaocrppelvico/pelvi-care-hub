@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowLeft, Link2, Search, User, Calendar, Type, Filter, ArrowDownUp, ListChecks } from "lucide-react";
-import { format, parseISO, subDays, addDays } from "date-fns";
+import { format, parseISO, startOfMonth, endOfMonth } from "date-fns";
 import { toast } from "sonner";
 
 export default function VinculoPacientes() {
@@ -22,7 +22,7 @@ export default function VinculoPacientes() {
   // Filtros e Ordenação
   const [filtroTexto, setFiltroTexto] = useState("");
   const [filtroProf, setFiltroProf] = useState("todos");
-  const [ordem, setOrdem] = useState("asc"); // asc = mais antigos primeiro (ou mais próximos do dia atual)
+  const [ordem, setOrdem] = useState("asc");
 
   // Estados para o Modal de Vínculo Individual
   const [modalAberto, setModalAberto] = useState(false);
@@ -30,25 +30,24 @@ export default function VinculoPacientes() {
   const [buscaPaciente, setBuscaPaciente] = useState("");
   const [pacientesEncontrados, setPacientesEncontrados] = useState<any[]>([]);
 
-  // Estados para o Modal de Vínculo em Lote (Bulk)
+  // Estados para o Modal de Vínculo em Lote
   const [modalBulkAberto, setModalBulkAberto] = useState(false);
   const [bulkInfo, setBulkInfo] = useState({ pacienteId: "", pacienteNome: "", matches: [] as any[] });
 
-  // Carrega os atendimentos que não possuem paciente_id associado
+  // 🔥 Carrega apenas os atendimentos órfãos do mês corrente
   const carregarAtendimentosOrfaos = async () => {
     setLoading(true);
     try {
       const hoje = new Date();
-      // Margem maior para capturar o que ficou para trás e o que está por vir
-      const dataInicial = subDays(hoje, 60).toISOString();
-      const dataFinal = addDays(hoje, 30).toISOString();
+      const inicioMes = startOfMonth(hoje).toISOString();
+      const fimMes = endOfMonth(hoje).toISOString();
 
       const { data, error } = await supabase
         .from("atendimentos")
         .select("*, profissional:profissionais(nome)")
         .is("paciente_id", null)
-        .gte("data_inicio", dataInicial)
-        .lte("data_inicio", dataFinal);
+        .gte("data_inicio", inicioMes)
+        .lte("data_inicio", fimMes);
 
       if (error) throw error;
       
@@ -60,7 +59,7 @@ export default function VinculoPacientes() {
     }
   };
 
-  // Debounce para busca de paciente na base de dados
+  // Debounce para busca de paciente
   useEffect(() => {
     const buscarPacientes = async () => {
       if (buscaPaciente.trim().length < 2) {
@@ -91,9 +90,7 @@ export default function VinculoPacientes() {
     return atend.nome_paciente_livre || atend.observacoes || "Evento não identificado";
   };
 
-  // ----------------------------------------------------------------------
-  // LÓGICA DE FILTRAGEM E ORDENAÇÃO
-  // ----------------------------------------------------------------------
+  // Lógica de filtragem e ordenação
   const listaFiltrada = useMemo(() => {
     return atendimentosOrfaos
       .filter(a => {
@@ -115,40 +112,32 @@ export default function VinculoPacientes() {
     return Array.from(new Set(nomes));
   }, [atendimentosOrfaos]);
 
-  // ----------------------------------------------------------------------
-  // LÓGICA DE VINCULAÇÃO (INDIVIDUAL E EM LOTE)
-  // ----------------------------------------------------------------------
-  
-  // 1. O usuário clica num paciente da busca
+  // Lógica de vinculação
   const handleSelecionarPaciente = (pacienteId: string, pacienteNome: string) => {
     if (!atendimentoSelecionado) return;
 
     const nomeAlvo = getNomeEvento(atendimentoSelecionado).trim().toLowerCase();
     
-    // Procura se existem outros pendentes com exatamente o mesmo nome
     const matches = atendimentosOrfaos.filter(a => 
       a.id !== atendimentoSelecionado.id && 
       getNomeEvento(a).trim().toLowerCase() === nomeAlvo
     );
 
     if (matches.length > 0) {
-      // Se achou clones, abre a confirmação em lote
       setBulkInfo({ pacienteId, pacienteNome, matches });
       setModalAberto(false);
       setModalBulkAberto(true);
     } else {
-      // Se é único, vincula direto
       efetivarVinculo(pacienteId, pacienteNome, [atendimentoSelecionado.id]);
     }
   };
 
-  // 2. A função real que vai no banco de dados gravar os IDs
   const efetivarVinculo = async (pacienteId: string, nomePaciente: string, idsParaVincular: string[]) => {
     try {
       const { error } = await supabase
         .from("atendimentos")
         .update({ paciente_id: pacienteId })
-        .in("id", idsParaVincular); // Atualiza vários de uma vez!
+        .in("id", idsParaVincular);
 
       if (error) throw error;
 
@@ -228,13 +217,13 @@ export default function VinculoPacientes() {
         <div className="text-center p-10 text-muted-foreground animate-pulse">Buscando pendências...</div>
       ) : atendimentosOrfaos.length === 0 ? (
         <Card className="p-8 text-center text-sm text-muted-foreground border-dashed">
-          🎉 A agenda está limpa! Nenhum atendimento pendente de identificação.
+          🎉 Nenhum atendimento órfão no mês corrente!
         </Card>
       ) : (
         <div className="space-y-2 mt-2">
           <div className="flex justify-between items-center px-1">
             <h3 className="font-semibold text-sm text-slate-500 uppercase tracking-wide">
-              {listaFiltrada.length} Pendentes
+              {listaFiltrada.length} Pendentes neste mês
             </h3>
           </div>
           
@@ -273,7 +262,7 @@ export default function VinculoPacientes() {
         </div>
       )}
 
-      {/* MODAL 1: BUSCA INDIVIDUAL */}
+      {/* MODAIS (mantidos iguais) */}
       <Dialog open={modalAberto} onOpenChange={setModalAberto}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
@@ -319,7 +308,6 @@ export default function VinculoPacientes() {
         </DialogContent>
       </Dialog>
 
-      {/* MODAL 2: AVISO DE VINCULAÇÃO EM LOTE */}
       <Dialog open={modalBulkAberto} onOpenChange={setModalBulkAberto}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
