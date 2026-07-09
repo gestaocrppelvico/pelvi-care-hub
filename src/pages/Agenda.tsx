@@ -131,7 +131,8 @@ export default function Agenda() {
         .from("atendimentos")
         .select("id, data_inicio, data_fim, status, tipo, nome_paciente_livre, telefone_contato, paciente_id, paciente_pacote_id, paciente:pacientes(nome, telefone), profissional:profissionais(id, nome, cor_agenda), profissional_id")
         .gte("data_inicio", start.toISOString())
-        .lte("data_inicio", end.toISOString());
+        .lte("data_inicio", end.toISOString())
+        .order("data_inicio", { ascending: true }); // 🔥 ORDENA CRONOLOGICAMENTE
 
       if (!isAdmin && !isSecretaria && profissionalId) {
         query = query.eq("profissional_id", profissionalId);
@@ -342,7 +343,6 @@ export default function Agenda() {
         .eq("id", selectedAtend.id);
       if (error) throw error;
 
-      // 🔥 ATUALIZA O selectedAtend LOCALMENTE
       setSelectedAtend(prev => prev ? { ...prev, ...updateData } : null);
 
       toast.success("Atendimento vinculado ao paciente e ao pacote!");
@@ -419,7 +419,6 @@ export default function Agenda() {
     setSheetOpen(true);
   };
 
-  // 🔥 VERIFICA SE PACIENTE E PACOTE JÁ ESTÃO SALVOS NO ATENDIMENTO
   const pacienteVinculado = selectedAtend?.paciente_id !== null && selectedAtend?.paciente_id !== undefined;
   const pacoteVinculado = selectedAtend?.paciente_pacote_id !== null && selectedAtend?.paciente_pacote_id !== undefined;
   const prontoParaCheckin = pacienteVinculado && pacoteVinculado;
@@ -705,7 +704,6 @@ export default function Agenda() {
                 </div>
               )}
 
-              {/* 🔥 BOTÃO VINCULAR COM COR VERDE QUANDO PRONTO */}
               <Button 
                 onClick={handleSalvarVinculacao} 
                 className="w-full"
