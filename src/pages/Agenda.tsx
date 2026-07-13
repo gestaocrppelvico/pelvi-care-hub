@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { format, addDays, addWeeks, addMonths, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, isSameMonth, eachDayOfInterval } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { toast } from "sonner";
@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Clock, RefreshCw, ChevronLeft, ChevronRight, Link2, Wallet, Plus, UserPlus, CheckCircle2, AlertCircle } from "lucide-react";
+import { Clock, RefreshCw, ChevronLeft, ChevronRight, Link2, Wallet, Plus, UserPlus, CheckCircle2, AlertCircle, FileText, ClipboardEdit, Eye } from "lucide-react";
 
 interface Atendimento {
   id: string;
@@ -19,7 +19,7 @@ interface Atendimento {
   data_fim: string | null;
   status: string;
   tipo: string;
-  nome_paciente_livre: string | null;
+  nome_paciente_libre: string | null;
   telefone_contato: string | null;
   paciente_id: string | null;
   paciente_pacote_id: string | null;
@@ -32,6 +32,7 @@ export default function Agenda() {
   const { user, isSecretaria, isAdmin } = useAuth();
   const [searchParams] = useSearchParams();
   const profFiltroUrl = searchParams.get("profissional");
+  const navigate = useNavigate();
 
   const [view, setView] = useState<"day" | "week" | "month">("day");
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
@@ -62,6 +63,9 @@ export default function Agenda() {
 
   const [listaPlanos, setListaPlanos] = useState<any[]>([]);
   const [listaPacotesServicos, setListaPacotesServicos] = useState<any[]>([]);
+
+  const [temProntuario, setTemProntuario] = useState(false);
+  const [prontuarioId, setProntuarioId] = useState<string | null>(null);
 
   useEffect(() => {
     if (sheetOpen) {
@@ -132,7 +136,7 @@ export default function Agenda() {
         .select("id, data_inicio, data_fim, status, tipo, nome_paciente_livre, telefone_contato, paciente_id, paciente_pacote_id, paciente:pacientes(nome, telefone), profissional:profissionais(id, nome, cor_agenda), profissional_id")
         .gte("data_inicio", start.toISOString())
         .lte("data_inicio", end.toISOString())
-        .order("data_inicio", { ascending: true }); // 🔥 ORDENA CRONOLOGICAMENTE
+        .order("data_inicio", { ascending: true });
 
       if (!isAdmin && !isSecretaria && profissionalId) {
         query = query.eq("profissional_id", profissionalId);
@@ -163,8 +167,6 @@ export default function Agenda() {
     });
     return mapa;
   }, [atendimentos]);
-
-  // ===== FUNÇÕES DE CHECK-IN =====
 
   const carregarItensPaciente = async (pacienteId: string, itemIdParaSelecionar?: string | null) => {
     const { data } = await supabase
@@ -406,6 +408,8 @@ export default function Agenda() {
     setBuscaPaciente("");
     setNovoNome("");
     setNovoTelefone("");
+    setTemProntuario(false);
+    setProntuarioId(null);
     
     if (at.paciente_id) {
       supabase.from("pacientes").select("id, nome, telefone").eq("id", at.paciente_id).single()
@@ -413,6 +417,16 @@ export default function Agenda() {
           if (data) {
             setPacienteSelecionado(data);
             carregarItensPaciente(data.id, at.paciente_pacote_id);
+            supabase.from("prontuarios")
+              .select("id")
+              .eq("paciente_id", data.id)
+              .limit(1)
+              .then(({ data: prData }) => {
+                if (prData && prData.length > 0) {
+                  setTemProntuario(true);
+                  setProntuarioId(prData[0].id);
+                }
+              });
           }
         });
     }
@@ -425,7 +439,6 @@ export default function Agenda() {
 
   return (
     <div className="space-y-4 p-2 max-w-7xl mx-auto">
-      {/* Cabeçalho da agenda */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-white p-3 rounded-xl border shadow-sm">
         <div className="flex items-center gap-2">
           <Button variant="outline" size="icon" onClick={handleAnterior}><ChevronLeft className="w-4 h-4" /></Button>
@@ -474,7 +487,11 @@ export default function Agenda() {
                     <span>•</span>
                     <span className="uppercase tracking-wider text-[10px]">{at.profissional?.nome || "Clínica"}</span>
                     <span>•</span>
-                    <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4 font-bold uppercase">{at.tipo}</Badge>
+                    {at.paciente_id && at.tipo && (
+                      <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4 font-bold uppercase">
+                        {at.tipo}
+                      </Badge>
+                    )}
                   </div>
                 </div>
                 <Badge className={`text-[10px] font-bold uppercase h-5 px-2 ${at.status === "realizado" ? "bg-emerald-600" : at.status === "faltou" ? "bg-slate-400" : at.status === "cancelado" ? "bg-red-400" : "bg-blue-600"}`}>
@@ -503,6 +520,9 @@ export default function Agenda() {
                     {listaEvts.slice(0, 2).map(ev => (
                       <div key={ev.id} onClick={() => abrirEdicao(ev)} className={`text-[10px] p-1 rounded font-semibold truncate cursor-pointer ${ev.status === 'faltou' ? 'bg-slate-200 text-slate-400 line-through' : 'bg-blue-100 text-blue-800'}`}>
                         {format(new Date(ev.data_inicio), "HH:mm")} {ev.paciente?.nome?.split(" ")[0] || ev.nome_paciente_livre?.split(" ")[0]}
+                        {ev.paciente_id && ev.tipo && (
+                          <span className="ml-1 text-[8px] opacity-70">({ev.tipo})</span>
+                        )}
                       </div>
                     ))}
                     {listaEvts.length > 2 && <span className="text-[9px] text-muted-foreground text-center font-bold block">+{listaEvts.length - 2} mais</span>}
@@ -514,7 +534,6 @@ export default function Agenda() {
         </div>
       )}
 
-      {/* PAINEL LATERAL (SHEET) – CHECK-IN COMPLETO */}
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
         <SheetContent side="right" className="w-full sm:max-w-md p-5 space-y-4 overflow-y-auto">
           <SheetHeader>
@@ -529,7 +548,6 @@ export default function Agenda() {
                 <p className="text-muted-foreground uppercase font-semibold text-[10px] tracking-wide text-blue-600 mt-1">Profissional: {selectedAtend.profissional?.nome || "Não definido"}</p>
               </div>
 
-              {/* 🔥 INDICADORES DE STATUS DE VINCULAÇÃO */}
               <div className="flex flex-col gap-1.5 bg-slate-50 p-3 rounded-xl border text-xs">
                 <div className="flex items-center gap-2">
                   {pacienteVinculado ? (
@@ -557,10 +575,45 @@ export default function Agenda() {
                   </div>
                 )}
               </div>
+
+              {pacienteVinculado && selectedAtend.paciente_id && (
+                <div className="flex flex-col gap-2 bg-blue-50/30 p-3 rounded-xl border border-blue-100">
+                  <div className="text-xs font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5" /> Prontuário
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1 text-xs border-blue-300 text-blue-700 hover:bg-blue-50"
+                      onClick={() => navigate(`/paciente/${selectedAtend.paciente_id}/anamnese/nova`)}
+                    >
+                      <Plus className="w-3.5 h-3.5 mr-1" /> Anamnese
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1 text-xs border-blue-300 text-blue-700 hover:bg-blue-50"
+                      onClick={() => navigate(`/paciente/${selectedAtend.paciente_id}/evolucao/nova?atendimento=${selectedAtend.id}`)}
+                    >
+                      <ClipboardEdit className="w-3.5 h-3.5 mr-1" /> Evolução
+                    </Button>
+                    {temProntuario && prontuarioId && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1 text-xs border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                        onClick={() => navigate(`/paciente/${selectedAtend.paciente_id}/prontuario/${prontuarioId}`)}
+                      >
+                        <Eye className="w-3.5 h-3.5 mr-1" /> Ver
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
             </>
           )}
 
-          {/* SEÇÃO DE PACIENTE */}
           <div className="space-y-2 border-b pb-3">
             <Label className="text-xs font-bold">Paciente</Label>
             <Input
@@ -610,7 +663,6 @@ export default function Agenda() {
             )}
           </div>
 
-          {/* ITENS FINANCEIROS DO PACIENTE */}
           {pacienteSelecionado && (
             <div className="space-y-2">
               <Label className="text-xs font-bold">Pacote/Serviço a consumir</Label>
@@ -722,7 +774,6 @@ export default function Agenda() {
             </div>
           )}
 
-          {/* ALTERAR STATUS */}
           <form onSubmit={handleSalvarStatus} className="space-y-4 pt-2 border-t">
             <div className="space-y-2">
               <Label htmlFor="status" className="text-xs font-bold uppercase tracking-wider text-slate-500">Alterar Status da Sessão</Label>
