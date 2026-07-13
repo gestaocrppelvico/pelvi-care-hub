@@ -168,15 +168,14 @@ export default function NovaAnamnese() {
             </Select>
           </div>
           <div className="space-y-2">
-           <div className="space-y-2">
-  <Label htmlFor="medico">Médico responsável</Label>
-  <Input
-    id="medico"
-    placeholder="Nome do médico responsável"
-    value={medicoIndicou}
-    onChange={(e) => setMedicoIndicou(e.target.value)}
-  />
-</div>
+            <Label htmlFor="medico">Médico responsável</Label>
+            <Input
+              id="medico"
+              placeholder="Nome do médico responsável"
+              value={medicoIndicou}
+              onChange={(e) => setMedicoIndicou(e.target.value)}
+            />
+          </div>
         </div>
 
         <div className="space-y-2">
