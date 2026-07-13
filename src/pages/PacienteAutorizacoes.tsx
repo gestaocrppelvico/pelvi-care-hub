@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { ArrowLeft, ShieldCheck, Plus, Pencil, AlertTriangle } from "lucide-react";
+import { ArrowLeft, ShieldCheck, Plus, Pencil, Trash2, AlertTriangle } from "lucide-react";
 import { format } from "date-fns";
 
 type StatusAutorizacao = "ativa" | "esgotada" | "expirada";
@@ -63,11 +63,9 @@ export default function PacienteAutorizacoes() {
   const [editando, setEditando] = useState<Autorizacao | null>(null);
   const [form, setForm] = useState(EMPTY);
   
-  // Novo estado para carregar os planos cadastrados oficialmente
   const [listaPlanos, setListaPlanos] = useState<{id: string, nome: string}[]>([]);
 
   useEffect(() => {
-    // Carrega a lista oficial de planos ativos do Supabase
     supabase.from("planos_saude").select("id, nome").eq("ativo", true).then(({ data }) => {
       if (data) setListaPlanos(data);
     });
@@ -104,6 +102,45 @@ export default function PacienteAutorizacoes() {
       observacoes: a.observacoes ?? "",
     });
     setOpen(true);
+  }
+
+  async function excluirAutorizacao(autorizacaoId: string) {
+    if (!confirm("Tem certeza que deseja excluir esta guia? Todos os pacotes vinculados e seus históricos serão removidos permanentemente.")) {
+      return;
+    }
+
+    try {
+      // 1. Buscar todos os paciente_pacotes vinculados a esta autorização
+      const { data: pacotesVinculados, error: buscaError } = await supabase
+        .from("paciente_pacotes")
+        .select("id")
+        .eq("autorizacao_id", autorizacaoId);
+
+      if (buscaError) throw buscaError;
+
+      // 2. Deletar os paciente_pacotes
+      if (pacotesVinculados && pacotesVinculados.length > 0) {
+        const ids = pacotesVinculados.map(p => p.id);
+        const { error: deletePacotesError } = await supabase
+          .from("paciente_pacotes")
+          .delete()
+          .in("id", ids);
+        if (deletePacotesError) throw deletePacotesError;
+      }
+
+      // 3. Deletar a autorização
+      const { error: deleteAutError } = await supabase
+        .from("autorizacoes")
+        .delete()
+        .eq("id", autorizacaoId);
+
+      if (deleteAutError) throw deleteAutError;
+
+      toast.success("Guia e pacotes vinculados removidos com sucesso!");
+      carregar();
+    } catch (err: any) {
+      toast.error("Erro ao excluir: " + err.message);
+    }
   }
 
   async function salvar() {
@@ -185,25 +222,48 @@ export default function PacienteAutorizacoes() {
             return (
               <Card
                 key={a.id}
-                className={`p-4 space-y-3 cursor-pointer hover:bg-accent/50 transition-colors ${statusCalculado === "esgotada" ? "opacity-75" : ""}`}
-                onClick={() => abrirEditar(a)}
+                className={`p-4 space-y-3 ${statusCalculado === "esgotada" ? "opacity-75" : ""}`}
               >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-sm">{a.plano}</span>
-                    <Badge className={`text-[10px] uppercase ${STATUS_COLORS[statusCalculado]}`}>
-                      {statusCalculado}
-                    </Badge>
-                    {vencida && <AlertTriangle className="w-4 h-4 text-destructive" />}
+                <div className="flex items-start justify-between">
+                  <div className="flex-1 cursor-pointer" onClick={() => abrirEditar(a)}>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-sm">{a.plano}</span>
+                      <Badge className={`text-[10px] uppercase ${STATUS_COLORS[statusCalculado]}`}>
+                        {statusCalculado}
+                      </Badge>
+                      {vencida && <AlertTriangle className="w-4 h-4 text-destructive" />}
+                    </div>
+                    {a.numero_guia && (
+                      <p className="text-xs text-muted-foreground">Guia: {a.numero_guia}</p>
+                    )}
                   </div>
-                  <Pencil className="w-4 h-4 text-muted-foreground" />
+                  <div className="flex gap-1 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        abrirEditar(a);
+                      }}
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        excluirAutorizacao(a.id);
+                      }}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
 
-                {a.numero_guia && (
-                  <p className="text-xs text-muted-foreground">Guia: {a.numero_guia}</p>
-                )}
-
-                <div className="space-y-1">
+                <div className="space-y-1 cursor-pointer" onClick={() => abrirEditar(a)}>
                   <div className="flex justify-between text-xs">
                     <span>Sessões: {a.sessoes_realizadas}/{a.sessoes_autorizadas}</span>
                     <span className={restantes <= 2 && restantes > 0 ? "text-yellow-600 font-medium" : restantes <= 0 ? "text-destructive font-medium" : ""}>
@@ -218,7 +278,7 @@ export default function PacienteAutorizacoes() {
                   </div>
                 </div>
 
-                <div className="flex gap-4 text-[11px] text-muted-foreground">
+                <div className="flex gap-4 text-[11px] text-muted-foreground cursor-pointer" onClick={() => abrirEditar(a)}>
                   {a.data_emissao && <span>Emissão: {format(new Date(a.data_emissao), "dd/MM/yy")}</span>}
                   {a.data_validade && (
                     <span className={vencida ? "text-destructive font-semibold" : ""}>
@@ -232,15 +292,12 @@ export default function PacienteAutorizacoes() {
         </div>
       )}
 
-      {/* Dialog criar/editar */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editando ? "Editar autorização" : "Nova autorização"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 pt-2">
-            
-            {/* O NOVO DROPDOWN OFICIAL DE PLANOS DE SAÚDE INTEGRADO AQUI */}
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Plano de saúde *</label>
               <Select 
