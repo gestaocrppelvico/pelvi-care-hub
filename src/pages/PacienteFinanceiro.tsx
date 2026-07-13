@@ -62,9 +62,10 @@ export default function PacienteFinanceiro() {
       const { data: pac } = await supabase.from("pacientes").select("*").eq("id", pacienteId).maybeSingle();
       setPaciente(pac);
 
+      // 🔥 INCLUI sessoes_realizadas NO SELECT
       const { data: pacs } = await supabase
         .from("paciente_pacotes")
-        .select("*, pacote:pacotes(nome), autorizacao:autorizacoes(plano, numero_guia), servico:servicos(nome)")
+        .select("*, sessoes_realizadas, pacote:pacotes(nome), autorizacao:autorizacoes(plano, numero_guia), servico:servicos(nome)")
         .eq("paciente_id", pacienteId)
         .neq("status_pagamento", "cancelado") 
         .order("created_at", { ascending: false });
@@ -120,7 +121,7 @@ export default function PacienteFinanceiro() {
     } catch (err: any) { toast.error("Erro: " + err.message); }
   };
 
-  // ========== NOVAS FUNÇÕES PARA PAGAMENTOS ==========
+  // ========== FUNÇÕES PARA PAGAMENTOS ==========
 
   const abrirEdicaoPagamento = (pag: any) => {
     setPagamentoEditando(pag);
@@ -165,7 +166,7 @@ export default function PacienteFinanceiro() {
     } catch (err: any) { toast.error("Erro: " + err.message); }
   };
 
-  // ========== FUNÇÕES PARA CONTRATOS (já existentes) ==========
+  // ========== FUNÇÕES PARA CONTRATOS ==========
 
   const abrirEdicaoPacote = (p: any) => {
     setPacoteEditando(p);
@@ -274,44 +275,69 @@ export default function PacienteFinanceiro() {
             <Card className="p-6 text-center text-sm text-muted-foreground">Nenhum contrato ativo ou pendente encontrado.</Card>
           )}
 
-          {pacientePacotes.map((p) => (
-            <Card key={p.id} className="p-3 border-l-4 border-l-primary space-y-1 hover:shadow-md transition-shadow">
-              <div className="flex items-start justify-between gap-2">
-                <div className="font-semibold text-sm text-slate-800 pr-2">
-                  {p.autorizacao 
-                    ? `Guia Autorizada: ${p.autorizacao.plano} ${p.autorizacao.numero_guia ? `(Nº ${p.autorizacao.numero_guia})` : ''}`
-                    : `Pacote/Serviço: ${p.pacote?.nome || p.servico?.nome || "Particular Customizado"}`
-                  }
+          {pacientePacotes.map((p) => {
+            // 🔥 CÁLCULO COM SESSÕES REALIZADAS
+            const realizadas = p.sessoes_realizadas ?? 0;
+            const total = p.sessoes_totais;
+            const restantes = total - realizadas;
+            const pct = total > 0 ? Math.round((realizadas / total) * 100) : 0;
+            const corBarra = pct >= 100 ? "bg-destructive" : pct >= 80 ? "bg-yellow-500" : "bg-primary";
+
+            return (
+              <Card key={p.id} className="p-3 border-l-4 border-l-primary space-y-1 hover:shadow-md transition-shadow">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="font-semibold text-sm text-slate-800 pr-2">
+                    {p.autorizacao 
+                      ? `Guia Autorizada: ${p.autorizacao.plano} ${p.autorizacao.numero_guia ? `(Nº ${p.autorizacao.numero_guia})` : ''}`
+                      : `Pacote/Serviço: ${p.pacote?.nome || p.servico?.nome || "Particular Customizado"}`
+                    }
+                  </div>
+                  
+                  {podeGerenciar && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => abrirEdicaoPacote(p)}>
+                        <Pencil className="w-3.5 h-3.5 text-blue-600" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 hover:bg-red-50" onClick={() => apagarPacote(p.id)}>
+                        <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
                 
-                {podeGerenciar && (
-                  <div className="flex items-center gap-1 shrink-0">
-                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => abrirEdicaoPacote(p)}>
-                      <Pencil className="w-3.5 h-3.5 text-blue-600" />
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 hover:bg-red-50" onClick={() => apagarPacote(p.id)}>
-                      <Trash2 className="w-3.5 h-3.5 text-red-500" />
-                    </Button>
+                {/* 🔥 SESSÕES: REALIZADAS / TOTAL */}
+                <div className="flex items-center justify-between pt-1">
+                  <Badge variant={restantes > 0 ? "default" : "secondary"} className="text-[10px] px-1.5 py-0">
+                    {restantes > 0 ? `${restantes} restantes` : "Completo"}
+                  </Badge>
+                  <span className="font-bold text-slate-700 text-sm">
+                    {p.autorizacao ? "Plano de Saúde" : `R$ ${Number(p.preco_pago).toFixed(2)}`}
+                  </span>
+                </div>
+
+                {/* 🔥 BARRA DE PROGRESSO */}
+                <div className="space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span>Sessões: {realizadas}/{total}</span>
+                    <span className={restantes <= 2 && restantes > 0 ? "text-yellow-600 font-medium" : restantes <= 0 ? "text-destructive font-medium" : ""}>
+                      {restantes > 0 ? `${restantes} restantes` : "Completo"}
+                    </span>
                   </div>
-                )}
-              </div>
-              
-              <div className="flex items-center justify-between pt-1">
-                <Badge variant={p.sessoes_restantes > 0 ? "default" : "secondary"} className="text-[10px] px-1.5 py-0">
-                  {p.sessoes_restantes} / {p.sessoes_totais} rest.
-                </Badge>
-                <span className="font-bold text-slate-700 text-sm">
-                  {p.autorizacao ? "Plano de Saúde" : `R$ ${Number(p.preco_pago).toFixed(2)}`}
-                </span>
-              </div>
-              <div className="text-xs text-muted-foreground mt-1">
-                Criado em: {new Date(p.created_at).toLocaleDateString("pt-BR")} · <span className="capitalize text-amber-600 font-medium">{p.status_pagamento}</span>
-              </div>
-              <div className="w-full bg-slate-100 rounded-full h-1.5 mt-2 overflow-hidden">
-                <div className="bg-primary h-1.5 rounded-full transition-all" style={{ width: `${(p.sessoes_restantes / p.sessoes_totais) * 100}%` }} />
-              </div>
-            </Card>
-          ))}
+                  <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                    <div className={`h-1.5 rounded-full transition-all ${corBarra}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                  </div>
+                </div>
+
+                <div className="text-xs text-muted-foreground mt-1">
+                  Criado em: {new Date(p.created_at).toLocaleDateString("pt-BR")}
+                  {/* 🔥 SÓ MOSTRA BADGE DE STATUS PARA PARTICULARES (SEM AUTORIZAÇÃO) */}
+                  {!p.autorizacao && (
+                    <span className="ml-2 capitalize text-amber-600 font-medium">· {p.status_pagamento}</span>
+                  )}
+                </div>
+              </Card>
+            );
+          })}
 
           {pacienteServicos.map((s) => (
             <Card key={s.id} className="p-3 border-l-4 border-l-emerald-500 flex justify-between items-center">
@@ -400,7 +426,6 @@ export default function PacienteFinanceiro() {
                 <div className="text-xs text-muted-foreground capitalize">{p.forma.replace("_", " ")} · {new Date(p.data_pagamento).toLocaleDateString("pt-BR")}</div>
                 {p.observacoes && <p className="text-[11px] text-slate-500 bg-slate-50 border rounded p-1 mt-1.5 italic">{p.observacoes}</p>}
               </div>
-              {/* Botões para administradores/secretárias */}
               {podeGerenciar && (
                 <div className="flex gap-1 shrink-0">
                   <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => abrirEdicaoPagamento(p)}>
