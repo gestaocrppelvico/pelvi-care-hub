@@ -271,7 +271,7 @@ export default function PacienteFinanceiro() {
       <Tabs defaultValue="saldos">
         <TabsList className="w-full grid grid-cols-2">
           <TabsTrigger value="saldos">Saldos e Sessões</TabsTrigger>
-          <TabsTrigger value="historico">Histórico de Pagos</TabsTrigger>
+          <TabsTrigger value="historico">Pagamentos</TabsTrigger>
         </TabsList>
 
         <TabsContent value="saldos" className="space-y-3 mt-3">
