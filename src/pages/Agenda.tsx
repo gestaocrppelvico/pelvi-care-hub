@@ -543,7 +543,6 @@ export default function Agenda() {
           {selectedAtend && (
             <>
               <div className="bg-slate-50 p-3 rounded-xl border space-y-1 text-xs">
-                {/* 🔥 NOME DO PACIENTE CLICÁVEL (se vinculado) */}
                 {selectedAtend.paciente_id && selectedAtend.paciente?.nome ? (
                   <Link
                     to={`/pacientes/${selectedAtend.paciente_id}`}
@@ -686,4 +685,139 @@ export default function Agenda() {
                   <SelectContent>
                     {itensPaciente.map(item => {
                       const nome = item.pacote?.nome || item.servico?.nome || "Item";
-                     
+                      const info = item.autorizacao
+                        ? `${item.autorizacao.plano} (Guia: ${item.autorizacao.numero_guia})`
+                        : "Particular";
+                      return (
+                        <SelectItem key={item.id} value={item.id}>
+                          {nome} – {item.sessoes_restantes} restantes – {info}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <p className="text-xs text-amber-600">Este paciente não possui itens com saldo. Adicione um abaixo.</p>
+              )}
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setMostrarAdicionarItem(!mostrarAdicionarItem)}
+                className="w-full text-xs"
+              >
+                {mostrarAdicionarItem ? "Cancelar" : "+ Adicionar novo pacote/serviço à ficha"}
+              </Button>
+
+              {mostrarAdicionarItem && (
+                <div className="border p-3 rounded bg-slate-50 space-y-2">
+                  <div className="flex gap-2">
+                    <Label className="text-xs">Tipo:</Label>
+                    <div className="flex gap-3">
+                      <label>
+                        <input
+                          type="radio"
+                          value="plano"
+                          checked={tipoAdicionar === "plano"}
+                          onChange={() => setTipoAdicionar("plano")}
+                        /> Plano
+                      </label>
+                      <label>
+                        <input
+                          type="radio"
+                          value="particular"
+                          checked={tipoAdicionar === "particular"}
+                          onChange={() => setTipoAdicionar("particular")}
+                        /> Particular
+                      </label>
+                    </div>
+                  </div>
+
+                  {tipoAdicionar === "plano" && (
+                    <>
+                      <Select value={planoSelecionadoId} onValueChange={setPlanoSelecionadoId}>
+                        <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Plano de saúde" /></SelectTrigger>
+                        <SelectContent>
+                          {listaPlanos.map(p => <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        placeholder="Número da guia"
+                        value={numeroGuia}
+                        onChange={(e) => setNumeroGuia(e.target.value)}
+                        className="h-9 text-sm"
+                      />
+                    </>
+                  )}
+
+                  <Select value={pacoteServicoId} onValueChange={setPacoteServicoId}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Selecione o pacote/serviço" /></SelectTrigger>
+                    <SelectContent>
+                      {listaPacotesServicos.map(item => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.tipo_item === "pacote" ? `📦 ${item.nome} (${item.numero_sessoes} sessões)` : `📄 ${item.nome}`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <Button size="sm" onClick={handleAdicionarItem} className="w-full">
+                    Adicionar à ficha
+                  </Button>
+                </div>
+              )}
+
+              <Button 
+                onClick={handleSalvarVinculacao} 
+                className="w-full"
+                variant={itensPaciente.length > 0 && itemSelecionadoId ? "default" : "outline"}
+                disabled={!pacienteSelecionado || (itensPaciente.length > 0 && !itemSelecionadoId)}
+              >
+                {itensPaciente.length > 0 && itemSelecionadoId ? (
+                  <>
+                    <CheckCircle2 className="w-4 h-4 mr-2" />
+                    Vincular e Preparar Check-in
+                  </>
+                ) : (
+                  "Vincular e Preparar Check-in"
+                )}
+              </Button>
+            </div>
+          )}
+
+          <form onSubmit={handleSalvarStatus} className="space-y-4 pt-2 border-t">
+            <div className="space-y-2">
+              <Label htmlFor="status" className="text-xs font-bold uppercase tracking-wider text-slate-500">Alterar Status da Sessão</Label>
+              <Select value={statusForm} onValueChange={setStatusForm}>
+                <SelectTrigger id="status" className="h-12 text-sm font-semibold">
+                  <SelectValue placeholder="Selecione o status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="agendado" className="font-medium text-blue-600">Agendado</SelectItem>
+                  <SelectItem value="realizado" className="font-medium text-emerald-600">Realizado</SelectItem>
+                  <SelectItem value="faltou" className="font-medium text-slate-500">Faltou (Enviar para Auditoria)</SelectItem>
+                  <SelectItem value="cancelado" className="font-medium text-red-500">Cancelado / Desmarcado</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {statusForm === "realizado" && !prontoParaCheckin && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800 space-y-1">
+                <p className="font-bold">⚠️ Check-in Bloqueado:</p>
+                <p>Vincule o paciente e o pacote antes de confirmar.</p>
+              </div>
+            )}
+
+            <Button
+              type="submit"
+              className="w-full h-12 text-sm font-bold bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+              disabled={busy || (statusForm === "realizado" && !prontoParaCheckin)}
+            >
+              {busy ? "A atualizar..." : "Confirmar Alteração"}
+            </Button>
+          </form>
+        </SheetContent>
+      </Sheet>
+    </div>
+  );
+}
