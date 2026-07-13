@@ -29,18 +29,23 @@ export default function PacienteFinanceiro() {
   const [profissionais, setProfissionais] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [modoNovoPag, setModoNovoPag] = useState(false);
-  
+
   // Estados do Modal de Lançamento Avulso (Retroativo)
   const [modalLancamentoAberto, setModalLancamentoAberto] = useState(false);
   const [lancamentoData, setLancamentoData] = useState(new Date().toISOString().split("T")[0]);
   const [lancamentoHora, setLancamentoHora] = useState("08:00");
   const [lancamentoProfissionalId, setLancamentoProfissionalId] = useState("");
   const [lancamentoPacoteId, setLancamentoPacoteId] = useState("avulso");
-  
-  // Estados para o Modal de Edição Direta (contratos)
+
+  // Estados para o Modal de Edição Direta (contratos) - AGORA COM SESSOES_REALIZADAS
   const [modalEdicaoPacote, setModalEdicaoPacote] = useState(false);
   const [pacoteEditando, setPacoteEditando] = useState<any>(null);
-  const [editForm, setEditForm] = useState({ sessoes_totais: 0, sessoes_restantes: 0, preco_pago: 0, status_pagamento: "pendente" });
+  const [editForm, setEditForm] = useState({
+    sessoes_totais: 0,
+    sessoes_realizadas: 0,
+    preco_pago: 0,
+    status_pagamento: "pendente"
+  });
 
   // Estados para Edição/Exclusão de Pagamentos
   const [pagamentoEditando, setPagamentoEditando] = useState<any>(null);
@@ -62,12 +67,12 @@ export default function PacienteFinanceiro() {
       const { data: pac } = await supabase.from("pacientes").select("*").eq("id", pacienteId).maybeSingle();
       setPaciente(pac);
 
-      // 🔥 INCLUI sessoes_realizadas NO SELECT
+      // INCLUI sessoes_realizadas NO SELECT
       const { data: pacs } = await supabase
         .from("paciente_pacotes")
         .select("*, sessoes_realizadas, pacote:pacotes(nome), autorizacao:autorizacoes(plano, numero_guia), servico:servicos(nome)")
         .eq("paciente_id", pacienteId)
-        .neq("status_pagamento", "cancelado") 
+        .neq("status_pagamento", "cancelado")
         .order("created_at", { ascending: false });
       setPacientePacotes(pacs || []);
 
@@ -166,13 +171,13 @@ export default function PacienteFinanceiro() {
     } catch (err: any) { toast.error("Erro: " + err.message); }
   };
 
-  // ========== FUNÇÕES PARA CONTRATOS ==========
+  // ========== FUNÇÕES PARA CONTRATOS (COM SESSOES_REALIZADAS) ==========
 
   const abrirEdicaoPacote = (p: any) => {
     setPacoteEditando(p);
     setEditForm({
       sessoes_totais: p.sessoes_totais,
-      sessoes_restantes: p.sessoes_restantes,
+      sessoes_realizadas: p.sessoes_realizadas ?? 0,
       preco_pago: p.preco_pago,
       status_pagamento: p.status_pagamento || "pendente"
     });
@@ -181,9 +186,12 @@ export default function PacienteFinanceiro() {
 
   const salvarEdicaoPacote = async () => {
     try {
+      // Calcula sessoes_restantes automaticamente
+      const novasRestantes = editForm.sessoes_totais - editForm.sessoes_realizadas;
       const { error } = await supabase.from("paciente_pacotes").update({
         sessoes_totais: editForm.sessoes_totais,
-        sessoes_restantes: editForm.sessoes_restantes,
+        sessoes_realizadas: editForm.sessoes_realizadas,
+        sessoes_restantes: novasRestantes >= 0 ? novasRestantes : 0,
         preco_pago: editForm.preco_pago,
         status_pagamento: editForm.status_pagamento
       }).eq("id", pacoteEditando.id);
@@ -226,7 +234,7 @@ export default function PacienteFinanceiro() {
       profissional_id: lancamentoProfissionalId,
       data_inicio: dataCompleta.toISOString(),
       data_fim: new Date(dataCompleta.getTime() + 60 * 60000).toISOString(),
-      status: "realizado", 
+      status: "realizado",
       tipo: tipoAtend
     };
 
@@ -276,7 +284,7 @@ export default function PacienteFinanceiro() {
           )}
 
           {pacientePacotes.map((p) => {
-            // 🔥 CÁLCULO COM SESSÕES REALIZADAS
+            // Cálculo com sessões realizadas
             const realizadas = p.sessoes_realizadas ?? 0;
             const total = p.sessoes_totais;
             const restantes = total - realizadas;
@@ -287,12 +295,12 @@ export default function PacienteFinanceiro() {
               <Card key={p.id} className="p-3 border-l-4 border-l-primary space-y-1 hover:shadow-md transition-shadow">
                 <div className="flex items-start justify-between gap-2">
                   <div className="font-semibold text-sm text-slate-800 pr-2">
-                    {p.autorizacao 
+                    {p.autorizacao
                       ? `Guia Autorizada: ${p.autorizacao.plano} ${p.autorizacao.numero_guia ? `(Nº ${p.autorizacao.numero_guia})` : ''}`
                       : `Pacote/Serviço: ${p.pacote?.nome || p.servico?.nome || "Particular Customizado"}`
                     }
                   </div>
-                  
+
                   {podeGerenciar && (
                     <div className="flex items-center gap-1 shrink-0">
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => abrirEdicaoPacote(p)}>
@@ -304,8 +312,8 @@ export default function PacienteFinanceiro() {
                     </div>
                   )}
                 </div>
-                
-                {/* 🔥 SESSÕES: REALIZADAS / TOTAL */}
+
+                {/* Sessões: realizadas / total */}
                 <div className="flex items-center justify-between pt-1">
                   <Badge variant={restantes > 0 ? "default" : "secondary"} className="text-[10px] px-1.5 py-0">
                     {restantes > 0 ? `${restantes} restantes` : "Completo"}
@@ -315,7 +323,7 @@ export default function PacienteFinanceiro() {
                   </span>
                 </div>
 
-                {/* 🔥 BARRA DE PROGRESSO */}
+                {/* Barra de progresso */}
                 <div className="space-y-1">
                   <div className="flex justify-between text-xs">
                     <span>Sessões: {realizadas}/{total}</span>
@@ -330,7 +338,7 @@ export default function PacienteFinanceiro() {
 
                 <div className="text-xs text-muted-foreground mt-1">
                   Criado em: {new Date(p.created_at).toLocaleDateString("pt-BR")}
-                  {/* 🔥 SÓ MOSTRA BADGE DE STATUS PARA PARTICULARES (SEM AUTORIZAÇÃO) */}
+                  {/* Só mostra badge de status para particulares (sem autorização) */}
                   {!p.autorizacao && (
                     <span className="ml-2 capitalize text-amber-600 font-medium">· {p.status_pagamento}</span>
                   )}
@@ -441,7 +449,7 @@ export default function PacienteFinanceiro() {
         </TabsContent>
       </Tabs>
 
-      {/* MODAL DE EDIÇÃO DE CONTRATO/PACOTE */}
+      {/* MODAL DE EDIÇÃO DE CONTRATO/PACOTE (COM SESSOES_REALIZADAS) */}
       <Dialog open={modalEdicaoPacote} onOpenChange={setModalEdicaoPacote}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
@@ -451,17 +459,29 @@ export default function PacienteFinanceiro() {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Sessões Totais</Label>
-                <Input type="number" value={editForm.sessoes_totais} onChange={(e) => setEditForm({...editForm, sessoes_totais: Number(e.target.value)})} />
+                <Input
+                  type="number"
+                  value={editForm.sessoes_totais}
+                  onChange={(e) => setEditForm({...editForm, sessoes_totais: Number(e.target.value)})}
+                />
               </div>
               <div className="space-y-1.5">
-                <Label>Sessões Restantes</Label>
-                <Input type="number" value={editForm.sessoes_restantes} onChange={(e) => setEditForm({...editForm, sessoes_restantes: Number(e.target.value)})} />
+                <Label>Sessões Realizadas</Label>
+                <Input
+                  type="number"
+                  value={editForm.sessoes_realizadas}
+                  onChange={(e) => setEditForm({...editForm, sessoes_realizadas: Number(e.target.value)})}
+                />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Valor Total (R$)</Label>
-                <Input type="number" value={editForm.preco_pago} onChange={(e) => setEditForm({...editForm, preco_pago: Number(e.target.value)})} />
+                <Input
+                  type="number"
+                  value={editForm.preco_pago}
+                  onChange={(e) => setEditForm({...editForm, preco_pago: Number(e.target.value)})}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Status</Label>
@@ -474,6 +494,9 @@ export default function PacienteFinanceiro() {
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+            <div className="text-xs text-muted-foreground bg-blue-50 p-2 rounded border border-blue-100">
+              Ao salvar, o campo "Sessões Restantes" será calculado automaticamente.
             </div>
           </div>
           <DialogFooter>
@@ -563,7 +586,7 @@ export default function PacienteFinanceiro() {
                   <SelectItem value="avulso">— Sessão Avulsa (Sem vínculo) —</SelectItem>
                   {pacientePacotes.filter(p => p.sessoes_restantes > 0).map(p => (
                     <SelectItem key={p.id} value={p.id}>
-                      {p.autorizacao ? `[PLANO] ${p.autorizacao.plano}` : `[PARTICULAR] ${p.pacote?.nome}`} 
+                      {p.autorizacao ? `[PLANO] ${p.autorizacao.plano}` : `[PARTICULAR] ${p.pacote?.nome}`}
                       {` (${p.sessoes_restantes} rest.)`}
                     </SelectItem>
                   ))}
