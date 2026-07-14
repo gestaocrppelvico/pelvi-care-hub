@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
-import { ArrowLeft, AlertCircle, ExternalLink } from "lucide-react";
+import { ArrowLeft, AlertCircle, ExternalLink, Calendar } from "lucide-react";
 import { z } from "zod";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -20,6 +20,7 @@ const schema = z.object({
   endereco: z.string().trim().max(300).optional().or(z.literal("")),
   plano_saude: z.string().trim().max(80).optional().or(z.literal("")),
   numero_carteirinha: z.string().trim().max(60).optional().or(z.literal("")),
+  data_inicio_tratamento: z.string().optional().or(z.literal("")),
   observacoes: z.string().max(2000).optional().or(z.literal("")),
 });
 
@@ -28,26 +29,24 @@ export default function PacienteNovo() {
   const [searchParams] = useSearchParams();
   const [busy, setBusy] = useState(false);
   
-  // Pegamos os valores da URL (caso venham da Agenda)
   const preNome = searchParams.get("nome") ?? "";
   const preTelefone = searchParams.get("telefone") ?? "";
 
-  // Estados para controlar a digitação e as sugestões
   const [nomeBusca, setNomeBusca] = useState(preNome);
   const [sugestoes, setSugestoes] = useState<{ id: string; nome: string; telefone: string | null }[]>([]);
 
-  // Novo estado para guardar a lista oficial de planos do banco e o valor selecionado
   const [listaPlanos, setListaPlanos] = useState<{id: string, nome: string}[]>([]);
   const [planoSelecionado, setPlanoSelecionado] = useState<string>("nenhum");
+  
+  // 🔥 Estado para data de início do tratamento
+  const [dataInicioTratamento, setDataInicioTratamento] = useState("");
 
-  // Carrega a lista de planos ao abrir a tela
   useEffect(() => {
     supabase.from("planos_saude").select("id, nome").eq("ativo", true).then(({ data }) => {
       if (data) setListaPlanos(data);
     });
   }, []);
 
-  // ─── LÓGICA DE BUSCA DE DUPLICATAS (Debounce) ───
   useEffect(() => {
     const timeoutId = setTimeout(async () => {
       const primeiroNome = nomeBusca.trim().split(" ")[0].replace(/[hH]/g, "");
@@ -74,9 +73,9 @@ export default function PacienteNovo() {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
     
-    // Anexa manualmente o valor do Select no formulário antes de validar
     const dadosFormulario = Object.fromEntries(fd);
     dadosFormulario.plano_saude = planoSelecionado === "nenhum" ? "" : planoSelecionado;
+    dadosFormulario.data_inicio_tratamento = dataInicioTratamento || null;
     
     const parsed = schema.safeParse(dadosFormulario);
     
@@ -114,7 +113,6 @@ export default function PacienteNovo() {
       <Card className="p-4">
         <form onSubmit={onSubmit} className="space-y-4">
           
-          {/* CAMPO NOME MODIFICADO PARA BUSCA INTELIGENTE */}
           <div className="space-y-2">
             <Label htmlFor="nome">Nome completo *</Label>
             <Input 
@@ -126,7 +124,6 @@ export default function PacienteNovo() {
               placeholder="Ex: Talita Silva"
             />
             
-            {/* ALERTA DE SUGESTÕES COM BOTÃO DE ATALHO */}
             {sugestoes.length > 0 && (
               <div className="p-3 mt-2 bg-amber-50 border border-amber-200 rounded-md animate-in fade-in slide-in-from-top-2">
                 <div className="flex items-center gap-2 text-amber-800 font-semibold text-sm mb-2">
@@ -167,9 +164,8 @@ export default function PacienteNovo() {
             <Field label="E-mail" name="email" type="email" />
           </div>
           <Field label="Endereço" name="endereco" />
+          
           <div className="grid grid-cols-2 gap-3">
-            
-            {/* NOVO CAMPO SELECT COM A LISTA DE PLANOS */}
             <div className="space-y-2">
               <Label>Plano de saúde</Label>
               <Select value={planoSelecionado} onValueChange={setPlanoSelecionado}>
@@ -187,10 +183,35 @@ export default function PacienteNovo() {
 
             <Field label="Carteirinha" name="numero_carteirinha" />
           </div>
+
+          {/* 🔥 CAMPO: INÍCIO DO TRATAMENTO (MÊS/ANO) */}
+          <div className="space-y-2">
+            <Label htmlFor="data_inicio_tratamento" className="flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-blue-500" />
+              Início do tratamento (mês/ano)
+              <span className="text-xs text-muted-foreground font-normal">(opcional)</span>
+            </Label>
+            <Input
+              id="data_inicio_tratamento"
+              type="month"
+              value={dataInicioTratamento}
+              onChange={(e) => setDataInicioTratamento(e.target.value)}
+              className="w-full sm:w-64"
+              placeholder="YYYY-MM"
+            />
+            <p className="text-xs text-muted-foreground">
+              Preencha apenas se o paciente já iniciou o tratamento antes do cadastro no sistema.
+              {planoSelecionado !== "nenhum" && (
+                <span className="text-blue-600 font-medium"> Para pacientes de plano, este campo é especialmente importante.</span>
+              )}
+            </p>
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="obs">Observações</Label>
             <Textarea id="obs" name="observacoes" rows={3} />
           </div>
+          
           <Button type="submit" className="w-full h-12" disabled={busy}>
             {busy ? "Salvando..." : "Salvar paciente"}
           </Button>
@@ -200,7 +221,6 @@ export default function PacienteNovo() {
   );
 }
 
-// Componente auxiliar mantido intacto
 function Field({ label, name, type = "text", required, defaultValue }: { label: string; name: string; type?: string; required?: boolean; defaultValue?: string }) {
   return (
     <div className="space-y-2">
