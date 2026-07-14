@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Users, Calendar, DollarSign, TrendingUp, Clock, CheckCircle, XCircle, Activity } from "lucide-react";
+import { ArrowLeft, Users, Calendar, DollarSign, TrendingUp, Clock, CheckCircle, XCircle, Activity, FileText } from "lucide-react";
 import { format, subDays, startOfMonth, endOfMonth, startOfDay, endOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
@@ -27,6 +27,10 @@ interface DashData {
   topProfissionais: { nome: string; count: number }[];
   topServicos: { nome: string; count: number }[];
   atendimentosPorDia: { dia: string; count: number }[];
+  // 🔥 NOVOS CAMPOS
+  avaliacoesMes: number;
+  novosTratamentosMes: number;
+  novosTratamentosManual: number;
 }
 
 export default function AdminDashboard() {
@@ -45,6 +49,16 @@ export default function AdminDashboard() {
     const hojeStart = startOfDay(now).toISOString();
     const hojeEnd = endOfDay(now).toISOString();
 
+    // 🔥 Buscar ID do serviço "Avaliação"
+    const { data: servicoAvaliacao } = await supabase
+      .from("servicos")
+      .select("id")
+      .ilike("nome", "%avaliação%")
+      .limit(1)
+      .maybeSingle();
+
+    const servicoAvaliacaoId = servicoAvaliacao?.id;
+
     const [
       { count: totalPac },
       { count: pacAtivos },
@@ -57,6 +71,11 @@ export default function AdminDashboard() {
       { data: pacotesData },
       { data: estoqueData },
       { data: pagamentosData },
+      // 🔥 NOVAS CONSULTAS
+      { count: avaliacoesCount },
+      { data: pacientesManual },
+      { data: pacientesAvaliacao },
+      { data: pacientesSessao },
     ] = await Promise.all([
       supabase.from("pacientes").select("id", { count: "exact", head: true }),
       supabase.from("pacientes").select("id", { count: "exact", head: true }).eq("ativo", true),
@@ -69,6 +88,33 @@ export default function AdminDashboard() {
       supabase.from("paciente_pacotes").select("id, sessoes_restantes").gt("sessoes_restantes", 0),
       supabase.from("estoque_insumos").select("id, quantidade_atual, quantidade_minima"),
       supabase.from("pagamentos").select("valor, data_pagamento").gte("data_pagamento", format(startOfMonth(now), "yyyy-MM-dd")).lte("data_pagamento", format(endOfMonth(now), "yyyy-MM-dd")),
+      // 🔥 Avaliações no mês
+      supabase.from("atendimentos")
+        .select("id", { count: "exact", head: true })
+        .eq("servico_id", servicoAvaliacaoId || "")
+        .eq("status", "realizado")
+        .gte("data_inicio", mesStart)
+        .lte("data_inicio", mesEnd),
+      // 🔥 Pacientes com data_inicio_tratamento no mês (manual)
+      supabase.from("pacientes")
+        .select("id")
+        .gte("data_inicio_tratamento", format(startOfMonth(now), "yyyy-MM-dd"))
+        .lte("data_inicio_tratamento", format(endOfMonth(now), "yyyy-MM-dd")),
+      // 🔥 Pacientes que fizeram avaliação no mês
+      supabase.from("atendimentos")
+        .select("paciente_id")
+        .eq("servico_id", servicoAvaliacaoId || "")
+        .eq("status", "realizado")
+        .gte("data_inicio", mesStart)
+        .lte("data_inicio", mesEnd),
+      // 🔥 Pacientes que fizeram sessão de tratamento (excluindo avaliação) no mês
+      servicoAvaliacaoId ? supabase.from("atendimentos")
+        .select("paciente_id")
+        .not("servico_id", "eq", servicoAvaliacaoId)
+        .eq("status", "realizado")
+        .gte("data_inicio", mesStart)
+        .lte("data_inicio", mesEnd)
+        : supabase.from("atendimentos").select("paciente_id", { count: "exact", head: true }).limit(0),
     ]);
 
     const atendMes = atendMesData ?? [];
@@ -83,6 +129,16 @@ export default function AdminDashboard() {
     const faturamento = (pagamentosData ?? []).reduce((s, p) => s + Number(p.valor), 0);
 
     const alertas = (estoqueData ?? []).filter((i) => Number(i.quantidade_atual) <= Number(i.quantidade_minima)).length;
+
+    // 🔥 Lógica de Novos Tratamentos
+    const manualCount = pacientesManual?.length || 0;
+    const pacientesComAvaliacao = pacientesAvaliacao?.map(a => a.paciente_id) || [];
+    const pacientesComSessao = pacientesSessao?.map(a => a.paciente_id) || [];
+    const automaticos = pacientesComAvaliacao.filter(id => pacientesComSessao.includes(id));
+    const automaticosFiltrados = automaticos.filter(id => 
+      !pacientesManual?.some(p => p.id === id)
+    );
+    const novosTratamentosTotal = manualCount + automaticosFiltrados.length;
 
     // Top profissionais
     const profMap = new Map<string, number>();
@@ -132,6 +188,10 @@ export default function AdminDashboard() {
       topProfissionais: topProf,
       topServicos: topServ,
       atendimentosPorDia: porDia,
+      // 🔥 NOVOS DADOS
+      avaliacoesMes: avaliacoesCount ?? 0,
+      novosTratamentosMes: novosTratamentosTotal,
+      novosTratamentosManual: manualCount,
     });
     setLoading(false);
   }
@@ -152,7 +212,18 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* KPIs */}
+      {/* 🔥 NOVOS CARDS: Avaliações e Novos Tratamentos */}
+      <div className="grid grid-cols-2 gap-3">
+        <KPI icon={FileText} label="Avaliações no mês" value={d.avaliacoesMes} />
+        <KPI icon={TrendingUp} label="Novos tratamentos no mês" value={d.novosTratamentosMes} />
+      </div>
+      {d.novosTratamentosManual > 0 && (
+        <div className="text-xs text-muted-foreground text-center -mt-2">
+          * {d.novosTratamentosManual} pacientes de plano com início manual
+        </div>
+      )}
+
+      {/* KPIs existentes */}
       <div className="grid grid-cols-2 gap-3">
         <KPI icon={Calendar} label="Atend. hoje" value={d.atendimentosHoje} />
         <KPI icon={TrendingUp} label="Atend. mês" value={d.atendimentosMes} />
