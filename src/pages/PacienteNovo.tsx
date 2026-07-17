@@ -20,8 +20,8 @@ const schema = z.object({
   endereco: z.string().trim().max(300).optional().or(z.literal("")),
   plano_saude: z.string().trim().max(80).optional().or(z.literal("")),
   numero_carteirinha: z.string().trim().max(60).optional().or(z.literal("")),
-  // 🔥 PERMITE null para que possamos enviar null sem erro
-  data_inicio_tratamento: z.string().optional().nullable(),
+  // 🔥 Campo opcional e aceita undefined (não enviado)
+  data_inicio_tratamento: z.string().optional(),
   observacoes: z.string().max(2000).optional().or(z.literal("")),
 });
 
@@ -76,12 +76,17 @@ export default function PacienteNovo() {
     const dadosFormulario = Object.fromEntries(fd) as Record<string, string>;
     dadosFormulario.plano_saude = planoSelecionado === "nenhum" ? "" : planoSelecionado;
     
-    // 🔥 CONVERTE data_inicio_tratamento para DATE (YYYY-MM-01) ou null
-    let dataInicio = null;
+    // 🔥 CONVERTE data_inicio_tratamento para DATE (YYYY-MM-01) ou undefined (se vazio)
+    let dataInicio = undefined;
     if (dataInicioTratamento && dataInicioTratamento.length === 7) {
       dataInicio = `${dataInicioTratamento}-01`;
     }
-    dadosFormulario.data_inicio_tratamento = dataInicio as any; // pode ser null
+    // Se estiver vazio, NÃO ENVIAMOS a chave – removemos do objeto
+    if (!dataInicio) {
+      delete dadosFormulario.data_inicio_tratamento;
+    } else {
+      dadosFormulario.data_inicio_tratamento = dataInicio;
+    }
 
     const parsed = schema.safeParse(dadosFormulario);
     
@@ -92,17 +97,12 @@ export default function PacienteNovo() {
     
     setBusy(true);
     
-    // 🔥 FILTRA valores vazios e monta payload
+    // 🔥 FILTRA valores vazios e undefined
     const payload = Object.fromEntries(
       Object.entries(parsed.data)
         .filter(([_, v]) => v !== null && v !== undefined && v !== "")
         .map(([k, v]) => [k, v])
     ) as any;
-
-    // Se data_inicio_tratamento for null, removemos do payload (não enviar)
-    if (payload.data_inicio_tratamento === null || payload.data_inicio_tratamento === undefined) {
-      delete payload.data_inicio_tratamento;
-    }
 
     const { error } = await supabase.from("pacientes").insert(payload);
     
