@@ -20,7 +20,8 @@ const schema = z.object({
   endereco: z.string().trim().max(300).optional().or(z.literal("")),
   plano_saude: z.string().trim().max(80).optional().or(z.literal("")),
   numero_carteirinha: z.string().trim().max(60).optional().or(z.literal("")),
-  data_inicio_tratamento: z.string().optional().or(z.literal("")),
+  // 🔥 REMOVI a possibilidade de string vazia – agora só aceita string ou undefined
+  data_inicio_tratamento: z.string().optional(),
   observacoes: z.string().max(2000).optional().or(z.literal("")),
 });
 
@@ -72,18 +73,16 @@ export default function PacienteNovo() {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
     
-    const dadosFormulario = Object.fromEntries(fd);
+    const dadosFormulario = Object.fromEntries(fd) as Record<string, string>;
     dadosFormulario.plano_saude = planoSelecionado === "nenhum" ? "" : planoSelecionado;
     
-    // 🔥 CONVERTE data_inicio_tratamento para formato DATE (YYYY-MM-DD) ou null
+    // 🔥 CONVERTE para DATE ou null
     let dataInicio = null;
-    if (dataInicioTratamento) {
-      // dataInicioTratamento está no formato "YYYY-MM" (ex: "2025-07")
-      // Convertemos para o primeiro dia do mês "YYYY-MM-01"
+    if (dataInicioTratamento && dataInicioTratamento.length === 7) { // YYYY-MM
       dataInicio = `${dataInicioTratamento}-01`;
     }
-    dadosFormulario.data_inicio_tratamento = dataInicio;
-    
+    dadosFormulario.data_inicio_tratamento = dataInicio as any; // coloca null ou string
+
     const parsed = schema.safeParse(dadosFormulario);
     
     if (!parsed.success) {
@@ -93,10 +92,18 @@ export default function PacienteNovo() {
     
     setBusy(true);
     
+    // 🔥 REMOVE explicitamente campos que são null
     const payload = Object.fromEntries(
-      Object.entries(parsed.data).map(([k, v]) => [k, v === "" ? null : v])
+      Object.entries(parsed.data)
+        .filter(([_, v]) => v !== null && v !== undefined && v !== "")
+        .map(([k, v]) => [k, v])
     ) as any;
-    
+
+    // Se data_inicio_tratamento for null, removemos do payload (não enviar)
+    if (!payload.data_inicio_tratamento) {
+      delete payload.data_inicio_tratamento;
+    }
+
     const { error } = await supabase.from("pacientes").insert(payload);
     
     setBusy(false);
@@ -191,7 +198,7 @@ export default function PacienteNovo() {
             <Field label="Carteirinha" name="numero_carteirinha" />
           </div>
 
-          {/* 🔥 CAMPO: INÍCIO DO TRATAMENTO (MÊS/ANO) */}
+          {/* CAMPO: INÍCIO DO TRATAMENTO */}
           <div className="space-y-2">
             <Label htmlFor="data_inicio_tratamento" className="flex items-center gap-2">
               <Calendar className="w-4 h-4 text-blue-500" />
