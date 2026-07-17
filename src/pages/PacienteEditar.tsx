@@ -21,7 +21,7 @@ const schema = z.object({
   medico_solicitante_id: z.string().optional().or(z.literal("")),
   plano_saude: z.string().trim().max(80).optional().or(z.literal("")),
   numero_carteirinha: z.string().trim().max(60).optional().or(z.literal("")),
-  data_inicio_tratamento: z.string().optional().or(z.literal("")),
+  data_inicio_tratamento: z.string().optional(),
   observacoes: z.string().max(2000).optional().or(z.literal("")),
 });
 
@@ -36,7 +36,6 @@ export default function PacienteEditar() {
   const [listaPlanos, setListaPlanos] = useState<{id: string, nome: string}[]>([]);
   const [listaMedicos, setListaMedicos] = useState<{id: string, nome: string}[]>([]);
   
-  // 🔥 Estado para data de início do tratamento (formato YYYY-MM para input month)
   const [dataInicioTratamento, setDataInicioTratamento] = useState("");
 
   useEffect(() => {
@@ -64,9 +63,8 @@ export default function PacienteEditar() {
           numero_carteirinha: data.numero_carteirinha ?? "",
           observacoes: data.observacoes ?? "",
         });
-        // 🔥 Carregar data_inicio_tratamento no formato "YYYY-MM"
         if (data.data_inicio_tratamento) {
-          const dateStr = data.data_inicio_tratamento.split("T")[0]; // "2025-07-01"
+          const dateStr = data.data_inicio_tratamento.split("T")[0];
           const [year, month] = dateStr.split("-");
           setDataInicioTratamento(`${year}-${month}`);
         }
@@ -78,13 +76,11 @@ export default function PacienteEditar() {
   const handleCepChange = async (cepDigitado: string) => {
     setCepApoio(cepDigitado);
     const cepLimpo = cepDigitado.replace(/\D/g, "");
-    
     if (cepLimpo.length === 8) {
       toast.info("Buscando CEP...");
       try {
         const response = await fetch(`https://viacep.com.br/ws/${cepLimpo}/json/`);
         const data = await response.json();
-        
         if (!data.erro) {
           setForm(prev => ({
             ...prev,
@@ -105,19 +101,27 @@ export default function PacienteEditar() {
     const parsed = schema.safeParse(form);
     if (!parsed.success) { toast.error(parsed.error.errors[0].message); return; }
     
-    // 🔥 CONVERTE data_inicio_tratamento para DATE (YYYY-MM-DD) ou null
+    // 🔥 CONVERTE data_inicio_tratamento para DATE ou null
     let dataInicio = null;
-    if (dataInicioTratamento) {
+    if (dataInicioTratamento && dataInicioTratamento.length === 7) {
       dataInicio = `${dataInicioTratamento}-01`;
     }
     
     setBusy(true);
     
     const payload = Object.fromEntries(
-      Object.entries(parsed.data).map(([k, v]) => [k, v === "" ? null : v])
+      Object.entries(parsed.data)
+        .filter(([_, v]) => v !== null && v !== undefined && v !== "")
+        .map(([k, v]) => [k, v])
     ) as any;
-    payload.data_inicio_tratamento = dataInicio;
-    
+
+    // Adiciona data_inicio_tratamento apenas se não for null
+    if (dataInicio) {
+      payload.data_inicio_tratamento = dataInicio;
+    } else {
+      delete payload.data_inicio_tratamento; // remove do payload para não enviar
+    }
+
     const { error } = await supabase.from("pacientes").update(payload).eq("id", id!);
     setBusy(false);
     
@@ -127,7 +131,7 @@ export default function PacienteEditar() {
   }
 
   async function onDelete() {
-    if (!confirm("Deseja realmente excluir este paciente? Esta ação não pode ser desfeita.")) return;
+    if (!confirm("Deseja realmente excluir este paciente?")) return;
     const { error } = await supabase.from("pacientes").delete().eq("id", id!);
     if (error) { toast.error(error.message); return; }
     toast.success("Paciente excluído!");
@@ -213,7 +217,6 @@ export default function PacienteEditar() {
             <Field label="Carteirinha" value={form.numero_carteirinha} onChange={(v) => setForm({ ...form, numero_carteirinha: v })} />
           </div>
 
-          {/* 🔥 CAMPO: INÍCIO DO TRATAMENTO (MÊS/ANO) */}
           <div className="space-y-2">
             <Label htmlFor="data_inicio_tratamento" className="flex items-center gap-2">
               <Calendar className="w-4 h-4 text-blue-500" />
