@@ -21,7 +21,8 @@ const schema = z.object({
   medico_solicitante_id: z.string().optional().or(z.literal("")),
   plano_saude: z.string().trim().max(80).optional().or(z.literal("")),
   numero_carteirinha: z.string().trim().max(60).optional().or(z.literal("")),
-  data_inicio_tratamento: z.string().optional(),
+  // 🔥 PERMITE null
+  data_inicio_tratamento: z.string().optional().nullable(),
   observacoes: z.string().max(2000).optional().or(z.literal("")),
 });
 
@@ -98,28 +99,37 @@ export default function PacienteEditar() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const parsed = schema.safeParse(form);
-    if (!parsed.success) { toast.error(parsed.error.errors[0].message); return; }
     
-    // 🔥 CONVERTE data_inicio_tratamento para DATE ou null
+    // 🔥 CONVERTE data_inicio_tratamento para DATE (YYYY-MM-01) ou null
     let dataInicio = null;
     if (dataInicioTratamento && dataInicioTratamento.length === 7) {
       dataInicio = `${dataInicioTratamento}-01`;
     }
     
+    // Prepara o objeto para validação (sem campos vazios)
+    const dadosParaValidar = {
+      ...form,
+      data_inicio_tratamento: dataInicio,
+    };
+
+    const parsed = schema.safeParse(dadosParaValidar);
+    if (!parsed.success) {
+      toast.error(parsed.error.errors[0].message);
+      return;
+    }
+    
     setBusy(true);
     
+    // 🔥 FILTRA valores vazios e monta payload
     const payload = Object.fromEntries(
       Object.entries(parsed.data)
         .filter(([_, v]) => v !== null && v !== undefined && v !== "")
         .map(([k, v]) => [k, v])
     ) as any;
 
-    // Adiciona data_inicio_tratamento apenas se não for null
-    if (dataInicio) {
-      payload.data_inicio_tratamento = dataInicio;
-    } else {
-      delete payload.data_inicio_tratamento; // remove do payload para não enviar
+    // Se data_inicio_tratamento for null, removemos do payload
+    if (payload.data_inicio_tratamento === null || payload.data_inicio_tratamento === undefined) {
+      delete payload.data_inicio_tratamento;
     }
 
     const { error } = await supabase.from("pacientes").update(payload).eq("id", id!);
