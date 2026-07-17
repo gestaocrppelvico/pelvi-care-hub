@@ -21,7 +21,7 @@ const schema = z.object({
   medico_solicitante_id: z.string().optional().or(z.literal("")),
   plano_saude: z.string().trim().max(80).optional().or(z.literal("")),
   numero_carteirinha: z.string().trim().max(60).optional().or(z.literal("")),
-  data_inicio_tratamento: z.string().optional(),
+  data_inicio_tratamento: z.string().optional().nullable(),
   observacoes: z.string().max(2000).optional().or(z.literal("")),
 });
 
@@ -99,16 +99,15 @@ export default function PacienteEditar() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     
-    // 🔥 CONVERTE data_inicio_tratamento para DATE (YYYY-MM-01) ou undefined (se vazio)
-    let dataInicio = undefined;
+    // 🔥 TRATAMENTO DO CAMPO data_inicio_tratamento
+    let dataInicio = null;
     if (dataInicioTratamento && dataInicioTratamento.length === 7) {
       dataInicio = `${dataInicioTratamento}-01`;
     }
     
-    // Prepara o objeto para validação
     const dadosParaValidar = {
       ...form,
-      data_inicio_tratamento: dataInicio, // pode ser undefined
+      data_inicio_tratamento: dataInicio,
     };
 
     const parsed = schema.safeParse(dadosParaValidar);
@@ -119,7 +118,6 @@ export default function PacienteEditar() {
     
     setBusy(true);
     
-    // 🔥 FILTRA valores vazios e undefined
     const payload = Object.fromEntries(
       Object.entries(parsed.data)
         .filter(([_, v]) => v !== null && v !== undefined && v !== "")
