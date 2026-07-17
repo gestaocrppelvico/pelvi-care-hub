@@ -20,8 +20,8 @@ const schema = z.object({
   endereco: z.string().trim().max(300).optional().or(z.literal("")),
   plano_saude: z.string().trim().max(80).optional().or(z.literal("")),
   numero_carteirinha: z.string().trim().max(60).optional().or(z.literal("")),
-  // 🔥 REMOVI a possibilidade de string vazia – agora só aceita string ou undefined
-  data_inicio_tratamento: z.string().optional(),
+  // 🔥 PERMITE null para que possamos enviar null sem erro
+  data_inicio_tratamento: z.string().optional().nullable(),
   observacoes: z.string().max(2000).optional().or(z.literal("")),
 });
 
@@ -76,12 +76,12 @@ export default function PacienteNovo() {
     const dadosFormulario = Object.fromEntries(fd) as Record<string, string>;
     dadosFormulario.plano_saude = planoSelecionado === "nenhum" ? "" : planoSelecionado;
     
-    // 🔥 CONVERTE para DATE ou null
+    // 🔥 CONVERTE data_inicio_tratamento para DATE (YYYY-MM-01) ou null
     let dataInicio = null;
-    if (dataInicioTratamento && dataInicioTratamento.length === 7) { // YYYY-MM
+    if (dataInicioTratamento && dataInicioTratamento.length === 7) {
       dataInicio = `${dataInicioTratamento}-01`;
     }
-    dadosFormulario.data_inicio_tratamento = dataInicio as any; // coloca null ou string
+    dadosFormulario.data_inicio_tratamento = dataInicio as any; // pode ser null
 
     const parsed = schema.safeParse(dadosFormulario);
     
@@ -92,7 +92,7 @@ export default function PacienteNovo() {
     
     setBusy(true);
     
-    // 🔥 REMOVE explicitamente campos que são null
+    // 🔥 FILTRA valores vazios e monta payload
     const payload = Object.fromEntries(
       Object.entries(parsed.data)
         .filter(([_, v]) => v !== null && v !== undefined && v !== "")
@@ -100,7 +100,7 @@ export default function PacienteNovo() {
     ) as any;
 
     // Se data_inicio_tratamento for null, removemos do payload (não enviar)
-    if (!payload.data_inicio_tratamento) {
+    if (payload.data_inicio_tratamento === null || payload.data_inicio_tratamento === undefined) {
       delete payload.data_inicio_tratamento;
     }
 
