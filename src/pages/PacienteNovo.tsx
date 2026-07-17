@@ -38,7 +38,6 @@ export default function PacienteNovo() {
   const [listaPlanos, setListaPlanos] = useState<{id: string, nome: string}[]>([]);
   const [planoSelecionado, setPlanoSelecionado] = useState<string>("nenhum");
   
-  // 🔥 Estado para data de início do tratamento
   const [dataInicioTratamento, setDataInicioTratamento] = useState("");
 
   useEffect(() => {
@@ -75,7 +74,15 @@ export default function PacienteNovo() {
     
     const dadosFormulario = Object.fromEntries(fd);
     dadosFormulario.plano_saude = planoSelecionado === "nenhum" ? "" : planoSelecionado;
-    dadosFormulario.data_inicio_tratamento = dataInicioTratamento || null;
+    
+    // 🔥 CONVERTE data_inicio_tratamento para formato DATE (YYYY-MM-DD) ou null
+    let dataInicio = null;
+    if (dataInicioTratamento) {
+      // dataInicioTratamento está no formato "YYYY-MM" (ex: "2025-07")
+      // Convertemos para o primeiro dia do mês "YYYY-MM-01"
+      dataInicio = `${dataInicioTratamento}-01`;
+    }
+    dadosFormulario.data_inicio_tratamento = dataInicio;
     
     const parsed = schema.safeParse(dadosFormulario);
     
