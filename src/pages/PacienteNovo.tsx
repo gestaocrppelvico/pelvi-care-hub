@@ -20,8 +20,8 @@ const schema = z.object({
   endereco: z.string().trim().max(300).optional().or(z.literal("")),
   plano_saude: z.string().trim().max(80).optional().or(z.literal("")),
   numero_carteirinha: z.string().trim().max(60).optional().or(z.literal("")),
-  // 🔥 Campo opcional e aceita undefined (não enviado)
-  data_inicio_tratamento: z.string().optional(),
+  // Aceita null para evitar erro de validação
+  data_inicio_tratamento: z.string().optional().nullable(),
   observacoes: z.string().max(2000).optional().or(z.literal("")),
 });
 
@@ -76,17 +76,13 @@ export default function PacienteNovo() {
     const dadosFormulario = Object.fromEntries(fd) as Record<string, string>;
     dadosFormulario.plano_saude = planoSelecionado === "nenhum" ? "" : planoSelecionado;
     
-    // 🔥 CONVERTE data_inicio_tratamento para DATE (YYYY-MM-01) ou undefined (se vazio)
-    let dataInicio = undefined;
+    // 🔥 TRATAMENTO DO CAMPO data_inicio_tratamento
+    let dataInicio = null;
     if (dataInicioTratamento && dataInicioTratamento.length === 7) {
       dataInicio = `${dataInicioTratamento}-01`;
     }
-    // Se estiver vazio, NÃO ENVIAMOS a chave – removemos do objeto
-    if (!dataInicio) {
-      delete dadosFormulario.data_inicio_tratamento;
-    } else {
-      dadosFormulario.data_inicio_tratamento = dataInicio;
-    }
+    // Se não preenchido, deixamos como null para ser filtrado depois
+    dadosFormulario.data_inicio_tratamento = dataInicio as any;
 
     const parsed = schema.safeParse(dadosFormulario);
     
@@ -97,7 +93,7 @@ export default function PacienteNovo() {
     
     setBusy(true);
     
-    // 🔥 FILTRA valores vazios e undefined
+    // 🔥 FILTRA null e undefined e ""
     const payload = Object.fromEntries(
       Object.entries(parsed.data)
         .filter(([_, v]) => v !== null && v !== undefined && v !== "")
@@ -198,7 +194,6 @@ export default function PacienteNovo() {
             <Field label="Carteirinha" name="numero_carteirinha" />
           </div>
 
-          {/* CAMPO: INÍCIO DO TRATAMENTO */}
           <div className="space-y-2">
             <Label htmlFor="data_inicio_tratamento" className="flex items-center gap-2">
               <Calendar className="w-4 h-4 text-blue-500" />
