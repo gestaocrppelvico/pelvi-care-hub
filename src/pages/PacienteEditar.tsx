@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Trash2, MapPin, UserSquare2 } from "lucide-react";
+import { ArrowLeft, Trash2, MapPin, UserSquare2, Calendar } from "lucide-react";
 import { z } from "zod";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -18,9 +18,10 @@ const schema = z.object({
   telefone: z.string().trim().max(30).optional().or(z.literal("")),
   email: z.string().trim().email("E-mail inválido").max(255).optional().or(z.literal("")),
   endereco: z.string().trim().max(300).optional().or(z.literal("")),
-  medico_solicitante_id: z.string().optional().or(z.literal("")), // OPÇÃO 2: ID que liga à tabela médicos
+  medico_solicitante_id: z.string().optional().or(z.literal("")),
   plano_saude: z.string().trim().max(80).optional().or(z.literal("")),
   numero_carteirinha: z.string().trim().max(60).optional().or(z.literal("")),
+  data_inicio_tratamento: z.string().optional().or(z.literal("")),
   observacoes: z.string().max(2000).optional().or(z.literal("")),
 });
 
@@ -31,25 +32,22 @@ export default function PacienteEditar() {
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<Record<string, string>>({});
   
-  // Estados para as automações (CEP e Selects)
   const [cepApoio, setCepApoio] = useState("");
   const [listaPlanos, setListaPlanos] = useState<{id: string, nome: string}[]>([]);
   const [listaMedicos, setListaMedicos] = useState<{id: string, nome: string}[]>([]);
+  
+  // 🔥 Estado para data de início do tratamento (formato YYYY-MM para input month)
+  const [dataInicioTratamento, setDataInicioTratamento] = useState("");
 
-  // Carrega as listas do banco de dados ao abrir a tela
   useEffect(() => {
-    // Busca Planos de Saúde
     supabase.from("planos_saude").select("id, nome").eq("ativo", true).then(({ data }) => {
       if (data) setListaPlanos(data);
     });
-    
-    // Busca Médicos
     supabase.from("medicos").select("id, nome").then(({ data }) => {
       if (data) setListaMedicos(data);
     });
   }, []);
 
-  // Carrega os dados do Paciente
   useEffect(() => {
     if (!id) return;
     supabase.from("pacientes").select("*").eq("id", id).maybeSingle().then(({ data }) => {
@@ -61,20 +59,25 @@ export default function PacienteEditar() {
           telefone: data.telefone ?? "",
           email: data.email ?? "",
           endereco: data.endereco ?? "",
-          medico_solicitante_id: data.medico_solicitante_id ?? "", // Puxa o ID do médico se já existir
+          medico_solicitante_id: data.medico_solicitante_id ?? "",
           plano_saude: data.plano_saude ?? "",
           numero_carteirinha: data.numero_carteirinha ?? "",
           observacoes: data.observacoes ?? "",
         });
+        // 🔥 Carregar data_inicio_tratamento no formato "YYYY-MM"
+        if (data.data_inicio_tratamento) {
+          const dateStr = data.data_inicio_tratamento.split("T")[0]; // "2025-07-01"
+          const [year, month] = dateStr.split("-");
+          setDataInicioTratamento(`${year}-${month}`);
+        }
       }
       setLoading(false);
     });
   }, [id]);
 
-  // Função Automática de Busca de CEP
   const handleCepChange = async (cepDigitado: string) => {
     setCepApoio(cepDigitado);
-    const cepLimpo = cepDigitado.replace(/\D/g, ""); // Remove traços e pontos
+    const cepLimpo = cepDigitado.replace(/\D/g, "");
     
     if (cepLimpo.length === 8) {
       toast.info("Buscando CEP...");
@@ -83,7 +86,6 @@ export default function PacienteEditar() {
         const data = await response.json();
         
         if (!data.erro) {
-          // Preenche o endereço com as informações vindas dos Correios
           setForm(prev => ({
             ...prev,
             endereco: `${data.logradouro}, Bairro: ${data.bairro}, ${data.localidade} - ${data.uf}, N° `
@@ -102,12 +104,19 @@ export default function PacienteEditar() {
     e.preventDefault();
     const parsed = schema.safeParse(form);
     if (!parsed.success) { toast.error(parsed.error.errors[0].message); return; }
+    
+    // 🔥 CONVERTE data_inicio_tratamento para DATE (YYYY-MM-DD) ou null
+    let dataInicio = null;
+    if (dataInicioTratamento) {
+      dataInicio = `${dataInicioTratamento}-01`;
+    }
+    
     setBusy(true);
     
-    // Limpa os campos vazios para gravar nulo no banco
     const payload = Object.fromEntries(
       Object.entries(parsed.data).map(([k, v]) => [k, v === "" ? null : v])
     ) as any;
+    payload.data_inicio_tratamento = dataInicio;
     
     const { error } = await supabase.from("pacientes").update(payload).eq("id", id!);
     setBusy(false);
@@ -147,7 +156,6 @@ export default function PacienteEditar() {
             <Field label="Telefone" value={form.telefone} onChange={(v) => setForm({ ...form, telefone: v })} />
             <Field label="E-mail" value={form.email} onChange={(v) => setForm({ ...form, email: v })} type="email" />
             
-            {/* NOVO CAMPO: SELEÇÃO DE MÉDICO COM BASE NA TABELA OFICIAL */}
             <div className="space-y-2">
               <Label className="flex items-center gap-1.5"><UserSquare2 className="w-4 h-4 text-slate-500" /> Médico Solicitante</Label>
               <Select 
@@ -167,7 +175,6 @@ export default function PacienteEditar() {
             </div>
           </div>
           
-          {/* MÁGICA DO ENDEREÇO VIA CEP */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-50 p-3 rounded-lg border">
             <div className="md:col-span-1">
               <div className="space-y-2">
@@ -204,6 +211,29 @@ export default function PacienteEditar() {
             </div>
             
             <Field label="Carteirinha" value={form.numero_carteirinha} onChange={(v) => setForm({ ...form, numero_carteirinha: v })} />
+          </div>
+
+          {/* 🔥 CAMPO: INÍCIO DO TRATAMENTO (MÊS/ANO) */}
+          <div className="space-y-2">
+            <Label htmlFor="data_inicio_tratamento" className="flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-blue-500" />
+              Início do tratamento (mês/ano)
+              <span className="text-xs text-muted-foreground font-normal">(opcional)</span>
+            </Label>
+            <Input
+              id="data_inicio_tratamento"
+              type="month"
+              value={dataInicioTratamento}
+              onChange={(e) => setDataInicioTratamento(e.target.value)}
+              className="w-full sm:w-64"
+              placeholder="YYYY-MM"
+            />
+            <p className="text-xs text-muted-foreground">
+              Preencha apenas se o paciente iniciou o tratamento antes do cadastro no sistema.
+              {form.plano_saude && form.plano_saude !== "" && (
+                <span className="text-blue-600 font-medium"> Para pacientes de plano, este campo é especialmente importante.</span>
+              )}
+            </p>
           </div>
           
           <div className="space-y-2">
