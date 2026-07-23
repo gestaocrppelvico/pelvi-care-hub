@@ -38,11 +38,6 @@ import NovaEvolucao from './pages/NovaEvolucao';
 import VisualizarProntuario from './pages/VisualizarProntuario';
 import EditarAnamnese from "./pages/EditarAnamnese";
 import EditarEvolucao from "./pages/EditarEvolucao";
-
-
-
-
-// 1. IMPORTAÇÃO DA NOVA PÁGINA AQUI:
 import VinculoPacientes from "./pages/VinculoPacientes";
 
 const queryClient = new QueryClient();
@@ -72,21 +67,21 @@ const App = () => (
             <Route path="/dashboard" element={<AdminDashboard />} />
             <Route path="/crm" element={<Crm />} />
             <Route path="/crm/templates" element={<CrmTemplates />} />
+            
+            {/* 🔥 ROTA PARA PLANOS DE SAÚDE */}
             <Route path="/configuracoes/planos" element={<PlanosConfig />} />
+            
             <Route path="/paciente/:id/anamnese/nova" element={<NovaAnamnese />} />
             <Route path="/paciente/:id/evolucao/nova" element={<NovaEvolucao />} />
             <Route path="/paciente/:id/prontuario/:prontuarioId" element={<VisualizarProntuario />} />
             <Route path="/paciente/:id/anamnese/editar/:prontuarioId" element={<EditarAnamnese />} />
             <Route path="/paciente/:id/evolucao/editar/:prontuarioId" element={<EditarEvolucao />} />
-            <Route path="/crm/vinculos" element={<VinculoPacientes />} />
             
             {/* ROTAS DO FINANCEIRO */}
             <Route path="/financeiro" element={<Financeiro />} />
             <Route path="/financeiro/relatorios" element={<RelatorioRepasses />} />
             <Route path="/financeiro/servicos" element={<FinanceiroServicos />} />
             <Route path="/financeiro/repasses" element={<FinanceiroRepasses />} />
-            
-            {/* 2. A ROTA DA PÁGINA NOVA CADASTRADA AQUI: */}
             <Route path="/financeiro/vincular" element={<VinculoPacientes />} />
 
             <Route path="/pacientes/:id/financeiro" element={<PacienteFinanceiro />} />
