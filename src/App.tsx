@@ -5,7 +5,7 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Layout } from "@/components/Layout";
 
 // Páginas
-import Login from "@/pages/Login";
+import Auth from "@/pages/Auth";
 import Dashboard from "@/pages/Dashboard";
 import Agenda from "@/pages/Agenda";
 import Pacientes from "@/pages/Pacientes";
