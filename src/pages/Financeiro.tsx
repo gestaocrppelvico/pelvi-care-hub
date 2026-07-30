@@ -48,7 +48,7 @@ interface FaltaRow {
   servico_id: string | null;
   paciente: { nome: string } | null;
   profissional: { id: string; nome: string } | null;
-  paciente_pacotes?: {
+  paciente_pacote?: {
     id: string;
     preco_pago: number;
     sessoes_totais: number;
@@ -104,7 +104,7 @@ export default function Financeiro() {
     setLoading(false);
   }
 
-  // ----- CARREGAR FALTAS -----
+  // ----- CARREGAR FALTAS (CORRIGIDO) -----
   async function carregarFaltas() {
     setLoadingFaltas(true);
     try {
@@ -134,7 +134,7 @@ export default function Financeiro() {
           falta_cobrada,
           paciente:pacientes(nome),
           profissional:profissionais(id, nome),
-          paciente_pacotes:paciente_pacotes(
+          paciente_pacote:paciente_pacotes!atendimentos_paciente_pacote_id_fkey(
             id,
             preco_pago,
             sessoes_totais,
@@ -293,7 +293,7 @@ export default function Financeiro() {
     }
   }
 
-  // ----- FUNÇÕES PARA FALTAS -----
+  // ----- FUNÇÕES PARA FALTAS (AJUSTADAS) -----
   async function handleAbonarFalta(faltaId: string) {
     if (!confirm("Deseja abonar esta falta? O atendimento será cancelado.")) return;
     try {
@@ -322,7 +322,7 @@ export default function Financeiro() {
     if (!confirm(`Deseja cobrar a falta de ${falta.paciente?.nome}? Isso irá descontar uma sessão e gerar um repasse.`)) return;
 
     try {
-      const pacote = falta.paciente_pacotes;
+      const pacote = falta.paciente_pacote;
       if (!pacote) {
         toast.error("Dados do pacote não encontrados.");
         return;
@@ -429,7 +429,7 @@ export default function Financeiro() {
         </Link>
       </div>
 
-      {/* Filtros */}
+      {/* Filtros principais */}
       <div className="flex flex-col sm:flex-row gap-3 p-3 bg-muted/50 rounded-lg border flex-wrap items-center">
         <Select value={filtroPeriodo} onValueChange={setFiltroPeriodo}>
           <SelectTrigger className="w-full sm:w-[180px]">
@@ -684,7 +684,7 @@ export default function Financeiro() {
           ) : (
             faltas.map((falta) => {
               const data = format(parseISO(falta.data_inicio), "dd/MM/yyyy HH:mm", { locale: ptBR });
-              const ehPlano = falta.tipo === "Plano" || falta.paciente_pacotes?.autorizacao_id !== null;
+              const ehPlano = falta.tipo === "Plano" || falta.paciente_pacote?.autorizacao_id !== null;
               const jaCobrada = falta.falta_cobrada;
 
               return (
@@ -705,9 +705,9 @@ export default function Financeiro() {
                           </Badge>
                         )}
                       </div>
-                      {falta.paciente_pacotes && (
+                      {falta.paciente_pacote && (
                         <div className="text-xs text-muted-foreground mt-1">
-                          Sessões: {falta.paciente_pacotes.sessoes_realizadas || 0}/{falta.paciente_pacotes.sessoes_totais}
+                          Sessões: {falta.paciente_pacote.sessoes_realizadas || 0}/{falta.paciente_pacote.sessoes_totais}
                         </div>
                       )}
                     </div>
