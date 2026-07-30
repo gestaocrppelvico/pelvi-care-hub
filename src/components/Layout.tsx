@@ -1,5 +1,5 @@
 import { Outlet } from "react-router-dom";
-import { Sidebar } from "./Sidebar"; // verifique se o Sidebar existe
+import { Sidebar } from "./Sidebar"; 
 
 export function Layout() {
   return (
