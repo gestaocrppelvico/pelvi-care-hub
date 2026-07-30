@@ -29,7 +29,7 @@ export default function Auth() {
   const [showPassword, setShowPassword] = useState(false);
   const [showPasswordS, setShowPasswordS] = useState(false);
 
-  if (!loading && user) return <Navigate to="/" replace />;
+  if (!loading && user) return <Navigate to="/dashboard" replace />;
 
   async function handleForgot(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
