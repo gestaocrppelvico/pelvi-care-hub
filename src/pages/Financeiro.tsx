@@ -6,14 +6,14 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { 
   Wallet, Package, Settings, CheckCircle2, Activity, Undo2, Pencil, 
-  Search, ArrowUpDown, AlertTriangle, Check, X, DollarSign 
+  Search, ArrowUpDown, AlertTriangle, Check, X, DollarSign, Calendar 
 } from "lucide-react";
 import { toast } from "sonner";
 import { startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval, parseISO, startOfDay, endOfDay, format } from "date-fns";
@@ -89,6 +89,15 @@ export default function Financeiro() {
   const [filtroFaltasProfissional, setFiltroFaltasProfissional] = useState<string>("todos");
   const [filtroFaltasPeriodo, setFiltroFaltasPeriodo] = useState<string>("mes");
 
+  // Estado para modal de pagamento
+  const [modalPagamentoAberto, setModalPagamentoAberto] = useState(false);
+  const [pagamentoEmAndamento, setPagamentoEmAndamento] = useState<RepasseRow | null>(null);
+  const [formPagamento, setFormPagamento] = useState({
+    forma: "pix",
+    data_pagamento: format(new Date(), "yyyy-MM-dd"),
+    observacoes: ""
+  });
+
   // ----- FUNÇÃO PARA FORMATAR MOEDA -----
   const formatBRL = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -104,7 +113,7 @@ export default function Financeiro() {
     setLoading(false);
   }
 
-  // ----- CARREGAR FALTAS (CORRIGIDO) -----
+  // ----- CARREGAR FALTAS -----
   async function carregarFaltas() {
     setLoadingFaltas(true);
     try {
@@ -121,7 +130,6 @@ export default function Financeiro() {
         end = new Date(8640000000000000);
       }
 
-      // 🔥 CORREÇÃO AQUI: usar a sintaxe !paciente_pacote_id
       let query = supabase
         .from("atendimentos")
         .select(`
@@ -294,6 +302,38 @@ export default function Financeiro() {
     }
   }
 
+  // ----- FUNÇÕES PARA PAGAMENTOS -----
+  async function confirmarPagamento() {
+    if (!pagamentoEmAndamento) return;
+    try {
+      // 1. Inserir na tabela pagamentos
+      const { error: insertError } = await supabase
+        .from("pagamentos")
+        .insert({
+          paciente_id: null,
+          paciente_pacote_id: null,
+          valor: Number(pagamentoEmAndamento.valor_repasse),
+          forma: formPagamento.forma,
+          data_pagamento: formPagamento.data_pagamento,
+          observacoes: formPagamento.observacoes || `Pagamento de repasse - ${pagamentoEmAndamento.profissional?.nome || "Profissional"}`
+        });
+      if (insertError) throw insertError;
+
+      // 2. Atualizar status do repasse
+      await supabase
+        .from("repasses_atendimento")
+        .update({ status: "pago" })
+        .eq("id", pagamentoEmAndamento.id);
+
+      toast.success("Pagamento registrado!");
+      setModalPagamentoAberto(false);
+      setPagamentoEmAndamento(null);
+      carregar();
+    } catch (err: any) {
+      toast.error("Erro: " + err.message);
+    }
+  }
+
   // ----- FUNÇÕES PARA FALTAS -----
   async function handleAbonarFalta(faltaId: string) {
     if (!confirm("Deseja abonar esta falta? O atendimento será cancelado.")) return;
@@ -402,9 +442,20 @@ export default function Financeiro() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Wallet className="w-6 h-6 text-primary" />
-        <h1 className="text-2xl font-bold">Financeiro</h1>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Wallet className="w-6 h-6 text-primary" />
+          <h1 className="text-2xl font-bold">Financeiro</h1>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => window.location.href = "/financeiro/pagamentos"}
+          className="border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+        >
+          <Calendar className="w-4 h-4 mr-1" />
+          Pagamentos
+        </Button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
@@ -635,7 +686,19 @@ export default function Financeiro() {
                   <Button size="sm" variant="ghost" onClick={() => atualizarStatus(r.id, "pendente")}>
                     <Undo2 className="w-4 h-4 text-slate-500" />
                   </Button>
-                  <Button size="sm" variant="ghost" onClick={() => atualizarStatus(r.id, "pago")}>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setPagamentoEmAndamento(r);
+                      setFormPagamento({
+                        forma: "pix",
+                        data_pagamento: format(new Date(), "yyyy-MM-dd"),
+                        observacoes: `Pagamento de repasse - ${r.profissional?.nome || "Profissional"}`
+                      });
+                      setModalPagamentoAberto(true);
+                    }}
+                  >
                     <DollarSign className="w-4 h-4 text-green-600" />
                   </Button>
                 </div>
@@ -782,6 +845,64 @@ export default function Financeiro() {
               Salvar Alterações
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL DE PAGAMENTO */}
+      <Dialog open={modalPagamentoAberto} onOpenChange={setModalPagamentoAberto}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Confirmar Pagamento</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label>Valor</Label>
+              <div className="text-2xl font-bold text-emerald-600">
+                {formatBRL(Number(pagamentoEmAndamento?.valor_repasse || 0))}
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Forma de Pagamento</Label>
+              <Select 
+                value={formPagamento.forma} 
+                onValueChange={(v) => setFormPagamento({ ...formPagamento, forma: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pix">PIX</SelectItem>
+                  <SelectItem value="transferencia">Transferência</SelectItem>
+                  <SelectItem value="dinheiro">Dinheiro</SelectItem>
+                  <SelectItem value="cartao_credito">Cartão de Crédito</SelectItem>
+                  <SelectItem value="cartao_debito">Cartão de Débito</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Data do Pagamento</Label>
+              <Input
+                type="date"
+                value={formPagamento.data_pagamento}
+                onChange={(e) => setFormPagamento({ ...formPagamento, data_pagamento: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Observações</Label>
+              <Textarea
+                value={formPagamento.observacoes}
+                onChange={(e) => setFormPagamento({ ...formPagamento, observacoes: e.target.value })}
+                rows={2}
+                placeholder="Observações adicionais..."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setModalPagamentoAberto(false)}>Cancelar</Button>
+            <Button onClick={confirmarPagamento} className="bg-emerald-600 hover:bg-emerald-700">
+              <DollarSign className="w-4 h-4 mr-1" /> Confirmar Pagamento
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
