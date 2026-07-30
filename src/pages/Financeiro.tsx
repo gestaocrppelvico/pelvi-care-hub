@@ -89,7 +89,7 @@ export default function Financeiro() {
   const [filtroFaltasProfissional, setFiltroFaltasProfissional] = useState<string>("todos");
   const [filtroFaltasPeriodo, setFiltroFaltasPeriodo] = useState<string>("mes");
 
-  // Estado para modal de pagamento
+  // Estados para o modal de pagamento
   const [modalPagamentoAberto, setModalPagamentoAberto] = useState(false);
   const [pagamentoEmAndamento, setPagamentoEmAndamento] = useState<RepasseRow | null>(null);
   const [formPagamento, setFormPagamento] = useState({
@@ -113,7 +113,7 @@ export default function Financeiro() {
     setLoading(false);
   }
 
-  // ----- CARREGAR FALTAS -----
+  // ----- CARREGAR FALTAS (CORRIGIDO) -----
   async function carregarFaltas() {
     setLoadingFaltas(true);
     try {
@@ -302,38 +302,6 @@ export default function Financeiro() {
     }
   }
 
-  // ----- FUNÇÕES PARA PAGAMENTOS -----
-  async function confirmarPagamento() {
-    if (!pagamentoEmAndamento) return;
-    try {
-      // 1. Inserir na tabela pagamentos
-      const { error: insertError } = await supabase
-        .from("pagamentos")
-        .insert({
-          paciente_id: null,
-          paciente_pacote_id: null,
-          valor: Number(pagamentoEmAndamento.valor_repasse),
-          forma: formPagamento.forma,
-          data_pagamento: formPagamento.data_pagamento,
-          observacoes: formPagamento.observacoes || `Pagamento de repasse - ${pagamentoEmAndamento.profissional?.nome || "Profissional"}`
-        });
-      if (insertError) throw insertError;
-
-      // 2. Atualizar status do repasse
-      await supabase
-        .from("repasses_atendimento")
-        .update({ status: "pago" })
-        .eq("id", pagamentoEmAndamento.id);
-
-      toast.success("Pagamento registrado!");
-      setModalPagamentoAberto(false);
-      setPagamentoEmAndamento(null);
-      carregar();
-    } catch (err: any) {
-      toast.error("Erro: " + err.message);
-    }
-  }
-
   // ----- FUNÇÕES PARA FALTAS -----
   async function handleAbonarFalta(faltaId: string) {
     if (!confirm("Deseja abonar esta falta? O atendimento será cancelado.")) return;
@@ -430,6 +398,38 @@ export default function Financeiro() {
     }
   }
 
+  // ----- FUNÇÕES PARA PAGAMENTO DE REPASSE -----
+  async function confirmarPagamento() {
+    if (!pagamentoEmAndamento) return;
+    try {
+      // 1. Inserir na tabela pagamentos
+      const { error: insertError } = await supabase
+        .from("pagamentos")
+        .insert({
+          paciente_id: null,
+          paciente_pacote_id: null,
+          valor: Number(pagamentoEmAndamento.valor_repasse),
+          forma: formPagamento.forma,
+          data_pagamento: formPagamento.data_pagamento,
+          observacoes: formPagamento.observacoes || `Pagamento de repasse - ${pagamentoEmAndamento.profissional?.nome || "Profissional"}`
+        });
+      if (insertError) throw insertError;
+
+      // 2. Atualizar status do repasse para 'pago'
+      await supabase
+        .from("repasses_atendimento")
+        .update({ status: "pago" })
+        .eq("id", pagamentoEmAndamento.id);
+
+      toast.success("Pagamento registrado!");
+      setModalPagamentoAberto(false);
+      setPagamentoEmAndamento(null);
+      carregar();
+    } catch (err: any) {
+      toast.error("Erro: " + err.message);
+    }
+  }
+
   // ----- RENDER -----
   if (isFisio && !isAdmin && !isSecretaria) {
     return (
@@ -442,23 +442,12 @@ export default function Financeiro() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Wallet className="w-6 h-6 text-primary" />
-          <h1 className="text-2xl font-bold">Financeiro</h1>
-        </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => window.location.href = "/financeiro/pagamentos"}
-          className="border-emerald-200 text-emerald-700 hover:bg-emerald-50"
-        >
-          <Calendar className="w-4 h-4 mr-1" />
-          Pagamentos
-        </Button>
+      <div className="flex items-center gap-2">
+        <Wallet className="w-6 h-6 text-primary" />
+        <h1 className="text-2xl font-bold">Financeiro</h1>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
         <Link to="/financeiro/servicos">
           <Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full">
             <Package className="w-5 h-5 text-primary" />
@@ -477,6 +466,12 @@ export default function Financeiro() {
           <Card className="p-3 flex items-center gap-2 hover:bg-emerald-50 transition-colors h-full border-emerald-200">
             <Activity className="w-5 h-5 text-emerald-600" />
             <div className="font-medium text-sm text-emerald-800">Relatórios</div>
+          </Card>
+        </Link>
+        <Link to="/financeiro/pagamentos">
+          <Card className="p-3 flex items-center gap-2 hover:bg-blue-50 transition-colors h-full border-blue-200">
+            <DollarSign className="w-5 h-5 text-blue-600" />
+            <div className="font-medium text-sm text-blue-800">Pagamentos</div>
           </Card>
         </Link>
       </div>
@@ -809,7 +804,7 @@ export default function Financeiro() {
         </TabsContent>
       </Tabs>
 
-      {/* MODAL DE EDIÇÃO */}
+      {/* MODAL DE EDIÇÃO DE REPASSE */}
       <Dialog open={!!editando} onOpenChange={() => setEditando(null)}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
@@ -848,15 +843,19 @@ export default function Financeiro() {
         </DialogContent>
       </Dialog>
 
-      {/* MODAL DE PAGAMENTO */}
+      {/* MODAL DE CONFIRMAÇÃO DE PAGAMENTO (NOVO) */}
       <Dialog open={modalPagamentoAberto} onOpenChange={setModalPagamentoAberto}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
-            <DialogTitle>Confirmar Pagamento</DialogTitle>
+            <DialogTitle>Confirmar Pagamento de Repasse</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
-              <Label>Valor</Label>
+              <Label>Profissional</Label>
+              <div className="font-medium text-slate-800">{pagamentoEmAndamento?.profissional?.nome}</div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Valor a Pagar</Label>
               <div className="text-2xl font-bold text-emerald-600">
                 {formatBRL(Number(pagamentoEmAndamento?.valor_repasse || 0))}
               </div>
