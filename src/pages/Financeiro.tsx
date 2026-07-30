@@ -11,7 +11,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Wallet, Package, Settings, CheckCircle2, Activity, Undo2, Pencil, Search, ArrowUpDown } from "lucide-react";
+import { 
+  Wallet, Package, Settings, CheckCircle2, Activity, Undo2, Pencil, 
+  Search, ArrowUpDown, AlertTriangle, Check, X, DollarSign 
+} from "lucide-react";
 import { toast } from "sonner";
 import { startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval, parseISO, startOfDay, endOfDay, format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -32,6 +35,28 @@ interface RepasseRow {
     google_event_id?: string | null;
     paciente?: { nome: string } 
   };
+}
+
+interface FaltaRow {
+  id: string;
+  data_inicio: string;
+  paciente_id: string;
+  profissional_id: string;
+  tipo: string;
+  paciente_pacote_id: string | null;
+  servico_id: string | null;
+  paciente: { nome: string } | null;
+  profissional: { id: string; nome: string } | null;
+  paciente_pacotes?: {
+    id: string;
+    preco_pago: number;
+    sessoes_totais: number;
+    sessoes_realizadas: number;
+    autorizacao_id: string | null;
+    pacote_id: string | null;
+    servico_id: string | null;
+  } | null;
+  falta_cobrada?: boolean;
 }
 
 type Ordenacao = "data_desc" | "data_asc" | "paciente_asc" | "valor_repasse_desc" | "valor_repasse_asc" | "valor_atendimento_desc";
@@ -55,7 +80,15 @@ export default function Financeiro() {
   const [valorRepasse, setValorRepasse] = useState("");
   const [justificativa, setJustificativa] = useState("");
   
-  const [fatorRecalculo, setFatorRecalculo] = useState(0.35); 
+  const [fatorRecalculo, setFatorRecalculo] = useState(0.35);
+
+  // Estados para a aba de Faltas
+  const [faltas, setFaltas] = useState<FaltaRow[]>([]);
+  const [loadingFaltas, setLoadingFaltas] = useState(false);
+  const [filtroFaltasProfissional, setFiltroFaltasProfissional] = useState<string>("todos");
+  const [filtroFaltasPeriodo, setFiltroFaltasPeriodo] = useState<string>("mes");
+
+  // ===== FUNÇÕES DE CARREGAMENTO =====
 
   async function carregar() {
     setLoading(true);
@@ -68,6 +101,176 @@ export default function Financeiro() {
     setLoading(false);
   }
 
+  async function carregarFaltas() {
+    setLoadingFaltas(true);
+    try {
+      // Definir período para faltas
+      let start, end;
+      const hoje = new Date();
+      if (filtroFaltasPeriodo === "semana") {
+        start = startOfWeek(hoje, { weekStartsOn: 1 });
+        end = endOfWeek(hoje, { weekStartsOn: 1 });
+      } else if (filtroFaltasPeriodo === "mes") {
+        start = startOfMonth(hoje);
+        end = endOfMonth(hoje);
+      } else {
+        // Todos
+        start = new Date(0);
+        end = new Date(8640000000000000);
+      }
+
+      let query = supabase
+        .from("atendimentos")
+        .select(`
+          id,
+          data_inicio,
+          paciente_id,
+          profissional_id,
+          tipo,
+          paciente_pacote_id,
+          servico_id,
+          falta_cobrada,
+          paciente:pacientes(nome),
+          profissional:profissionais(id, nome),
+          paciente_pacotes:paciente_pacotes(
+            id,
+            preco_pago,
+            sessoes_totais,
+            sessoes_realizadas,
+            autorizacao_id,
+            pacote_id,
+            servico_id
+          )
+        `)
+        .eq("status", "faltou")
+        .gte("data_inicio", start.toISOString())
+        .lte("data_inicio", end.toISOString());
+
+      if (filtroFaltasProfissional !== "todos") {
+        query = query.eq("profissional_id", filtroFaltasProfissional);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      setFaltas(data || []);
+    } catch (err: any) {
+      toast.error("Erro ao carregar faltas: " + err.message);
+    } finally {
+      setLoadingFaltas(false);
+    }
+  }
+
+  // Carregar faltas quando a aba for ativada ou filtros mudarem
+  useEffect(() => {
+    if (activeTab === "faltas") {
+      carregarFaltas();
+    }
+  }, [activeTab, filtroFaltasProfissional, filtroFaltasPeriodo]);
+
+  // ===== FUNÇÕES PARA FALTAS =====
+
+  async function handleAbonarFalta(faltaId: string) {
+    if (!confirm("Deseja abonar esta falta? O atendimento será cancelado.")) return;
+    try {
+      const { error } = await supabase
+        .from("atendimentos")
+        .update({ 
+          status: "cancelado", 
+          observacoes: "Falta abonada pela administração" 
+        })
+        .eq("id", faltaId);
+      if (error) throw error;
+      toast.success("Falta abonada com sucesso!");
+      carregarFaltas();
+    } catch (err: any) {
+      toast.error("Erro ao abonar: " + err.message);
+    }
+  }
+
+  async function handleCobrarFalta(falta: FaltaRow) {
+    // 1. Validar se tem paciente_pacote_id
+    if (!falta.paciente_pacote_id) {
+      toast.error("Este atendimento não está vinculado a um pacote. Não é possível cobrar.");
+      return;
+    }
+
+    if (!confirm(`Deseja cobrar a falta de ${falta.paciente?.nome}? Isso irá descontar uma sessão e gerar um repasse.`)) return;
+
+    try {
+      // 2. Buscar dados do paciente_pacote (já vem no select, mas vamos garantir)
+      const pacote = falta.paciente_pacotes;
+      if (!pacote) {
+        toast.error("Dados do pacote não encontrados.");
+        return;
+      }
+
+      // 3. Calcular valores (mesma lógica da trigger)
+      const ehPlano = pacote.autorizacao_id !== null;
+      const precoPago = pacote.preco_pago || 0;
+      const sessoesTotais = pacote.sessoes_totais || 1;
+      let valorSessao = 0;
+      let valorRepasse = 0;
+
+      // 3a. Buscar regra de repasse do profissional
+      const { data: regras } = await supabase
+        .from("repasses_servico")
+        .select("*")
+        .eq("profissional_id", falta.profissional_id)
+        .eq("ativo", true)
+        .order("created_at", { ascending: true });
+
+      if (ehPlano) {
+        // Plano: repasse fixo
+        valorSessao = 0;
+        const regraFixa = regras?.find(r => r.tipo_repasse === "fixo" && r.ativo);
+        valorRepasse = regraFixa?.valor_repasse || 45.50;
+      } else {
+        // Particular: percentual
+        valorSessao = precoPago / sessoesTotais;
+        const regraPercentual = regras?.find(r => r.tipo_repasse === "percentual" && r.ativo);
+        const percentual = regraPercentual?.valor_repasse || 35;
+        valorRepasse = valorSessao * (percentual / 100);
+      }
+
+      // 4. Atualizar sessões realizadas (incrementar)
+      const { error: updateError } = await supabase
+        .from("paciente_pacotes")
+        .update({
+          sessoes_realizadas: pacote.sessoes_realizadas + 1,
+          sessoes_restantes: pacote.sessoes_totais - (pacote.sessoes_realizadas + 1)
+        })
+        .eq("id", pacote.id);
+      if (updateError) throw updateError;
+
+      // 5. Inserir repasse pendente
+      const { error: insertError } = await supabase
+        .from("repasses_atendimento")
+        .insert({
+          atendimento_id: falta.id,
+          profissional_id: falta.profissional_id,
+          valor_atendimento: valorSessao,
+          valor_repasse: valorRepasse,
+          status: "pendente",
+          observacoes: "Gerado por falta cobrada"
+        });
+      if (insertError) throw insertError;
+
+      // 6. Marcar atendimento como cobrado (opcional)
+      await supabase
+        .from("atendimentos")
+        .update({ falta_cobrada: true })
+        .eq("id", falta.id);
+
+      toast.success(`Falta cobrada! Repasse de ${formatBRL(valorRepasse)} gerado.`);
+      carregarFaltas();
+      carregar(); // recarregar repasses para mostrar o novo pendente
+    } catch (err: any) {
+      toast.error("Erro ao cobrar falta: " + err.message);
+    }
+  }
+
+  // ===== FUNÇÕES EXISTENTES =====
+
   useEffect(() => { carregar(); }, []);
 
   const profissionaisFiltro = useMemo(() => {
@@ -79,12 +282,10 @@ export default function Financeiro() {
   const repassesFiltrados = useMemo(() => {
     let filtrados = repasses;
     
-    // Filtro profissional
     if (filtroProfissional !== "todos") {
       filtrados = filtrados.filter(r => r.profissional_id === filtroProfissional);
     }
     
-    // Filtro período
     if (filtroPeriodo !== "todos") {
       const hoje = new Date();
       let start, end;
@@ -105,7 +306,6 @@ export default function Financeiro() {
       }
     }
 
-    // Busca por paciente (nome)
     if (buscaPaciente.trim() !== "") {
       const termo = buscaPaciente.trim().toLowerCase();
       filtrados = filtrados.filter(r => 
@@ -113,7 +313,6 @@ export default function Financeiro() {
       );
     }
 
-    // Ordenação
     const comparar = (a: RepasseRow, b: RepasseRow) => {
       switch (ordenacao) {
         case "data_desc":
@@ -139,7 +338,7 @@ export default function Financeiro() {
   }, [repasses, filtroProfissional, filtroPeriodo, dataInicio, dataFim, buscaPaciente, ordenacao]);
 
   const pendentes = repassesFiltrados.filter((r) => r.status === "pendente");
-  const conferidos = repassesFiltrados.filter((r) => r.status === "pago");
+  const conferidos = repassesFiltrados.filter((r) => r.status === "conferido" || r.status === "pago");
   
   const totalPendente = pendentes.reduce((s, r) => s + Number(r.valor_repasse), 0);
   const totalConferido = conferidos.reduce((s, r) => s + Number(r.valor_repasse), 0);
@@ -156,7 +355,7 @@ export default function Financeiro() {
     if (pendentes.length === 0) return;
     if (!confirm(`Confirmar todos os ${pendentes.length} repasses visíveis?`)) return;
     const ids = pendentes.map(r => r.id);
-    const { error } = await supabase.from("repasses_atendimento").update({ status: "pago" }).in("id", ids);
+    const { error } = await supabase.from("repasses_atendimento").update({ status: "conferido" }).in("id", ids);
     if (error) { toast.error("Erro: " + error.message); return; }
     toast.success("Todos conferidos!");
     carregar();
@@ -191,6 +390,9 @@ export default function Financeiro() {
 
   function formatBRL(v: number) { return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
 
+  // Estado da aba ativa para carregar faltas
+  const [activeTab, setActiveTab] = useState("pendentes");
+
   if (isFisio && !isAdmin && !isSecretaria) {
     return (
       <div className="p-8 text-center mt-10 space-y-4">
@@ -210,7 +412,7 @@ export default function Financeiro() {
         <Link to="/financeiro/relatorios"><Card className="p-3 flex items-center gap-2 hover:bg-emerald-50 transition-colors h-full border-emerald-200"><Activity className="w-5 h-5 text-emerald-600" /><div className="font-medium text-sm text-emerald-800">Relatórios</div></Card></Link>
       </div>
 
-      {/* Filtros existentes + novos */}
+      {/* Filtros existentes */}
       <div className="flex flex-col sm:flex-row gap-3 p-3 bg-muted/50 rounded-lg border flex-wrap items-center">
         <Select value={filtroPeriodo} onValueChange={setFiltroPeriodo}>
           <SelectTrigger className="w-full sm:w-[180px]"><SelectValue placeholder="Período" /></SelectTrigger>
@@ -238,7 +440,6 @@ export default function Financeiro() {
           </div>
         )}
 
-        {/* Busca por paciente */}
         <div className="relative w-full sm:w-[200px]">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
@@ -249,7 +450,6 @@ export default function Financeiro() {
           />
         </div>
 
-        {/* Ordenação */}
         <Select value={ordenacao} onValueChange={(v) => setOrdenacao(v as Ordenacao)}>
           <SelectTrigger className="w-full sm:w-[200px]">
             <ArrowUpDown className="w-4 h-4 mr-1" />
@@ -272,8 +472,13 @@ export default function Financeiro() {
         <Card className="p-3"><div className="text-xs text-muted-foreground">Conferidos</div><div className="font-bold text-emerald-600">{formatBRL(totalConferido)}</div></Card>
       </div>
 
-      <Tabs defaultValue="pendentes">
-        <TabsList className="w-full"><TabsTrigger value="pendentes" className="flex-1">Pendentes ({pendentes.length})</TabsTrigger><TabsTrigger value="conferidos" className="flex-1">Conferidos ({conferidos.length})</TabsTrigger></TabsList>
+      {/* Tabs - agora com 3 abas */}
+      <Tabs defaultValue="pendentes" onValueChange={setActiveTab}>
+        <TabsList className="w-full grid grid-cols-3">
+          <TabsTrigger value="pendentes" className="flex-1">Pendentes ({pendentes.length})</TabsTrigger>
+          <TabsTrigger value="conferidos" className="flex-1">Conferidos ({conferidos.length})</TabsTrigger>
+          <TabsTrigger value="faltas" className="flex-1">Faltas ({faltas.length})</TabsTrigger>
+        </TabsList>
         
         {/* ABA: PENDENTES */}
         <TabsContent value="pendentes" className="space-y-3 mt-3">
@@ -320,13 +525,15 @@ export default function Financeiro() {
                 }}>
                   <Pencil className="w-4 h-4" />
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => atualizarStatus(r.id, "pago")}><CheckCircle2 className="w-4 h-4 text-emerald-600" /></Button>
+                <Button size="sm" variant="outline" onClick={() => atualizarStatus(r.id, "conferido")}>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                </Button>
               </div>
             </Card>
           ))}
         </TabsContent>
 
-        {/* ABA: CONFERIDOS */}
+        {/* ABA: CONFERIDOS (agora com status 'conferido' e 'pago') */}
         <TabsContent value="conferidos" className="space-y-3 mt-3">
           {conferidos.map((r) => (
             <Card key={r.id} className="p-4 flex items-center gap-4 bg-slate-50/70 border-slate-100">
@@ -366,14 +573,122 @@ export default function Financeiro() {
                 }}>
                   <Pencil className="w-4 h-4" />
                 </Button>
-                <Button size="sm" variant="ghost" onClick={() => atualizarStatus(r.id, "pendente")}><Undo2 className="w-4 h-4 text-slate-500" /></Button>
+                <Button size="sm" variant="ghost" onClick={() => atualizarStatus(r.id, "pendente")}>
+                  <Undo2 className="w-4 h-4 text-slate-500" />
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => atualizarStatus(r.id, "pago")}>
+                  <DollarSign className="w-4 h-4 text-green-600" />
+                </Button>
               </div>
             </Card>
           ))}
         </TabsContent>
+
+        {/* ABA: FALTAS (NOVA) */}
+        <TabsContent value="faltas" className="space-y-3 mt-3">
+          {/* Filtros específicos para faltas */}
+          <div className="flex flex-col sm:flex-row gap-2 p-2 bg-muted/30 rounded-lg border flex-wrap items-center">
+            <Select value={filtroFaltasPeriodo} onValueChange={setFiltroFaltasPeriodo}>
+              <SelectTrigger className="w-full sm:w-[150px]">
+                <SelectValue placeholder="Período" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="semana">Esta Semana</SelectItem>
+                <SelectItem value="mes">Este Mês</SelectItem>
+                <SelectItem value="todos">Tudo</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={filtroFaltasProfissional} onValueChange={setFiltroFaltasProfissional}>
+              <SelectTrigger className="w-full sm:w-[180px]">
+                <SelectValue placeholder="Profissional" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos</SelectItem>
+                {profissionaisFiltro.map(p => (
+                  <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Button variant="outline" size="sm" onClick={carregarFaltas} className="ml-auto">
+              Atualizar
+            </Button>
+          </div>
+
+          {loadingFaltas ? (
+            <div className="text-center py-8 text-sm text-muted-foreground">Carregando faltas...</div>
+          ) : faltas.length === 0 ? (
+            <Card className="p-8 text-center">
+              <AlertTriangle className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
+              <p className="text-muted-foreground text-sm">Nenhuma falta registrada no período.</p>
+            </Card>
+          ) : (
+            faltas.map((falta) => {
+              const data = format(parseISO(falta.data_inicio), "dd/MM/yyyy HH:mm", { locale: ptBR });
+              const ehPlano = falta.tipo === "Plano" || falta.paciente_pacotes?.autorizacao_id !== null;
+              const jaCobrada = falta.falta_cobrada;
+
+              return (
+                <Card key={falta.id} className={`p-4 border-l-4 ${jaCobrada ? 'border-l-emerald-500' : 'border-l-red-400'}`}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1">
+                      <div className="font-semibold text-slate-800">{falta.paciente?.nome || "Paciente"}</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        {falta.profissional?.nome || "Profissional"} · {data}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2">
+                        <Badge variant={ehPlano ? "default" : "outline"} className="text-[10px]">
+                          {ehPlano ? "Plano" : "Particular"}
+                        </Badge>
+                        {jaCobrada && (
+                          <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 text-[10px]">
+                            Cobrada
+                          </Badge>
+                        )}
+                      </div>
+                      {falta.paciente_pacotes && (
+                        <div className="text-xs text-muted-foreground mt-1">
+                          Sessões: {falta.paciente_pacotes.sessoes_realizadas || 0}/{falta.paciente_pacotes.sessoes_totais}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      {!jaCobrada && (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-emerald-600 border-emerald-200 hover:bg-emerald-50"
+                            onClick={() => handleCobrarFalta(falta)}
+                          >
+                            <DollarSign className="w-4 h-4 mr-1" /> Cobrar
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-slate-600"
+                            onClick={() => handleAbonarFalta(falta.id)}
+                          >
+                            <X className="w-4 h-4 mr-1" /> Abonar
+                          </Button>
+                        </>
+                      )}
+                      {jaCobrada && (
+                        <Badge className="bg-emerald-100 text-emerald-800 px-3 py-1 text-xs">
+                          <Check className="w-3 h-3 mr-1" /> Cobrada
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                </Card>
+              );
+            })
+          )}
+        </TabsContent>
       </Tabs>
 
-      {/* MODAL DE EDIÇÃO */}
+      {/* MODAL DE EDIÇÃO (existente) */}
       <Dialog open={!!editando} onOpenChange={() => setEditando(null)}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader><DialogTitle>Editar Valores de Repasse</DialogTitle></DialogHeader>
