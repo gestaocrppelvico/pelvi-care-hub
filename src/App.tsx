@@ -27,8 +27,8 @@ function App() {
       <AuthProvider>
         <Routes>
           {/* Rotas públicas */}
-          <Route path="/" element={<Login />} />
-          <Route path="/login" element={<Login />} />
+          <Route path="/" element={<Auth />} />
+<Route path="/Auth" element={<Auth />} />
 
           {/* Rotas protegidas com layout */}
           <Route element={<ProtectedRoute />}>
