@@ -19,6 +19,7 @@ import { toast } from "sonner";
 import { startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval, parseISO, startOfDay, endOfDay, format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
+// ===== INTERFACES =====
 interface RepasseRow {
   id: string;
   atendimento_id: string;
@@ -61,35 +62,37 @@ interface FaltaRow {
 
 type Ordenacao = "data_desc" | "data_asc" | "paciente_asc" | "valor_repasse_desc" | "valor_repasse_asc" | "valor_atendimento_desc";
 
+// ===== COMPONENTE PRINCIPAL =====
 export default function Financeiro() {
   const { isAdmin, isSecretaria, isFisio } = useAuth();
   const podeGerenciar = isAdmin || isSecretaria;
-  
+
+  // ----- TODOS OS STATES -----
   const [repasses, setRepasses] = useState<RepasseRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [filtroProfissional, setFiltroProfissional] = useState<string>("todos");
   const [filtroPeriodo, setFiltroPeriodo] = useState<string>("semana");
   const [buscaPaciente, setBuscaPaciente] = useState<string>("");
   const [ordenacao, setOrdenacao] = useState<Ordenacao>("data_desc");
-  
   const [dataInicio, setDataInicio] = useState<string>("");
   const [dataFim, setDataFim] = useState<string>("");
-
   const [editando, setEditando] = useState<RepasseRow | null>(null);
   const [valorAtendimento, setValorAtendimento] = useState("");
   const [valorRepasse, setValorRepasse] = useState("");
   const [justificativa, setJustificativa] = useState("");
-  
   const [fatorRecalculo, setFatorRecalculo] = useState(0.35);
+  const [activeTab, setActiveTab] = useState("pendentes");
 
-  // Estados para a aba de Faltas
+  // Estados para faltas
   const [faltas, setFaltas] = useState<FaltaRow[]>([]);
   const [loadingFaltas, setLoadingFaltas] = useState(false);
   const [filtroFaltasProfissional, setFiltroFaltasProfissional] = useState<string>("todos");
   const [filtroFaltasPeriodo, setFiltroFaltasPeriodo] = useState<string>("mes");
 
-  // ===== FUNÇÕES DE CARREGAMENTO =====
+  // ----- FUNÇÃO PARA FORMATAR MOEDA -----
+  const formatBRL = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
+  // ----- CARREGAR REPASSES -----
   async function carregar() {
     setLoading(true);
     const { data } = await supabase
@@ -101,10 +104,10 @@ export default function Financeiro() {
     setLoading(false);
   }
 
+  // ----- CARREGAR FALTAS -----
   async function carregarFaltas() {
     setLoadingFaltas(true);
     try {
-      // Definir período para faltas
       let start, end;
       const hoje = new Date();
       if (filtroFaltasPeriodo === "semana") {
@@ -114,7 +117,6 @@ export default function Financeiro() {
         start = startOfMonth(hoje);
         end = endOfMonth(hoje);
       } else {
-        // Todos
         start = new Date(0);
         end = new Date(8640000000000000);
       }
@@ -160,125 +162,27 @@ export default function Financeiro() {
     }
   }
 
-  // Carregar faltas quando a aba for ativada ou filtros mudarem
+  // ----- EFFECTS -----
+  useEffect(() => {
+    carregar();
+  }, []);
+
   useEffect(() => {
     if (activeTab === "faltas") {
       carregarFaltas();
     }
   }, [activeTab, filtroFaltasProfissional, filtroFaltasPeriodo]);
 
-  // ===== FUNÇÕES PARA FALTAS =====
-
-  async function handleAbonarFalta(faltaId: string) {
-    if (!confirm("Deseja abonar esta falta? O atendimento será cancelado.")) return;
-    try {
-      const { error } = await supabase
-        .from("atendimentos")
-        .update({ 
-          status: "cancelado", 
-          observacoes: "Falta abonada pela administração" 
-        })
-        .eq("id", faltaId);
-      if (error) throw error;
-      toast.success("Falta abonada com sucesso!");
-      carregarFaltas();
-    } catch (err: any) {
-      toast.error("Erro ao abonar: " + err.message);
-    }
-  }
-
-  async function handleCobrarFalta(falta: FaltaRow) {
-    // 1. Validar se tem paciente_pacote_id
-    if (!falta.paciente_pacote_id) {
-      toast.error("Este atendimento não está vinculado a um pacote. Não é possível cobrar.");
-      return;
-    }
-
-    if (!confirm(`Deseja cobrar a falta de ${falta.paciente?.nome}? Isso irá descontar uma sessão e gerar um repasse.`)) return;
-
-    try {
-      // 2. Buscar dados do paciente_pacote (já vem no select, mas vamos garantir)
-      const pacote = falta.paciente_pacotes;
-      if (!pacote) {
-        toast.error("Dados do pacote não encontrados.");
-        return;
-      }
-
-      // 3. Calcular valores (mesma lógica da trigger)
-      const ehPlano = pacote.autorizacao_id !== null;
-      const precoPago = pacote.preco_pago || 0;
-      const sessoesTotais = pacote.sessoes_totais || 1;
-      let valorSessao = 0;
-      let valorRepasse = 0;
-
-      // 3a. Buscar regra de repasse do profissional
-      const { data: regras } = await supabase
-        .from("repasses_servico")
-        .select("*")
-        .eq("profissional_id", falta.profissional_id)
-        .eq("ativo", true)
-        .order("created_at", { ascending: true });
-
-      if (ehPlano) {
-        // Plano: repasse fixo
-        valorSessao = 0;
-        const regraFixa = regras?.find(r => r.tipo_repasse === "fixo" && r.ativo);
-        valorRepasse = regraFixa?.valor_repasse || 45.50;
-      } else {
-        // Particular: percentual
-        valorSessao = precoPago / sessoesTotais;
-        const regraPercentual = regras?.find(r => r.tipo_repasse === "percentual" && r.ativo);
-        const percentual = regraPercentual?.valor_repasse || 35;
-        valorRepasse = valorSessao * (percentual / 100);
-      }
-
-      // 4. Atualizar sessões realizadas (incrementar)
-      const { error: updateError } = await supabase
-        .from("paciente_pacotes")
-        .update({
-          sessoes_realizadas: pacote.sessoes_realizadas + 1,
-          sessoes_restantes: pacote.sessoes_totais - (pacote.sessoes_realizadas + 1)
-        })
-        .eq("id", pacote.id);
-      if (updateError) throw updateError;
-
-      // 5. Inserir repasse pendente
-      const { error: insertError } = await supabase
-        .from("repasses_atendimento")
-        .insert({
-          atendimento_id: falta.id,
-          profissional_id: falta.profissional_id,
-          valor_atendimento: valorSessao,
-          valor_repasse: valorRepasse,
-          status: "pendente",
-          observacoes: "Gerado por falta cobrada"
-        });
-      if (insertError) throw insertError;
-
-      // 6. Marcar atendimento como cobrado (opcional)
-      await supabase
-        .from("atendimentos")
-        .update({ falta_cobrada: true })
-        .eq("id", falta.id);
-
-      toast.success(`Falta cobrada! Repasse de ${formatBRL(valorRepasse)} gerado.`);
-      carregarFaltas();
-      carregar(); // recarregar repasses para mostrar o novo pendente
-    } catch (err: any) {
-      toast.error("Erro ao cobrar falta: " + err.message);
-    }
-  }
-
-  // ===== FUNÇÕES EXISTENTES =====
-
-  useEffect(() => { carregar(); }, []);
-
+  // ----- LISTA DE PROFISSIONAIS PARA FILTROS -----
   const profissionaisFiltro = useMemo(() => {
     const lista = new Map();
-    repasses.forEach(r => { if (r.profissional) lista.set(r.profissional.id, r.profissional.nome); });
+    repasses.forEach(r => {
+      if (r.profissional) lista.set(r.profissional.id, r.profissional.nome);
+    });
     return Array.from(lista.entries()).map(([id, nome]) => ({ id, nome }));
   }, [repasses]);
 
+  // ----- FILTROS E ORDENAÇÃO DOS REPASSES -----
   const repassesFiltrados = useMemo(() => {
     let filtrados = repasses;
     
@@ -337,13 +241,14 @@ export default function Financeiro() {
     return [...filtrados].sort(comparar);
   }, [repasses, filtroProfissional, filtroPeriodo, dataInicio, dataFim, buscaPaciente, ordenacao]);
 
-  const pendentes = repassesFiltrados.filter((r) => r.status === "pendente");
-  const conferidos = repassesFiltrados.filter((r) => r.status === "conferido" || r.status === "pago");
+  const pendentes = repassesFiltrados.filter(r => r.status === "pendente");
+  const conferidos = repassesFiltrados.filter(r => r.status === "conferido" || r.status === "pago");
   
   const totalPendente = pendentes.reduce((s, r) => s + Number(r.valor_repasse), 0);
   const totalConferido = conferidos.reduce((s, r) => s + Number(r.valor_repasse), 0);
   const totalReceitas = repassesFiltrados.reduce((s, r) => s + Number(r.valor_atendimento), 0);
 
+  // ----- FUNÇÕES DE AÇÃO -----
   async function atualizarStatus(id: string, status: string) {
     const { error } = await supabase.from("repasses_atendimento").update({ status }).eq("id", id);
     if (error) { toast.error(error.message); return; }
@@ -388,11 +293,103 @@ export default function Financeiro() {
     }
   }
 
-  function formatBRL(v: number) { return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
+  // ----- FUNÇÕES PARA FALTAS -----
+  async function handleAbonarFalta(faltaId: string) {
+    if (!confirm("Deseja abonar esta falta? O atendimento será cancelado.")) return;
+    try {
+      const { error } = await supabase
+        .from("atendimentos")
+        .update({ 
+          status: "cancelado", 
+          observacoes: "Falta abonada pela administração" 
+        })
+        .eq("id", faltaId);
+      if (error) throw error;
+      toast.success("Falta abonada com sucesso!");
+      carregarFaltas();
+      carregar();
+    } catch (err: any) {
+      toast.error("Erro ao abonar: " + err.message);
+    }
+  }
 
-  // Estado da aba ativa para carregar faltas
-  const [activeTab, setActiveTab] = useState("pendentes");
+  async function handleCobrarFalta(falta: FaltaRow) {
+    if (!falta.paciente_pacote_id) {
+      toast.error("Este atendimento não está vinculado a um pacote. Não é possível cobrar.");
+      return;
+    }
 
+    if (!confirm(`Deseja cobrar a falta de ${falta.paciente?.nome}? Isso irá descontar uma sessão e gerar um repasse.`)) return;
+
+    try {
+      const pacote = falta.paciente_pacotes;
+      if (!pacote) {
+        toast.error("Dados do pacote não encontrados.");
+        return;
+      }
+
+      const ehPlano = pacote.autorizacao_id !== null;
+      const precoPago = pacote.preco_pago || 0;
+      const sessoesTotais = pacote.sessoes_totais || 1;
+      let valorSessao = 0;
+      let valorRepasseCalculado = 0;
+
+      // Buscar regra de repasse
+      const { data: regras } = await supabase
+        .from("repasses_servico")
+        .select("*")
+        .eq("profissional_id", falta.profissional_id)
+        .eq("ativo", true)
+        .order("created_at", { ascending: true });
+
+      if (ehPlano) {
+        valorSessao = 0;
+        const regraFixa = regras?.find(r => r.tipo_repasse === "fixo" && r.ativo);
+        valorRepasseCalculado = regraFixa?.valor_repasse || 45.50;
+      } else {
+        valorSessao = precoPago / sessoesTotais;
+        const regraPercentual = regras?.find(r => r.tipo_repasse === "percentual" && r.ativo);
+        const percentual = regraPercentual?.valor_repasse || 35;
+        valorRepasseCalculado = valorSessao * (percentual / 100);
+      }
+
+      // Atualizar sessões
+      const { error: updateError } = await supabase
+        .from("paciente_pacotes")
+        .update({
+          sessoes_realizadas: pacote.sessoes_realizadas + 1,
+          sessoes_restantes: pacote.sessoes_totais - (pacote.sessoes_realizadas + 1)
+        })
+        .eq("id", pacote.id);
+      if (updateError) throw updateError;
+
+      // Inserir repasse
+      const { error: insertError } = await supabase
+        .from("repasses_atendimento")
+        .insert({
+          atendimento_id: falta.id,
+          profissional_id: falta.profissional_id,
+          valor_atendimento: valorSessao,
+          valor_repasse: valorRepasseCalculado,
+          status: "pendente",
+          observacoes: "Gerado por falta cobrada"
+        });
+      if (insertError) throw insertError;
+
+      await supabase
+        .from("atendimentos")
+        .update({ falta_cobrada: true })
+        .eq("id", falta.id);
+
+      toast.success(`Falta cobrada! Repasse de ${formatBRL(valorRepasseCalculado)} gerado.`);
+      carregarFaltas();
+      carregar();
+    } catch (err: any) {
+      toast.error("Erro ao cobrar falta: " + err.message);
+    }
+  }
+
+  // ----- RENDER -----
   if (isFisio && !isAdmin && !isSecretaria) {
     return (
       <div className="p-8 text-center mt-10 space-y-4">
@@ -404,18 +401,40 @@ export default function Financeiro() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2"><Wallet className="w-6 h-6 text-primary" /><h1 className="text-2xl font-bold">Financeiro</h1></div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-        <Link to="/financeiro/servicos"><Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full"><Package className="w-5 h-5 text-primary" /><div className="font-medium text-sm">Serviços e Pacotes</div></Card></Link>
-        {isAdmin && <Link to="/financeiro/repasses"><Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full"><Settings className="w-5 h-5 text-primary" /><div className="font-medium text-sm">Regras de Repasse</div></Card></Link>}
-        <Link to="/financeiro/relatorios"><Card className="p-3 flex items-center gap-2 hover:bg-emerald-50 transition-colors h-full border-emerald-200"><Activity className="w-5 h-5 text-emerald-600" /><div className="font-medium text-sm text-emerald-800">Relatórios</div></Card></Link>
+      <div className="flex items-center gap-2">
+        <Wallet className="w-6 h-6 text-primary" />
+        <h1 className="text-2xl font-bold">Financeiro</h1>
       </div>
 
-      {/* Filtros existentes */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+        <Link to="/financeiro/servicos">
+          <Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full">
+            <Package className="w-5 h-5 text-primary" />
+            <div className="font-medium text-sm">Serviços e Pacotes</div>
+          </Card>
+        </Link>
+        {isAdmin && (
+          <Link to="/financeiro/repasses">
+            <Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full">
+              <Settings className="w-5 h-5 text-primary" />
+              <div className="font-medium text-sm">Regras de Repasse</div>
+            </Card>
+          </Link>
+        )}
+        <Link to="/financeiro/relatorios">
+          <Card className="p-3 flex items-center gap-2 hover:bg-emerald-50 transition-colors h-full border-emerald-200">
+            <Activity className="w-5 h-5 text-emerald-600" />
+            <div className="font-medium text-sm text-emerald-800">Relatórios</div>
+          </Card>
+        </Link>
+      </div>
+
+      {/* Filtros */}
       <div className="flex flex-col sm:flex-row gap-3 p-3 bg-muted/50 rounded-lg border flex-wrap items-center">
         <Select value={filtroPeriodo} onValueChange={setFiltroPeriodo}>
-          <SelectTrigger className="w-full sm:w-[180px]"><SelectValue placeholder="Período" /></SelectTrigger>
+          <SelectTrigger className="w-full sm:w-[180px]">
+            <SelectValue placeholder="Período" />
+          </SelectTrigger>
           <SelectContent>
             <SelectItem value="semana">Esta Semana</SelectItem>
             <SelectItem value="mes">Este Mês</SelectItem>
@@ -425,18 +444,32 @@ export default function Financeiro() {
         </Select>
         
         <Select value={filtroProfissional} onValueChange={setFiltroProfissional}>
-          <SelectTrigger className="w-full sm:w-[180px]"><SelectValue placeholder="Profissional" /></SelectTrigger>
+          <SelectTrigger className="w-full sm:w-[180px]">
+            <SelectValue placeholder="Profissional" />
+          </SelectTrigger>
           <SelectContent>
             <SelectItem value="todos">Todos</SelectItem>
-            {profissionaisFiltro.map(p => <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>)}
+            {profissionaisFiltro.map(p => (
+              <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
 
         {filtroPeriodo === "personalizado" && (
           <div className="flex items-center gap-2 w-full sm:w-auto mt-2 sm:mt-0 bg-background p-1 rounded-md border">
-            <Input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} className="h-8 border-none focus-visible:ring-0 w-[130px] text-sm" />
+            <Input 
+              type="date" 
+              value={dataInicio} 
+              onChange={(e) => setDataInicio(e.target.value)} 
+              className="h-8 border-none focus-visible:ring-0 w-[130px] text-sm" 
+            />
             <span className="text-xs text-muted-foreground font-medium">até</span>
-            <Input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} className="h-8 border-none focus-visible:ring-0 w-[130px] text-sm" />
+            <Input 
+              type="date" 
+              value={dataFim} 
+              onChange={(e) => setDataFim(e.target.value)} 
+              className="h-8 border-none focus-visible:ring-0 w-[130px] text-sm" 
+            />
           </div>
         )}
 
@@ -466,127 +499,152 @@ export default function Financeiro() {
         </Select>
       </div>
 
+      {/* Cards de resumo */}
       <div className="grid grid-cols-3 gap-2">
-        <Card className="p-3"><div className="text-xs text-muted-foreground">Receita</div><div className="font-bold">{formatBRL(totalReceitas)}</div></Card>
-        <Card className="p-3"><div className="text-xs text-muted-foreground">Pendentes</div><div className="font-bold text-amber-600">{formatBRL(totalPendente)}</div></Card>
-        <Card className="p-3"><div className="text-xs text-muted-foreground">Conferidos</div><div className="font-bold text-emerald-600">{formatBRL(totalConferido)}</div></Card>
+        <Card className="p-3">
+          <div className="text-xs text-muted-foreground">Receita</div>
+          <div className="font-bold">{formatBRL(totalReceitas)}</div>
+        </Card>
+        <Card className="p-3">
+          <div className="text-xs text-muted-foreground">Pendentes</div>
+          <div className="font-bold text-amber-600">{formatBRL(totalPendente)}</div>
+        </Card>
+        <Card className="p-3">
+          <div className="text-xs text-muted-foreground">Conferidos</div>
+          <div className="font-bold text-emerald-600">{formatBRL(totalConferido)}</div>
+        </Card>
       </div>
 
-      {/* Tabs - agora com 3 abas */}
-      <Tabs defaultValue="pendentes" onValueChange={setActiveTab}>
+      {/* Tabs */}
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="w-full grid grid-cols-3">
-          <TabsTrigger value="pendentes" className="flex-1">Pendentes ({pendentes.length})</TabsTrigger>
-          <TabsTrigger value="conferidos" className="flex-1">Conferidos ({conferidos.length})</TabsTrigger>
-          <TabsTrigger value="faltas" className="flex-1">Faltas ({faltas.length})</TabsTrigger>
+          <TabsTrigger value="pendentes" className="flex-1">
+            Pendentes ({pendentes.length})
+          </TabsTrigger>
+          <TabsTrigger value="conferidos" className="flex-1">
+            Conferidos ({conferidos.length})
+          </TabsTrigger>
+          <TabsTrigger value="faltas" className="flex-1">
+            Faltas ({faltas.length})
+          </TabsTrigger>
         </TabsList>
         
         {/* ABA: PENDENTES */}
         <TabsContent value="pendentes" className="space-y-3 mt-3">
-          {podeGerenciar && pendentes.length > 0 && <Button onClick={conferirVisiveis} className="w-full bg-emerald-600">Conferir {pendentes.length} visíveis</Button>}
-          {pendentes.map((r) => (
-            <Card key={r.id} className="p-4 flex items-center gap-4">
-              <div className="flex-1">
-                <div className="font-semibold text-slate-800">{r.profissional?.nome}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">Paciente: {r.atendimento?.paciente?.nome || "—"}</div>
-                
-                {r.atendimento?.data_inicio && (
-                  <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
-                    <span>Data: {format(parseISO(r.atendimento.data_inicio), "dd/MM/yyyy HH:mm", { locale: ptBR })}</span>
-                    {!r.atendimento?.google_event_id && (
-                      <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-[10px] h-4 py-0 px-1.5 font-medium hover:bg-amber-50">
-                        Lançamento Manual
-                      </Badge>
-                    )}
-                  </div>
-                )}
-                
-                <div className="font-bold text-amber-600 mt-1.5">{formatBRL(Number(r.valor_repasse))}</div>
-                
-                {r.observacoes && (
-                  <div className="text-[11px] text-slate-600 italic bg-amber-50/40 border border-amber-100 rounded px-2 py-1 mt-1.5 max-w-md">
-                    Motivo: {r.observacoes}
-                  </div>
-                )}
-              </div>
-              <div className="flex gap-2">
-                <Button size="sm" variant="ghost" onClick={() => { 
-                  setEditando(r); 
-                  setValorAtendimento(String(r.valor_atendimento)); 
-                  setValorRepasse(String(r.valor_repasse)); 
-                  setJustificativa(r.observacoes || "");
-                  
-                  const vAtend = Number(r.valor_atendimento);
-                  const vRep = Number(r.valor_repasse);
-                  if (vAtend > 0) {
-                    setFatorRecalculo(vRep / vAtend);
-                  } else {
-                    setFatorRecalculo(0.35);
-                  }
-                }}>
-                  <Pencil className="w-4 h-4" />
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => atualizarStatus(r.id, "conferido")}>
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                </Button>
-              </div>
+          {podeGerenciar && pendentes.length > 0 && (
+            <Button onClick={conferirVisiveis} className="w-full bg-emerald-600">
+              Conferir {pendentes.length} visíveis
+            </Button>
+          )}
+          {pendentes.length === 0 ? (
+            <Card className="p-8 text-center text-sm text-muted-foreground">
+              Nenhum repasse pendente.
             </Card>
-          ))}
+          ) : (
+            pendentes.map((r) => (
+              <Card key={r.id} className="p-4 flex items-center gap-4">
+                <div className="flex-1">
+                  <div className="font-semibold text-slate-800">{r.profissional?.nome}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    Paciente: {r.atendimento?.paciente?.nome || "—"}
+                  </div>
+                  {r.atendimento?.data_inicio && (
+                    <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+                      <span>Data: {format(parseISO(r.atendimento.data_inicio), "dd/MM/yyyy HH:mm", { locale: ptBR })}</span>
+                      {!r.atendimento?.google_event_id && (
+                        <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-[10px] h-4 py-0 px-1.5 font-medium">
+                          Lançamento Manual
+                        </Badge>
+                      )}
+                    </div>
+                  )}
+                  <div className="font-bold text-amber-600 mt-1.5">{formatBRL(Number(r.valor_repasse))}</div>
+                  {r.observacoes && (
+                    <div className="text-[11px] text-slate-600 italic bg-amber-50/40 border border-amber-100 rounded px-2 py-1 mt-1.5 max-w-md">
+                      Motivo: {r.observacoes}
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="ghost" onClick={() => {
+                    setEditando(r);
+                    setValorAtendimento(String(r.valor_atendimento));
+                    setValorRepasse(String(r.valor_repasse));
+                    setJustificativa(r.observacoes || "");
+                    const vAtend = Number(r.valor_atendimento);
+                    const vRep = Number(r.valor_repasse);
+                    if (vAtend > 0) setFatorRecalculo(vRep / vAtend);
+                    else setFatorRecalculo(0.35);
+                  }}>
+                    <Pencil className="w-4 h-4" />
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => atualizarStatus(r.id, "conferido")}>
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  </Button>
+                </div>
+              </Card>
+            ))
+          )}
         </TabsContent>
 
-        {/* ABA: CONFERIDOS (agora com status 'conferido' e 'pago') */}
+        {/* ABA: CONFERIDOS */}
         <TabsContent value="conferidos" className="space-y-3 mt-3">
-          {conferidos.map((r) => (
-            <Card key={r.id} className="p-4 flex items-center gap-4 bg-slate-50/70 border-slate-100">
-              <div className="flex-1">
-                <div className="font-semibold text-slate-700">{r.profissional?.nome}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">Paciente: {r.atendimento?.paciente?.nome || "—"}</div>
-                
-                {r.atendimento?.data_inicio && (
-                  <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
-                    <span>Data: {format(parseISO(r.atendimento.data_inicio), "dd/MM/yyyy HH:mm", { locale: ptBR })}</span>
-                    {!r.atendimento?.google_event_id && (
-                      <Badge variant="outline" className="bg-amber-50/50 text-amber-700 border-amber-200/60 text-[10px] h-4 py-0 px-1.5 font-medium">
-                        Lançamento Manual
-                      </Badge>
-                    )}
-                  </div>
-                )}
-                
-                <div className="font-bold text-emerald-600 mt-1.5">{formatBRL(Number(r.valor_repasse))}</div>
-                
-                {r.observacoes && (
-                  <div className="text-[11px] text-slate-600 italic bg-background border rounded px-2 py-1 mt-1.5 max-w-md">
-                    Motivo: {r.observacoes}
-                  </div>
-                )}
-              </div>
-              <div className="flex gap-2">
-                <Button size="sm" variant="ghost" onClick={() => { 
-                  setEditando(r); 
-                  setValorAtendimento(String(r.valor_atendimento)); 
-                  setValorRepasse(String(r.valor_repasse)); 
-                  setJustificativa(r.observacoes || "");
-                  const vAtend = Number(r.valor_atendimento);
-                  const vRep = Number(r.valor_repasse);
-                  if (vAtend > 0) setFatorRecalculo(vRep / vAtend);
-                  else setFatorRecalculo(0.35);
-                }}>
-                  <Pencil className="w-4 h-4" />
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => atualizarStatus(r.id, "pendente")}>
-                  <Undo2 className="w-4 h-4 text-slate-500" />
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => atualizarStatus(r.id, "pago")}>
-                  <DollarSign className="w-4 h-4 text-green-600" />
-                </Button>
-              </div>
+          {conferidos.length === 0 ? (
+            <Card className="p-8 text-center text-sm text-muted-foreground">
+              Nenhum repasse conferido.
             </Card>
-          ))}
+          ) : (
+            conferidos.map((r) => (
+              <Card key={r.id} className="p-4 flex items-center gap-4 bg-slate-50/70 border-slate-100">
+                <div className="flex-1">
+                  <div className="font-semibold text-slate-700">{r.profissional?.nome}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    Paciente: {r.atendimento?.paciente?.nome || "—"}
+                  </div>
+                  {r.atendimento?.data_inicio && (
+                    <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+                      <span>Data: {format(parseISO(r.atendimento.data_inicio), "dd/MM/yyyy HH:mm", { locale: ptBR })}</span>
+                      {!r.atendimento?.google_event_id && (
+                        <Badge variant="outline" className="bg-amber-50/50 text-amber-700 border-amber-200/60 text-[10px] h-4 py-0 px-1.5 font-medium">
+                          Lançamento Manual
+                        </Badge>
+                      )}
+                    </div>
+                  )}
+                  <div className="font-bold text-emerald-600 mt-1.5">{formatBRL(Number(r.valor_repasse))}</div>
+                  {r.observacoes && (
+                    <div className="text-[11px] text-slate-600 italic bg-background border rounded px-2 py-1 mt-1.5 max-w-md">
+                      Motivo: {r.observacoes}
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="ghost" onClick={() => {
+                    setEditando(r);
+                    setValorAtendimento(String(r.valor_atendimento));
+                    setValorRepasse(String(r.valor_repasse));
+                    setJustificativa(r.observacoes || "");
+                    const vAtend = Number(r.valor_atendimento);
+                    const vRep = Number(r.valor_repasse);
+                    if (vAtend > 0) setFatorRecalculo(vRep / vAtend);
+                    else setFatorRecalculo(0.35);
+                  }}>
+                    <Pencil className="w-4 h-4" />
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => atualizarStatus(r.id, "pendente")}>
+                    <Undo2 className="w-4 h-4 text-slate-500" />
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => atualizarStatus(r.id, "pago")}>
+                    <DollarSign className="w-4 h-4 text-green-600" />
+                  </Button>
+                </div>
+              </Card>
+            ))
+          )}
         </TabsContent>
 
-        {/* ABA: FALTAS (NOVA) */}
+        {/* ABA: FALTAS */}
         <TabsContent value="faltas" className="space-y-3 mt-3">
-          {/* Filtros específicos para faltas */}
           <div className="flex flex-col sm:flex-row gap-2 p-2 bg-muted/30 rounded-lg border flex-wrap items-center">
             <Select value={filtroFaltasPeriodo} onValueChange={setFiltroFaltasPeriodo}>
               <SelectTrigger className="w-full sm:w-[150px]">
@@ -654,7 +712,7 @@ export default function Financeiro() {
                       )}
                     </div>
                     <div className="flex gap-2 shrink-0">
-                      {!jaCobrada && (
+                      {!jaCobrada ? (
                         <>
                           <Button
                             size="sm"
@@ -673,8 +731,7 @@ export default function Financeiro() {
                             <X className="w-4 h-4 mr-1" /> Abonar
                           </Button>
                         </>
-                      )}
-                      {jaCobrada && (
+                      ) : (
                         <Badge className="bg-emerald-100 text-emerald-800 px-3 py-1 text-xs">
                           <Check className="w-3 h-3 mr-1" /> Cobrada
                         </Badge>
@@ -688,10 +745,12 @@ export default function Financeiro() {
         </TabsContent>
       </Tabs>
 
-      {/* MODAL DE EDIÇÃO (existente) */}
+      {/* MODAL DE EDIÇÃO */}
       <Dialog open={!!editando} onOpenChange={() => setEditando(null)}>
         <DialogContent className="sm:max-w-[425px]">
-          <DialogHeader><DialogTitle>Editar Valores de Repasse</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Editar Valores de Repasse</DialogTitle>
+          </DialogHeader>
           <div className="space-y-4 pt-2">
             <div>
               <Label>Valor Atendimento (Total Pago)</Label>
@@ -718,7 +777,9 @@ export default function Financeiro() {
               />
             </div>
             
-            <Button onClick={salvarEdicao} className="w-full bg-blue-600 hover:bg-blue-700 text-white">Salvar Alterações</Button>
+            <Button onClick={salvarEdicao} className="w-full bg-blue-600 hover:bg-blue-700 text-white">
+              Salvar Alterações
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
