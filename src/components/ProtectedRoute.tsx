@@ -1,11 +1,11 @@
-import { Navigate, useLocation } from "react-router-dom";
+import { Navigate, useLocation, Outlet } from "react-router-dom";
 import { useAuth, type AppRole } from "@/hooks/useAuth";
 
 export function ProtectedRoute({
   children,
   requireRoles,
 }: {
-  children: React.ReactNode;
+  children?: React.ReactNode;
   requireRoles?: AppRole[];
 }) {
   const { user, roles, loading } = useAuth();
@@ -26,5 +26,6 @@ export function ProtectedRoute({
     if (!allowed) return <Navigate to="/" replace />;
   }
 
-  return <>{children}</>;
+  // Se receber children via prop, renderiza eles; senão, renderiza o Outlet
+  return children ? <>{children}</> : <Outlet />;
 }
