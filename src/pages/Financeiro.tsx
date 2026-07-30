@@ -121,6 +121,7 @@ export default function Financeiro() {
         end = new Date(8640000000000000);
       }
 
+      // 🔥 CORREÇÃO AQUI: usar a sintaxe !paciente_pacote_id
       let query = supabase
         .from("atendimentos")
         .select(`
@@ -134,7 +135,7 @@ export default function Financeiro() {
           falta_cobrada,
           paciente:pacientes(nome),
           profissional:profissionais(id, nome),
-          paciente_pacote:paciente_pacotes!atendimentos_paciente_pacote_id_fkey(
+          paciente_pacote:paciente_pacotes!paciente_pacote_id(
             id,
             preco_pago,
             sessoes_totais,
@@ -293,7 +294,7 @@ export default function Financeiro() {
     }
   }
 
-  // ----- FUNÇÕES PARA FALTAS (AJUSTADAS) -----
+  // ----- FUNÇÕES PARA FALTAS -----
   async function handleAbonarFalta(faltaId: string) {
     if (!confirm("Deseja abonar esta falta? O atendimento será cancelado.")) return;
     try {
@@ -429,7 +430,7 @@ export default function Financeiro() {
         </Link>
       </div>
 
-      {/* Filtros principais */}
+      {/* Filtros */}
       <div className="flex flex-col sm:flex-row gap-3 p-3 bg-muted/50 rounded-lg border flex-wrap items-center">
         <Select value={filtroPeriodo} onValueChange={setFiltroPeriodo}>
           <SelectTrigger className="w-full sm:w-[180px]">
