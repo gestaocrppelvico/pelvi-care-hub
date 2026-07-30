@@ -9,7 +9,7 @@ import Auth from "@/pages/Auth";
 import Dashboard from "@/pages/Dashboard";
 import Agenda from "@/pages/Agenda";
 import Pacientes from "@/pages/Pacientes";
-import PacienteDetalhes from "@/pages/PacienteDetalhes";
+import PacienteDetalhe from "@/pages/PacienteDetalhe";
 import PacienteFinanceiro from "@/pages/PacienteFinanceiro";
 import PacienteAutorizacoes from "@/pages/PacienteAutorizacoes";
 import NovaAnamnese from "@/pages/NovaAnamnese";
