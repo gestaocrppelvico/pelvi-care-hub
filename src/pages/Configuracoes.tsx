@@ -1,13 +1,12 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import PlanosConfig from "@/components/PlanosConfig"; // ajuste o caminho se necessário
+import PlanosConfig from "@/pages/PlanosConfig"; // <- caminho corrigido
 import { useAuth } from "@/hooks/useAuth";
 import { Navigate } from "react-router-dom";
 
 export default function Configuracoes() {
   const { isAdmin } = useAuth();
 
-  // Proteção extra: se não for admin, redireciona
   if (!isAdmin) {
     return <Navigate to="/dashboard" replace />;
   }
