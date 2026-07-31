@@ -1,14 +1,15 @@
-import { LogOut } from "lucide-react";
+import { LogOut, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Badge } from "@/components/ui/badge";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { toast } from "sonner";
 
 export function AppHeader() {
   const { roles, user } = useAuth();
   const navigate = useNavigate();
+  const isAdmin = roles.includes("admin");
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -16,7 +17,6 @@ export function AppHeader() {
     navigate("/auth");
   };
 
-  // Função para exibir o papel do usuário
   const getRoleLabel = () => {
     if (roles.includes("admin")) return "Admin";
     if (roles.includes("secretaria")) return "Secretária";
@@ -40,12 +40,22 @@ export function AppHeader() {
           )}
         </div>
 
-        {/* Botão de logout (aparece apenas se estiver logado) */}
+        {/* Ações do cabeçalho */}
         {user && (
-          <Button variant="ghost" size="sm" onClick={handleLogout} className="gap-1">
-            <LogOut className="w-4 h-4" />
-            <span className="hidden sm:inline">Sair</span>
-          </Button>
+          <div className="flex items-center gap-1">
+            {isAdmin && (
+              <Link to="/configuracoes">
+                <Button variant="ghost" size="sm" className="gap-1">
+                  <Settings className="w-4 h-4" />
+                  <span className="hidden sm:inline">Config.</span>
+                </Button>
+              </Link>
+            )}
+            <Button variant="ghost" size="sm" onClick={handleLogout} className="gap-1">
+              <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline">Sair</span>
+            </Button>
+          </div>
         )}
       </div>
     </header>
