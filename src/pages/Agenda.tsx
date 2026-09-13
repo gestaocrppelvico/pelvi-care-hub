@@ -116,8 +116,9 @@ export default function Agenda() {
     return () => clearTimeout(timeout);
   }, [buscaPaciente]);
 
-  const carregarAtendimentos = useCallback(async () => {
-    setLoading(true);
+  // 🔥 carregarAtendimentos agora aceita parâmetro "silencioso"
+  const carregarAtendimentos = useCallback(async (silencioso = false) => {
+    if (!silencioso) setLoading(true);
     try {
       let start: Date, end: Date;
       if (view === "day") {
@@ -148,15 +149,33 @@ export default function Agenda() {
       if (error) throw error;
       setAtendimentos((data as any[]) || []);
     } catch (err: any) {
-      toast.error("Erro ao carregar agenda: " + err.message);
+      if (!silencioso) toast.error("Erro ao carregar agenda: " + err.message);
     } finally {
-      setLoading(false);
+      if (!silencioso) setLoading(false);
     }
   }, [view, currentDate, profFiltroUrl, profissionalId, isAdmin, isSecretaria]);
 
+  // Carrega ao abrir/alterar data/view
   useEffect(() => {
     carregarAtendimentos();
   }, [carregarAtendimentos]);
+
+  // 🔥 AUTO-REFRESH: a cada 5 minutos (pausa se sheet aberto)
+  useEffect(() => {
+    if (sheetOpen) return; // não atualiza se o usuário está trabalhando no sheet
+
+    const interval = setInterval(() => {
+      carregarAtendimentos(true); // silencioso
+    }, 5 * 60 * 1000); // 5 minutos
+
+    return () => clearInterval(interval);
+  }, [sheetOpen, carregarAtendimentos]);
+
+  // 🔥 REFRESH MANUAL: com feedback visual
+  const handleRefreshManual = async () => {
+    await carregarAtendimentos();
+    toast.success("Agenda atualizada!");
+  };
 
   const mapeamentoDias = useMemo(() => {
     const mapa = new Map<string, Atendimento[]>();
@@ -454,7 +473,10 @@ export default function Agenda() {
               {v === "day" ? "Dia" : v === "week" ? "Semana" : "Mês"}
             </Button>
           ))}
-          <Button variant="outline" size="icon" onClick={carregarAtendimentos} className="h-8 w-8 bg-white"><RefreshCw className="w-3.5 h-3.5" /></Button>
+          {/* 🔥 Botão de refresh manual com feedback */}
+          <Button variant="outline" size="icon" onClick={handleRefreshManual} className="h-8 w-8 bg-white">
+            <RefreshCw className="w-3.5 h-3.5" />
+          </Button>
         </div>
       </div>
 
