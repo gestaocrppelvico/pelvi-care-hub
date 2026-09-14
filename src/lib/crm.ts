@@ -35,17 +35,53 @@ export function telefoneWaMe(telefone: string | null | undefined): string | null
   return digits.startsWith("55") ? digits : `55${digits}`;
 }
 
+// ============================================================
+// PREFERÊNCIA DE ABERTURA DO WHATSAPP (App Desktop vs Navegador)
+// ============================================================
+
+export type PreferenciaWhatsApp = "app" | "web";
+
+const STORAGE_KEY = "crppelvico_whatsapp_preferencia";
+
+/** Lê a preferência salva no navegador. Padrão: 'web' */
+export function getPreferenciaWhatsApp(): PreferenciaWhatsApp {
+  try {
+    const salvo = localStorage.getItem(STORAGE_KEY);
+    if (salvo === "app" || salvo === "web") return salvo;
+  } catch {
+    // localStorage indisponível (modo anônimo, etc.)
+  }
+  return "web";
+}
+
+/** Salva a preferência no navegador */
+export function setPreferenciaWhatsApp(pref: PreferenciaWhatsApp): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, pref);
+  } catch {
+    // ignora
+  }
+}
+
 /**
  * Abre conversa no WhatsApp.
- * @param useWeb Se true, abre via WhatsApp Web (desktop). Se false, usa wa.me (app mobile).
+ * @param preferencia 'app' abre o aplicativo desktop (Windows).
+ *                    'web' abre o WhatsApp Web no navegador.
  */
-export function abrirWhatsapp(telefone: string | null | undefined, mensagem: string, useWeb = false): boolean {
+export function abrirWhatsapp(
+  telefone: string | null | undefined,
+  mensagem: string,
+  preferencia: PreferenciaWhatsApp = "web"
+): boolean {
   const tel = telefoneWaMe(telefone);
   if (!tel) return false;
   const encoded = encodeURIComponent(mensagem);
-  const url = useWeb
-    ? `https://web.whatsapp.com/send?phone=${tel}&text=${encoded}`
-    : `https://wa.me/${tel}?text=${encoded}`;
+
+  const url =
+    preferencia === "app"
+      ? `whatsapp://send?phone=${tel}&text=${encoded}`
+      : `https://web.whatsapp.com/send?phone=${tel}&text=${encoded}`;
+
   window.open(url, "_blank", "noopener,noreferrer");
   return true;
 }
