@@ -67,6 +67,9 @@ export default function Agenda() {
   const [temProntuario, setTemProntuario] = useState(false);
   const [prontuarioId, setProntuarioId] = useState<string | null>(null);
 
+  // 🔥 Estado para controlar a última atualização
+  const [ultimaAtualizacao, setUltimaAtualizacao] = useState<Date | null>(null);
+
   useEffect(() => {
     if (sheetOpen) {
       supabase.from("planos_saude").select("id, nome").eq("ativo", true).then(({ data }) => setListaPlanos(data || []));
@@ -116,7 +119,6 @@ export default function Agenda() {
     return () => clearTimeout(timeout);
   }, [buscaPaciente]);
 
-  // 🔥 carregarAtendimentos agora aceita parâmetro "silencioso"
   const carregarAtendimentos = useCallback(async (silencioso = false) => {
     if (!silencioso) setLoading(true);
     try {
@@ -155,25 +157,28 @@ export default function Agenda() {
     }
   }, [view, currentDate, profFiltroUrl, profissionalId, isAdmin, isSecretaria]);
 
-  // Carrega ao abrir/alterar data/view
   useEffect(() => {
     carregarAtendimentos();
   }, [carregarAtendimentos]);
 
-  // 🔥 AUTO-REFRESH: a cada 5 minutos (pausa se sheet aberto)
+  // 🔥 AUTO-REFRESH: a cada 1 minuto (para teste)
   useEffect(() => {
-    if (sheetOpen) return; // não atualiza se o usuário está trabalhando no sheet
+    if (sheetOpen) return;
 
     const interval = setInterval(() => {
-      carregarAtendimentos(true); // silencioso
-    }, 5 * 60 * 1000); // 5 minutos
+      carregarAtendimentos(true);
+      setUltimaAtualizacao(new Date());
+    }, 60 * 1000);
 
     return () => clearInterval(interval);
   }, [sheetOpen, carregarAtendimentos]);
 
-  // 🔥 REFRESH MANUAL: com feedback visual
+  // 🔥 REFRESH MANUAL com debug
   const handleRefreshManual = async () => {
+    alert("🔔 Botão de refresh clicado!");
     await carregarAtendimentos();
+    setUltimaAtualizacao(new Date());
+    alert("✅ Dados recarregados!");
     toast.success("Agenda atualizada!");
   };
 
@@ -466,6 +471,11 @@ export default function Agenda() {
           <h2 className="text-base font-bold capitalize text-slate-700 ml-1">
             {format(currentDate, view === "month" ? "MMMM 'de' yyyy" : "dd 'de' MMMM", { locale: ptBR })}
           </h2>
+          {ultimaAtualizacao && (
+            <span className="text-[10px] text-muted-foreground ml-2">
+              Atualizado às {format(ultimaAtualizacao, "HH:mm:ss")}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-lg self-stretch sm:self-auto">
           {(["day", "week", "month"] as const).map((v) => (
@@ -473,7 +483,6 @@ export default function Agenda() {
               {v === "day" ? "Dia" : v === "week" ? "Semana" : "Mês"}
             </Button>
           ))}
-          {/* 🔥 Botão de refresh manual com feedback */}
           <Button variant="outline" size="icon" onClick={handleRefreshManual} className="h-8 w-8 bg-white">
             <RefreshCw className="w-3.5 h-3.5" />
           </Button>
