@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { addDays, format, startOfDay, endOfDay, differenceInDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { toast } from "sonner";
-import { MessageCircle, Settings2, Cake, Clock, UserX, CalendarDays } from "lucide-react";
+import { MessageCircle, Settings2, Cake, Clock, UserX, CalendarDays, Smartphone, Globe } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,13 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { aplicarTemplate, abrirWhatsapp } from "@/lib/crm";
+import {
+  aplicarTemplate,
+  abrirWhatsapp,
+  getPreferenciaWhatsApp,
+  setPreferenciaWhatsApp,
+  type PreferenciaWhatsApp,
+} from "@/lib/crm";
 import { useAuth } from "@/hooks/useAuth";
 
 interface Template { tipo: string; nome: string; conteudo: string }
@@ -41,35 +47,48 @@ interface Aniversariante {
 }
 
 export default function Crm() {
-  const { isAdmin, isSecretaria } = useAuth();
+  const { isAdmin } = useAuth();
   const [templates, setTemplates] = useState<Record<string, Template>>({});
   const [diasInativo, setDiasInativo] = useState(45);
   const [amanha, setAmanha] = useState<AtendAmanha[]>([]);
   const [inativos, setInativos] = useState<PacienteInativo[]>([]);
   const [niver, setNiver] = useState<Aniversariante[]>([]);
   const [loading, setLoading] = useState(true);
-  
-  // Guardamos a data que o sistema calculou para monitorização visual
   const [dataAlvoExibicao, setDataAlvoExibicao] = useState<Date>(new Date());
+
+  // 🔥 Preferência de abertura do WhatsApp (app ou web)
+  const [preferencia, setPreferencia] = useState<PreferenciaWhatsApp>("web");
+
+  // Carrega a preferência salva ao abrir
+  useEffect(() => {
+    setPreferencia(getPreferenciaWhatsApp());
+  }, []);
+
+  function trocarPreferencia(nova: PreferenciaWhatsApp) {
+    setPreferencia(nova);
+    setPreferenciaWhatsApp(nova);
+    toast.success(
+      nova === "app"
+        ? "WhatsApp abrirá no aplicativo do computador"
+        : "WhatsApp abrirá no navegador (Web)"
+    );
+  }
 
   async function carregar() {
     setLoading(true);
     const hoje = new Date();
-    const diaSemana = hoje.getDay(); // 0 = Domingo, 5 = Sexta, 6 = Sábado
+    const diaSemana = hoje.getDay();
 
-    // LÓGICA DA DATA INTELIGENTE PARA O CRM
     let tomorrow = addDays(hoje, 1);
-    if (diaSemana === 5) tomorrow = addDays(hoje, 3); // Se for Sexta, pula para Segunda (+3 dias)
-    if (diaSemana === 6) tomorrow = addDays(hoje, 2); // Se for Sábado, pula para Segunda (+2 dias)
-    if (diaSemana === 0) tomorrow = addDays(hoje, 1); // Se for Domingo, mantém Segunda (+1 dia)
+    if (diaSemana === 5) tomorrow = addDays(hoje, 3);
+    if (diaSemana === 6) tomorrow = addDays(hoje, 2);
+    if (diaSemana === 0) tomorrow = addDays(hoje, 1);
 
     setDataAlvoExibicao(tomorrow);
-
     const todayMonthDay = format(hoje, "MM-dd");
 
     const [tpl, atAmanha, pacientes, atendsHist] = await Promise.all([
       supabase.from("crm_templates").select("tipo, nome, conteudo").eq("ativo", true),
-      
       supabase
         .from("atendimentos")
         .select(`
@@ -83,18 +102,13 @@ export default function Crm() {
         .gte("data_inicio", startOfDay(tomorrow).toISOString())
         .lte("data_inicio", endOfDay(tomorrow).toISOString())
         .in("status", ["agendado"]),
-        
-      supabase
-        .from("pacientes")
-        .select("id, nome, telefone, data_nascimento")
-        .eq("ativo", true),
-        
+      supabase.from("pacientes").select("id, nome, telefone, data_nascimento").eq("ativo", true),
       supabase
         .from("atendimentos")
         .select("paciente_id, data_inicio, status")
         .not("paciente_id", "is", null)
         .order("data_inicio", { ascending: false })
-        .limit(50000), 
+        .limit(50000),
     ]);
 
     const tplMap: Record<string, Template> = {};
@@ -106,7 +120,6 @@ export default function Crm() {
     (atendsHist.data ?? []).forEach((a: any) => {
       const statusDaSessao = (a.status || "").toLowerCase();
       const ehSessaoInvalida = ["cancelado", "falta", "ausente", "remarcado"].includes(statusDaSessao);
-      
       if (!ehSessaoInvalida && a.paciente_id && !ultPorPac.has(a.paciente_id)) {
         ultPorPac.set(a.paciente_id, a.data_inicio);
       }
@@ -117,7 +130,6 @@ export default function Crm() {
     (pacientes.data ?? []).forEach((p) => {
       const ult = ultPorPac.get(p.id) ?? null;
       const dias = ult ? differenceInDays(hoje, new Date(ult)) : 9999;
-      
       if (dias >= diasInativo) {
         inat.push({ id: p.id, nome: p.nome, telefone: p.telefone, ultima: ult, dias });
       }
@@ -162,11 +174,10 @@ export default function Crm() {
       profissional: a.profissional?.nome ?? "",
     });
 
-    if (!abrirWhatsapp(telefone, msg, isSecretaria)) {
+    if (!abrirWhatsapp(telefone, msg, preferencia)) {
       toast.error("Erro ao abrir o WhatsApp");
       return;
     }
-    
     if (a.paciente?.id) {
       logEnvio(a.paciente.id, "lembrete", msg);
     }
@@ -179,7 +190,7 @@ export default function Crm() {
       paciente: p.nome.split(" ")[0],
       dias_sem_atendimento: p.dias,
     });
-    if (!abrirWhatsapp(p.telefone, msg, isSecretaria)) { toast.error("Paciente sem telefone"); return; }
+    if (!abrirWhatsapp(p.telefone, msg, preferencia)) { toast.error("Paciente sem telefone"); return; }
     logEnvio(p.id, "retorno", msg);
     toast.success("WhatsApp aberto");
   }
@@ -187,7 +198,7 @@ export default function Crm() {
   function enviarNiver(p: Aniversariante) {
     const tpl = templates["aniversario"]?.conteudo ?? "Feliz aniversário, {paciente}!";
     const msg = aplicarTemplate(tpl, { paciente: p.nome.split(" ")[0] });
-    if (!abrirWhatsapp(p.telefone, msg, isSecretaria)) { toast.error("Paciente sem telefone"); return; }
+    if (!abrirWhatsapp(p.telefone, msg, preferencia)) { toast.error("Paciente sem telefone"); return; }
     logEnvio(p.id, "aniversario", msg);
     toast.success("WhatsApp aberto");
   }
@@ -205,6 +216,32 @@ export default function Crm() {
         )}
       </div>
 
+      {/* 🔥 TOGGLE: escolha onde abrir o WhatsApp */}
+      <Card className="p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-slate-50/70 border-slate-200">
+        <div className="flex items-center gap-2 text-xs">
+          <MessageCircle className="w-4 h-4 text-primary" />
+          <span className="font-semibold text-slate-700">Abrir WhatsApp em:</span>
+        </div>
+        <div className="flex items-center gap-1 bg-white p-1 rounded-lg border shadow-sm">
+          <Button
+            size="sm"
+            variant={preferencia === "app" ? "default" : "ghost"}
+            onClick={() => trocarPreferencia("app")}
+            className="h-8 text-xs"
+          >
+            <Smartphone className="w-3.5 h-3.5 mr-1" /> Aplicativo
+          </Button>
+          <Button
+            size="sm"
+            variant={preferencia === "web" ? "default" : "ghost"}
+            onClick={() => trocarPreferencia("web")}
+            className="h-8 text-xs"
+          >
+            <Globe className="w-3.5 h-3.5 mr-1" /> Navegador
+          </Button>
+        </div>
+      </Card>
+
       <Tabs defaultValue="lembretes" className="w-full">
         <TabsList className="w-full grid grid-cols-3">
           <TabsTrigger value="lembretes" className="text-xs">
@@ -221,10 +258,7 @@ export default function Crm() {
           </TabsTrigger>
         </TabsList>
 
-        {/* Lembretes Inteligentes */}
         <TabsContent value="lembretes" className="space-y-2 mt-4">
-          
-          {/* Identificador de Data Dinâmica */}
           {!loading && (
             <div className="flex items-center gap-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg p-2.5 text-xs font-medium shadow-sm mb-3">
               <CalendarDays className="w-4 h-4 text-blue-600 shrink-0" />
@@ -259,7 +293,6 @@ export default function Crm() {
            ))}
         </TabsContent>
 
-        {/* Pacientes inativos */}
         <TabsContent value="inativos" className="space-y-3 mt-4">
           <div className="flex items-end gap-2">
             <div className="flex-1 space-y-1">
@@ -289,7 +322,6 @@ export default function Crm() {
            ))}
         </TabsContent>
 
-        {/* Aniversariantes */}
         <TabsContent value="niver" className="space-y-2 mt-4">
           {loading ? <p className="text-center text-muted-foreground py-6">Carregando...</p> :
            niver.length === 0 ? <Card className="p-6 text-center text-muted-foreground">Nenhum aniversariante hoje.</Card> :
