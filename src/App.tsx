@@ -1,4 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { Toaster as Sonner } from "@/components/ui/sonner";
+import { Toaster } from "@/components/ui/toaster";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Layout } from "@/components/Layout";
 import Auth from "@/pages/Auth";
@@ -21,6 +23,10 @@ import Configuracoes from "@/pages/Configuracoes";
 function App() {
   return (
     <BrowserRouter>
+      {/* 🔥 Toasters renderizados FORA das Routes */}
+      <Toaster />
+      <Sonner />
+      
       <Routes>
         <Route path="/auth" element={<Auth />} />
         <Route element={<ProtectedRoute />}>
