@@ -628,7 +628,7 @@ export default function Agenda() {
                       size="sm"
                       variant="outline"
                       className="flex-1 text-xs border-blue-300 text-blue-700 hover:bg-blue-50"
-                      onClick={() => navigate(`/paciente/${selectedAtend.paciente_id}/anamnese/nova`)}
+                      onClick={() => navigate(`/pacientes/${selectedAtend.paciente_id}/anamnese/nova`)}
                     >
                       <Plus className="w-3.5 h-3.5 mr-1" /> Anamnese
                     </Button>
@@ -636,7 +636,7 @@ export default function Agenda() {
                       size="sm"
                       variant="outline"
                       className="flex-1 text-xs border-blue-300 text-blue-700 hover:bg-blue-50"
-                      onClick={() => navigate(`/paciente/${selectedAtend.paciente_id}/evolucao/nova?atendimento=${selectedAtend.id}`)}
+                      onClick={() => navigate(`/pacientes/${selectedAtend.paciente_id}/evolucao/nova?atendimento=${selectedAtend.id}`)}
                     >
                       <ClipboardEdit className="w-3.5 h-3.5 mr-1" /> Evolução
                     </Button>
@@ -645,7 +645,7 @@ export default function Agenda() {
                         size="sm"
                         variant="outline"
                         className="flex-1 text-xs border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-                        onClick={() => navigate(`/paciente/${selectedAtend.paciente_id}/prontuario/${prontuarioId}`)}
+                        onClick={() => navigate(`/pacientes/${selectedAtend.paciente_id}/prontuario/${prontuarioId}`)}
                       >
                         <Eye className="w-3.5 h-3.5 mr-1" /> Ver
                       </Button>
