@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { addDays, format, startOfDay, endOfDay, differenceInDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { toast } from "sonner";
-import { MessageCircle, Settings2, Cake, Clock, UserX, CalendarDays, Smartphone, Globe } from "lucide-react";
+import { MessageCircle, Settings2, Cake, Clock, UserX, CalendarDays, Smartphone, Globe, RefreshCw } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -59,6 +59,9 @@ export default function Crm() {
   // 🔥 Preferência de abertura do WhatsApp (app ou web)
   const [preferencia, setPreferencia] = useState<PreferenciaWhatsApp>("web");
 
+  // 🔥 Última atualização
+  const [ultimaAtualizacao, setUltimaAtualizacao] = useState<Date | null>(null);
+
   // Carrega a preferência salva ao abrir
   useEffect(() => {
     setPreferencia(getPreferenciaWhatsApp());
@@ -74,76 +77,98 @@ export default function Crm() {
     );
   }
 
-  async function carregar() {
-    setLoading(true);
-    const hoje = new Date();
-    const diaSemana = hoje.getDay();
+  // 🔥 carregar agora aceita parâmetro "silencioso"
+  const carregar = useCallback(async (silencioso = false) => {
+    if (!silencioso) setLoading(true);
+    try {
+      const hoje = new Date();
+      const diaSemana = hoje.getDay();
 
-    let tomorrow = addDays(hoje, 1);
-    if (diaSemana === 5) tomorrow = addDays(hoje, 3);
-    if (diaSemana === 6) tomorrow = addDays(hoje, 2);
-    if (diaSemana === 0) tomorrow = addDays(hoje, 1);
+      let tomorrow = addDays(hoje, 1);
+      if (diaSemana === 5) tomorrow = addDays(hoje, 3);
+      if (diaSemana === 6) tomorrow = addDays(hoje, 2);
+      if (diaSemana === 0) tomorrow = addDays(hoje, 1);
 
-    setDataAlvoExibicao(tomorrow);
-    const todayMonthDay = format(hoje, "MM-dd");
+      setDataAlvoExibicao(tomorrow);
+      const todayMonthDay = format(hoje, "MM-dd");
 
-    const [tpl, atAmanha, pacientes, atendsHist] = await Promise.all([
-      supabase.from("crm_templates").select("tipo, nome, conteudo").eq("ativo", true),
-      supabase
-        .from("atendimentos")
-        .select(`
-          id, 
-          data_inicio, 
-          nome_paciente_livre, 
-          telefone_contato, 
-          paciente:pacientes(id, nome, telefone), 
-          profissional:profissionais(nome)
-        `)
-        .gte("data_inicio", startOfDay(tomorrow).toISOString())
-        .lte("data_inicio", endOfDay(tomorrow).toISOString())
-        .in("status", ["agendado"]),
-      supabase.from("pacientes").select("id, nome, telefone, data_nascimento").eq("ativo", true),
-      supabase
-        .from("atendimentos")
-        .select("paciente_id, data_inicio, status")
-        .not("paciente_id", "is", null)
-        .order("data_inicio", { ascending: false })
-        .limit(50000),
-    ]);
+      const [tpl, atAmanha, pacientes, atendsHist] = await Promise.all([
+        supabase.from("crm_templates").select("tipo, nome, conteudo").eq("ativo", true),
+        supabase
+          .from("atendimentos")
+          .select(`
+            id, 
+            data_inicio, 
+            nome_paciente_livre, 
+            telefone_contato, 
+            paciente:pacientes(id, nome, telefone), 
+            profissional:profissionais(nome)
+          `)
+          .gte("data_inicio", startOfDay(tomorrow).toISOString())
+          .lte("data_inicio", endOfDay(tomorrow).toISOString())
+          .in("status", ["agendado"])
+          .order("data_inicio", { ascending: true }), // 🔥 ORDENADO POR HORÁRIO
+        supabase.from("pacientes").select("id, nome, telefone, data_nascimento").eq("ativo", true),
+        supabase
+          .from("atendimentos")
+          .select("paciente_id, data_inicio, status")
+          .not("paciente_id", "is", null)
+          .order("data_inicio", { ascending: false })
+          .limit(50000),
+      ]);
 
-    const tplMap: Record<string, Template> = {};
-    (tpl.data ?? []).forEach((t: any) => { tplMap[t.tipo] = t; });
-    setTemplates(tplMap);
-    setAmanha((atAmanha.data as any) ?? []);
+      const tplMap: Record<string, Template> = {};
+      (tpl.data ?? []).forEach((t: any) => { tplMap[t.tipo] = t; });
+      setTemplates(tplMap);
+      setAmanha((atAmanha.data as any) ?? []);
 
-    const ultPorPac = new Map<string, string>();
-    (atendsHist.data ?? []).forEach((a: any) => {
-      const statusDaSessao = (a.status || "").toLowerCase();
-      const ehSessaoInvalida = ["cancelado", "falta", "ausente", "remarcado"].includes(statusDaSessao);
-      if (!ehSessaoInvalida && a.paciente_id && !ultPorPac.has(a.paciente_id)) {
-        ultPorPac.set(a.paciente_id, a.data_inicio);
-      }
-    });
+      const ultPorPac = new Map<string, string>();
+      (atendsHist.data ?? []).forEach((a: any) => {
+        const statusDaSessao = (a.status || "").toLowerCase();
+        const ehSessaoInvalida = ["cancelado", "falta", "ausente", "remarcado"].includes(statusDaSessao);
+        if (!ehSessaoInvalida && a.paciente_id && !ultPorPac.has(a.paciente_id)) {
+          ultPorPac.set(a.paciente_id, a.data_inicio);
+        }
+      });
 
-    const inat: PacienteInativo[] = [];
-    const niverList: Aniversariante[] = [];
-    (pacientes.data ?? []).forEach((p) => {
-      const ult = ultPorPac.get(p.id) ?? null;
-      const dias = ult ? differenceInDays(hoje, new Date(ult)) : 9999;
-      if (dias >= diasInativo) {
-        inat.push({ id: p.id, nome: p.nome, telefone: p.telefone, ultima: ult, dias });
-      }
-      if (p.data_nascimento && p.data_nascimento.slice(5) === todayMonthDay) {
-        niverList.push({ id: p.id, nome: p.nome, telefone: p.telefone, data_nascimento: p.data_nascimento });
-      }
-    });
-    inat.sort((a, b) => b.dias - a.dias);
-    setInativos(inat);
-    setNiver(niverList);
-    setLoading(false);
-  }
+      const inat: PacienteInativo[] = [];
+      const niverList: Aniversariante[] = [];
+      (pacientes.data ?? []).forEach((p) => {
+        const ult = ultPorPac.get(p.id) ?? null;
+        const dias = ult ? differenceInDays(hoje, new Date(ult)) : 9999;
+        if (dias >= diasInativo) {
+          inat.push({ id: p.id, nome: p.nome, telefone: p.telefone, ultima: ult, dias });
+        }
+        if (p.data_nascimento && p.data_nascimento.slice(5) === todayMonthDay) {
+          niverList.push({ id: p.id, nome: p.nome, telefone: p.telefone, data_nascimento: p.data_nascimento });
+        }
+      });
+      inat.sort((a, b) => b.dias - a.dias);
+      setInativos(inat);
+      setNiver(niverList);
+      setUltimaAtualizacao(new Date());
+    } catch (err: any) {
+      if (!silencioso) toast.error("Erro ao carregar CRM: " + err.message);
+    } finally {
+      if (!silencioso) setLoading(false);
+    }
+  }, [diasInativo]);
 
-  useEffect(() => { carregar(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [diasInativo]);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  // 🔥 AUTO-REFRESH a cada 2 minutos
+  useEffect(() => {
+    const interval = setInterval(() => {
+      carregar(true); // silencioso
+    }, 2 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [carregar]);
+
+  // 🔥 Refresh manual com feedback
+  const handleRefreshManual = async () => {
+    await carregar();
+    toast.success("CRM atualizado!");
+  };
 
   async function logEnvio(paciente_id: string, tipo: string, mensagem: string) {
     await supabase.from("crm_envios").insert({ paciente_id, tipo, mensagem });
@@ -205,15 +230,35 @@ export default function Crm() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <MessageCircle className="w-6 h-6 text-primary" /> CRM
-        </h1>
-        {isAdmin && (
-          <Button asChild size="sm" variant="outline">
-            <Link to="/crm/templates"><Settings2 className="w-4 h-4 mr-1" /> Templates</Link>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <MessageCircle className="w-6 h-6 text-primary" /> CRM
+          </h1>
+          {/* 🔥 Indicador de última atualização */}
+          {ultimaAtualizacao && (
+            <span className="text-[10px] text-muted-foreground">
+              Atualizado às {format(ultimaAtualizacao, "HH:mm:ss")}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {/* 🔥 Botão de refresh manual */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleRefreshManual}
+            className="h-8"
+            title="Atualizar agora"
+          >
+            <RefreshCw className="w-3.5 h-3.5 mr-1" /> Atualizar
           </Button>
-        )}
+          {isAdmin && (
+            <Button asChild size="sm" variant="outline">
+              <Link to="/crm/templates"><Settings2 className="w-4 h-4 mr-1" /> Templates</Link>
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* 🔥 TOGGLE: escolha onde abrir o WhatsApp */}
