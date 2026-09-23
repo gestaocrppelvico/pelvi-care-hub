@@ -55,7 +55,7 @@ function App() {
             <Route path="/financeiro/servicos" element={<FinanceiroServicos />} />
             <Route path="/financeiro/repasses" element={<FinanceiroRepasses />} />
             <Route path="/financeiro/vincular" element={<VinculoPacientes />} />
-            <Route path="/pagamentos" element={<Pagamentos />} />
+            <Route path="/financeiro/pagamentos" element={<Pagamentos />} />
             
             {/* ============ OUTRAS ============ */}
             <Route path="/medicos" element={<Medicos />} />
