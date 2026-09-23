@@ -286,7 +286,7 @@ export default function PacienteDetalhe() {
                                     size="sm" 
                                     variant="ghost" 
                                     className="h-6 px-2 text-xs"
-                                    onClick={() => navigate(`/paciente/${id}/prontuario/${prontuarioId}`)}
+                                    onClick={() => navigate(`/pacientes/${id}/prontuario/${prontuarioId}`)}
                                   >
                                     <Eye className="w-3 h-3 mr-1" /> Ver
                                   </Button>
@@ -300,7 +300,7 @@ export default function PacienteDetalhe() {
                                     size="sm" 
                                     variant="outline" 
                                     className="h-6 px-2 text-xs bg-blue-50 hover:bg-blue-100 border-blue-300 text-blue-700"
-                                    onClick={() => navigate(`/paciente/${id}/evolucao/nova?atendimento=${a.id}`)}
+                                    onClick={() => navigate(`/pacientes/${id}/evolucao/nova?atendimento=${a.id}`)}
                                   >
                                     <ClipboardEdit className="w-3 h-3 mr-1" /> Evoluir
                                   </Button>
@@ -331,10 +331,10 @@ export default function PacienteDetalhe() {
               </div>
               <div className="flex flex-wrap gap-2 justify-center">
                 <Button asChild className="bg-blue-600 hover:bg-blue-700">
-                  <Link to={`/paciente/${id}/anamnese/nova`}><Plus className="w-4 h-4 mr-2" /> Nova Anamnese</Link>
+                  <Link to={`/pacientes/${id}/anamnese/nova`}><Plus className="w-4 h-4 mr-2" /> Nova Anamnese</Link>
                 </Button>
                 <Button asChild variant="outline">
-                  <Link to={`/paciente/${id}/evolucao/nova`}><ClipboardEdit className="w-4 h-4 mr-2" /> Primeira Evolução</Link>
+                  <Link to={`/pacientes/${id}/evolucao/nova`}><ClipboardEdit className="w-4 h-4 mr-2" /> Primeira Evolução</Link>
                 </Button>
               </div>
             </Card>
@@ -347,11 +347,11 @@ export default function PacienteDetalhe() {
                 <div className="flex flex-wrap gap-2">
                   {!anamnese && (
                     <Button asChild size="sm" variant="outline" className="border-blue-300 text-blue-700">
-                      <Link to={`/paciente/${id}/anamnese/nova`}><Plus className="w-4 h-4 mr-1" /> Nova Anamnese</Link>
+                      <Link to={`/pacientes/${id}/anamnese/nova`}><Plus className="w-4 h-4 mr-1" /> Nova Anamnese</Link>
                     </Button>
                   )}
                   <Button asChild size="sm" variant="outline">
-                    <Link to={`/paciente/${id}/evolucao/nova`}><Plus className="w-4 h-4 mr-1" /> Nova Evolução</Link>
+                    <Link to={`/pacientes/${id}/evolucao/nova`}><Plus className="w-4 h-4 mr-1" /> Nova Evolução</Link>
                   </Button>
                 </div>
               </div>
@@ -374,7 +374,7 @@ export default function PacienteDetalhe() {
                         size="sm" 
                         variant="ghost" 
                         className="h-7 px-2 text-xs"
-                        onClick={() => navigate(`/paciente/${id}/prontuario/${anamnese.id}`)}
+                        onClick={() => navigate(`/pacientes/${id}/prontuario/${anamnese.id}`)}
                       >
                         <Eye className="w-3 h-3 mr-1" /> Ver
                       </Button>
@@ -382,7 +382,7 @@ export default function PacienteDetalhe() {
                         size="sm" 
                         variant="outline" 
                         className="h-7 px-2 text-xs border-blue-300 text-blue-700 hover:bg-blue-50"
-                        onClick={() => navigate(`/paciente/${id}/anamnese/editar/${anamnese.id}`)}
+                        onClick={() => navigate(`/pacientes/${id}/anamnese/editar/${anamnese.id}`)}
                       >
                         <Pencil className="w-3 h-3 mr-1" /> Editar
                       </Button>
@@ -418,7 +418,7 @@ export default function PacienteDetalhe() {
                         size="sm" 
                         variant="ghost" 
                         className="h-7 px-2 text-xs"
-                        onClick={() => navigate(`/paciente/${id}/prontuario/${p.id}`)}
+                        onClick={() => navigate(`/pacientes/${id}/prontuario/${p.id}`)}
                       >
                         <Eye className="w-3 h-3 mr-1" /> Ver
                       </Button>
