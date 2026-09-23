@@ -30,11 +30,9 @@ interface DashData {
   topProfissionais: { nome: string; count: number }[];
   topServicos: { nome: string; count: number }[];
   atendimentosPorDia: { dia: string; count: number }[];
-  // 🔥 NOVOS CAMPOS
   avaliacoesMes: number;
   novosTratamentosMes: number;
   novosTratamentosManual: number;
-  // 🔥 DADOS PARA O GRÁFICO DE LINHA DETALHADO
   dadosGraficoLinha: { dia: string; agendados: number; realizados: number }[];
 }
 
@@ -92,26 +90,22 @@ export default function AdminDashboard() {
       supabase.from("paciente_pacotes").select("id, sessoes_restantes").gt("sessoes_restantes", 0),
       supabase.from("estoque_insumos").select("id, quantidade_atual, quantidade_minima"),
       supabase.from("pagamentos").select("valor, data_pagamento").gte("data_pagamento", format(startOfMonth(now), "yyyy-MM-dd")).lte("data_pagamento", format(endOfMonth(now), "yyyy-MM-dd")),
-      // Avaliações no mês
       supabase.from("atendimentos")
         .select("id", { count: "exact", head: true })
         .eq("servico_id", servicoAvaliacaoId || "")
         .eq("status", "realizado")
         .gte("data_inicio", mesStart)
         .lte("data_inicio", mesEnd),
-      // Pacientes com data_inicio_tratamento no mês (manual)
       supabase.from("pacientes")
         .select("id")
         .gte("data_inicio_tratamento", format(startOfMonth(now), "yyyy-MM-dd"))
         .lte("data_inicio_tratamento", format(endOfMonth(now), "yyyy-MM-dd")),
-      // Pacientes que fizeram avaliação no mês
       supabase.from("atendimentos")
         .select("paciente_id")
         .eq("servico_id", servicoAvaliacaoId || "")
         .eq("status", "realizado")
         .gte("data_inicio", mesStart)
         .lte("data_inicio", mesEnd),
-      // Pacientes que fizeram sessão de tratamento (excluindo avaliação) no mês
       servicoAvaliacaoId ? supabase.from("atendimentos")
         .select("paciente_id")
         .not("servico_id", "eq", servicoAvaliacaoId)
@@ -134,7 +128,7 @@ export default function AdminDashboard() {
 
     const alertas = (estoqueData ?? []).filter((i) => Number(i.quantidade_atual) <= Number(i.quantidade_minima)).length;
 
-    // 🔥 Lógica de Novos Tratamentos
+    // Lógica de Novos Tratamentos
     const manualCount = pacientesManual?.length || 0;
     const pacientesComAvaliacao = pacientesAvaliacao?.map(a => a.paciente_id) || [];
     const pacientesComSessao = pacientesSessao?.map(a => a.paciente_id) || [];
@@ -160,33 +154,24 @@ export default function AdminDashboard() {
     });
     const topServ = [...servMap.entries()].map(([nome, count]) => ({ nome, count })).sort((a, b) => b.count - a.count).slice(0, 5);
 
-    // 🔥 Atendimentos por dia (últimos 14 dias) - com detalhamento de status
-    const porDiaMap: Record<string, { agendados: number; realizados: number }> = {};
+    // 🔥 CORREÇÃO: Array em vez de objeto, já ordenado cronologicamente
+    const porDiaDetalhado: { dia: string; agendados: number; realizados: number }[] = [];
+
     for (let i = 13; i >= 0; i--) {
-      const dia = format(subDays(now, i), "yyyy-MM-dd");
-      const label = format(subDays(now, i), "dd/MM");
-      // Filtrar atendimentos do dia
-      const diaAtendimentos = atendMes.filter((a) => a.data_inicio.startsWith(dia));
+      const dataRef = subDays(now, i);
+      const diaISO = format(dataRef, "yyyy-MM-dd");
+      const label = format(dataRef, "dd/MM");
+
+      const diaAtendimentos = atendMes.filter((a) => a.data_inicio.startsWith(diaISO));
       const agendadosCount = diaAtendimentos.filter(a => a.status === "agendado").length;
       const realizadosCount = diaAtendimentos.filter(a => a.status === "realizado").length;
-      porDiaMap[label] = { agendados: agendadosCount, realizados: realizadosCount };
+
+      porDiaDetalhado.push({
+        dia: label,
+        agendados: agendadosCount,
+        realizados: realizadosCount,
+      });
     }
-
-    // Converter para array ordenado
-    const porDiaDetalhado = Object.entries(porDiaMap).map(([dia, counts]) => ({
-      dia,
-      agendados: counts.agendados,
-      realizados: counts.realizados,
-    }));
-
-    // Ordenar por data (assumindo que as chaves estão no formato "dd/MM")
-    porDiaDetalhado.sort((a, b) => {
-      const [aDia, aMes] = a.dia.split('/');
-      const [bDia, bMes] = b.dia.split('/');
-      const aDate = new Date(now.getFullYear(), parseInt(aMes) - 1, parseInt(aDia));
-      const bDate = new Date(now.getFullYear(), parseInt(bMes) - 1, parseInt(bDia));
-      return aDate.getTime() - bDate.getTime();
-    });
 
     // Atendimentos por dia (total, para compatibilidade com outros gráficos)
     const porDiaTotal = porDiaDetalhado.map(item => ({
@@ -231,9 +216,6 @@ export default function AdminDashboard() {
   const maxDia = Math.max(...d.atendimentosPorDia.map((x) => x.count), 1);
   const taxaRealizacao = d.atendimentosMes > 0 ? Math.round((d.realizadosMes / d.atendimentosMes) * 100) : 0;
 
-  // Dados para o gráfico de pizza de planos
-  // Aqui você pode adaptar para mostrar a distribuição de planos
-  // Vamos criar um exemplo com base nos dados que você tem
   const planosData = [
     { name: 'Particular', value: d.pacientesAtivos * 0.3 },
     { name: 'TRT6 Saúde', value: d.pacientesAtivos * 0.2 },
@@ -252,7 +234,7 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* 🔥 NOVOS CARDS: Avaliações e Novos Tratamentos */}
+      {/* NOVOS CARDS: Avaliações e Novos Tratamentos */}
       <div className="grid grid-cols-2 gap-3">
         <KPI icon={FileText} label="Avaliações no mês" value={d.avaliacoesMes} />
         <KPI icon={TrendingUp} label="Novos tratamentos no mês" value={d.novosTratamentosMes} />
@@ -285,7 +267,7 @@ export default function AdminDashboard() {
         </div>
       </Card>
 
-      {/* 🔥 GRÁFICO DE LINHA ATUALIZADO: Agendados vs Realizados */}
+      {/* GRÁFICO DE LINHA: Agendados vs Realizados */}
       <Card className="p-4 space-y-3">
         <h2 className="font-semibold text-sm">Curva de Atendimentos — Agendados vs Realizados</h2>
         <div className="h-64">
@@ -319,7 +301,7 @@ export default function AdminDashboard() {
         </div>
       </Card>
 
-      {/* Restante do dashboard (repasses, rankings, resumo geral) mantido */}
+      {/* Repasses do mês */}
       <Card className="p-4 space-y-2">
         <h2 className="font-semibold text-sm">Repasses do mês</h2>
         <div className="grid grid-cols-2 gap-3">
@@ -334,6 +316,7 @@ export default function AdminDashboard() {
         </div>
       </Card>
 
+      {/* Rankings */}
       <div className="grid grid-cols-1 gap-3">
         {d.topProfissionais.length > 0 && (
           <Card className="p-4 space-y-2">
@@ -359,6 +342,7 @@ export default function AdminDashboard() {
         )}
       </div>
 
+      {/* Resumo geral */}
       <Card className="p-4 space-y-2">
         <h2 className="font-semibold text-sm">Resumo geral</h2>
         <div className="grid grid-cols-2 gap-y-2 text-sm">
