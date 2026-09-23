@@ -51,7 +51,7 @@ export default function VisualizarProntuario() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => navigate(`/paciente/${pacienteId}/evolucao/editar/${prontuarioId}`)}
+            onClick={() => navigate(`/pacientes/${pacienteId}/evolucao/editar/${prontuarioId}`)}
           >
             <Pencil className="w-4 h-4 mr-2" /> Editar
           </Button>
