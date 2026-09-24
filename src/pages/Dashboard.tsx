@@ -50,7 +50,6 @@ export default function Dashboard() {
   const [totalPac, setTotalPac] = useState(0);
   const [pacAtivos, setPacAtivos] = useState(0);
   const [totalProf, setTotalProf] = useState(0);
-  // 🔥 NOVOS: Atendimentos hoje (previstos + realizados)
   const [atendPrevistosHoje, setAtendPrevistosHoje] = useState(0);
   const [atendRealizadosHoje, setAtendRealizadosHoje] = useState(0);
   const [repassesPend, setRepassesPend] = useState(0);
@@ -140,7 +139,7 @@ export default function Dashboard() {
           { count: totalPacCount },
           { count: pacAtivosCount },
           { count: totalProfCount },
-          { data: atendHojeData }, // 🔥 mudou: agora pega data e status
+          { data: atendHojeData },
           { data: repassesData },
           { count: medCount },
           { data: medVisitados },
@@ -161,7 +160,6 @@ export default function Dashboard() {
           supabase.from("pacientes").select("id", { count: "exact", head: true }),
           supabase.from("pacientes").select("id", { count: "exact", head: true }).eq("ativo", true),
           supabase.from("profissionais").select("id", { count: "exact", head: true }).eq("ativo", true),
-          // 🔥 NOVO: busca hoje com status
           supabase.from("atendimentos").select("id, status").gte("data_inicio", inicioDia).lte("data_inicio", fimDia),
           supabase.from("repasses_atendimento").select("id, valor_repasse, status").gte("created_at", inicioPeriodo).lte("created_at", fimPeriodo),
           supabase.from("medicos").select("id", { count: "exact", head: true }),
@@ -179,7 +177,6 @@ export default function Dashboard() {
         const atendPeriodo = resAtendPeriodo.data ?? [];
         const realizados = atendPeriodo.filter((a) => a.status === "realizado");
 
-        // 🔥 NOVO: calcular previstos e realizados hoje
         const atendHojeLista = atendHojeData ?? [];
         const previstosHoje = atendHojeLista.length;
         const realizadosHoje = atendHojeLista.filter((a) => a.status === "realizado").length;
@@ -275,7 +272,6 @@ export default function Dashboard() {
         setTotalPac(totalPacCount ?? 0);
         setPacAtivos(pacAtivosCount ?? 0);
         setTotalProf(totalProfCount ?? 0);
-        // 🔥 NOVO
         setAtendPrevistosHoje(previstosHoje);
         setAtendRealizadosHoje(realizadosHoje);
 
@@ -465,4 +461,190 @@ export default function Dashboard() {
       </h2>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {/* 🔥 NOVO: Previstos hoje */}
+        <KPI icon={Calendar} label="Atend. previstos hoje" value={atendPrevistosHoje} />
+        <KPI icon={CheckCircle} label="Realizados hoje" value={`${atendRealizadosHoje} (${percentualHoje}%)`} />
+        <KPI icon={TrendingUp} label="Atend. no período" value={atendimentosPeriodo.length} />
+        <KPI icon={Users} label="Pacientes ativos" value={pacAtivos} />
+        <KPI icon={DollarSign} label="Faturamento" value={`R$ ${faturamento.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`} />
+        <KPI icon={FileText} label="Avaliações" value={avaliacoes} />
+        <KPI icon={TrendingUp} label="Novos tratamentos" value={novosTratamentos} />
+        <KPI icon={Award} label="Altas fisioterapêuticas" value={altas} />
+        <KPI icon={Activity} label="Repasses pagos" value={`R$ ${repassesPg.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`} />
+      </div>
+
+      {novosTratamentosManual > 0 && (
+        <div className="text-xs text-muted-foreground text-center -mt-1">
+          * {novosTratamentosManual} pacientes de plano com início manual
+        </div>
+      )}
+
+      <Card className="p-4 space-y-2">
+        <div className="flex justify-between text-sm">
+          <span className="text-muted-foreground">Taxa de realização — {labelPeriodo}</span>
+          <span className="font-bold">{taxaRealizacao}%</span>
+        </div>
+        <Progress value={taxaRealizacao} className="h-3" />
+        <div className="flex gap-4 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-primary" /> {totalRealizados} realizados</span>
+          <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {totalAgendados} agendados</span>
+          <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-destructive" /> {totalCancelados} cancelados</span>
+        </div>
+      </Card>
+
+      {/* ===== 3º ANDAR: GRÁFICOS ===== */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card className="p-4 shadow-sm">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-4 text-center">Curva de Atendimentos — {labelPeriodo}</h3>
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={dadosGraficoMensal}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="dia" tick={{fontSize: 10}} tickLine={false} axisLine={false} />
+                <YAxis tick={{fontSize: 10}} tickLine={false} axisLine={false} />
+                <ChartTooltip contentStyle={{ borderRadius: '8px', fontSize: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                <Line type="monotone" dataKey="Atendimentos" stroke="#4f46e5" strokeWidth={3} dot={{r: 4, strokeWidth: 2}} activeDot={{r: 6}} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+
+        <Card className="p-4 shadow-sm">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-4 text-center">Agendados vs Realizados — {labelPeriodo}</h3>
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={dadosGraficoLinha}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="dia" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                <ChartTooltip contentStyle={{ borderRadius: '8px', fontSize: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                <Legend />
+                <Line type="monotone" dataKey="agendados" stroke="#f59e0b" strokeWidth={2.5} dot={{ r: 3 }} name="Agendados" />
+                <Line type="monotone" dataKey="realizados" stroke="#4f46e5" strokeWidth={2.5} dot={{ r: 3 }} name="Realizados" />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+
+        <Card className="p-4 shadow-sm flex flex-col justify-center items-center">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 text-center w-full">Receita: Particular vs Planos</h3>
+          <div className="h-64 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={distribuicaoConvenios} innerRadius={60} outerRadius={85} paddingAngle={3} dataKey="value">
+                  {distribuicaoConvenios.map((entry, index) => <Cell key={`cell-${index}`} fill={CORES_PIZZA[index % CORES_PIZZA.length]} />)}
+                </Pie>
+                <ChartTooltip contentStyle={{ fontSize: '12px', borderRadius: '8px' }} />
+                <Legend verticalAlign="bottom" height={36} wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+
+        <Card className="p-4 shadow-sm flex flex-col justify-center items-center">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 text-center w-full">Ocupação por Profissional — {labelPeriodo}</h3>
+          <div className="h-64 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={dadosOcupacao} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="name" tick={{fontSize: 10}} tickLine={false} axisLine={false} />
+                <YAxis tick={{fontSize: 10}} tickLine={false} axisLine={false} />
+                <ChartTooltip cursor={{fill: '#f8fafc'}} contentStyle={{ fontSize: '12px', borderRadius: '8px' }} />
+                <Bar dataKey="Atendimentos" fill="#0ea5e9" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+      </div>
+
+      {/* ===== 4º ANDAR: RANKINGS ===== */}
+      <Card className="p-4 space-y-2">
+        <h2 className="font-semibold text-sm">Repasses do período — {labelPeriodo}</h2>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="text-center">
+            <div className="text-lg font-bold text-amber-500">R$ {repassesPend.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</div>
+            <div className="text-xs text-muted-foreground">Pendentes</div>
+          </div>
+          <div className="text-center">
+            <div className="text-lg font-bold text-primary">R$ {repassesPg.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</div>
+            <div className="text-xs text-muted-foreground">Pagos</div>
+          </div>
+        </div>
+      </Card>
+
+      {topAltasProfissionais.length > 0 && (
+        <Card className="p-4 space-y-2 border-l-4 border-l-purple-500">
+          <h2 className="font-semibold text-sm flex items-center gap-2">
+            <Award className="w-4 h-4 text-purple-600" />
+            Ranking de Altas Fisioterapêuticas — {labelPeriodo}
+          </h2>
+          <div className="space-y-1.5 mt-2">
+            {topAltasProfissionais.map((p, i) => {
+              const medalhas = ["🥇", "🥈", "🥉"];
+              const prefixo = i < 3 ? medalhas[i] : `${i + 1}.`;
+              return (
+                <div key={p.nome} className="flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-2">
+                    <span className="w-6 text-center">{prefixo}</span>
+                    <span>{p.nome}</span>
+                  </span>
+                  <span className="font-semibold text-purple-600">
+                    {p.count} {p.count === 1 ? "alta" : "altas"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {topProfissionais.length > 0 && (
+          <Card className="p-4 space-y-2">
+            <h2 className="font-semibold text-sm">Top Profissionais — {labelPeriodo}</h2>
+            {topProfissionais.map((p, i) => (
+              <div key={p.nome} className="flex items-center justify-between text-sm">
+                <span>{i + 1}. {p.nome}</span>
+                <span className="font-semibold text-primary">{p.count}</span>
+              </div>
+            ))}
+          </Card>
+        )}
+        {topServicos.length > 0 && (
+          <Card className="p-4 space-y-2">
+            <h2 className="font-semibold text-sm">Top Serviços — {labelPeriodo}</h2>
+            {topServicos.map((s, i) => (
+              <div key={s.nome} className="flex items-center justify-between text-sm">
+                <span>{i + 1}. {s.nome}</span>
+                <span className="font-semibold text-primary">{s.count}</span>
+              </div>
+            ))}
+          </Card>
+        )}
+      </div>
+
+      <Card className="p-4 space-y-2">
+        <h2 className="font-semibold text-sm">Resumo geral</h2>
+        <div className="grid grid-cols-2 gap-y-2 text-sm">
+          <span className="text-muted-foreground">Total pacientes</span><span className="font-medium text-right">{totalPac}</span>
+          <span className="text-muted-foreground">Profissionais ativos</span><span className="font-medium text-right">{totalProf}</span>
+          <span className="text-muted-foreground">Médicos cadastrados</span><span className="font-medium text-right">{medicosCadastrados}</span>
+          <span className="text-muted-foreground">Médicos visitados (30d)</span><span className="font-medium text-right">{medicosVisitados}</span>
+          <span className="text-muted-foreground">Pacotes ativos</span><span className="font-medium text-right">{pacotesAtivos}</span>
+          <span className="text-muted-foreground">Alertas de estoque</span><span className="font-medium text-right text-destructive">{alertasEstoque}</span>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function KPI({ icon: Icon, label, value }: { icon: any; label: string; value: string | number }) {
+  return (
+    <Card className="p-4 shadow-card">
+      <div className="flex items-center gap-2 mb-1">
+        <Icon className="w-4 h-4 text-primary" />
+        <span className="text-xs text-muted-foreground">{label}</span>
+      </div>
+      <div className="text-2xl font-bold text-foreground">{value}</div>
+    </Card>
+  );
+}
