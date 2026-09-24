@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Plus, Wallet, Package, Box, Receipt, CalendarCheck, Pencil, Trash2 } from "lucide-react";
+import { ArrowLeft, Plus, Wallet, Package, Receipt, CalendarCheck, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 const fmt = (v: number) => Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -24,7 +24,6 @@ export default function PacienteFinanceiro() {
 
   const [paciente, setPaciente] = useState<any>(null);
   const [pacientePacotes, setPacientePacotes] = useState<any[]>([]);
-  const [pacienteServicos, setPacienteServicos] = useState<any[]>([]);
   const [pagamentos, setPagamentos] = useState<any[]>([]);
   const [profissionais, setProfissionais] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,7 +36,7 @@ export default function PacienteFinanceiro() {
   const [lancamentoProfissionalId, setLancamentoProfissionalId] = useState("");
   const [lancamentoPacoteId, setLancamentoPacoteId] = useState("avulso");
 
-  // Estados para o Modal de Edição Direta (contratos) - AGORA COM SESSOES_REALIZADAS
+  // Estados para o Modal de Edição Direta (contratos)
   const [modalEdicaoPacote, setModalEdicaoPacote] = useState(false);
   const [pacoteEditando, setPacoteEditando] = useState<any>(null);
   const [editForm, setEditForm] = useState({
@@ -67,7 +66,6 @@ export default function PacienteFinanceiro() {
       const { data: pac } = await supabase.from("pacientes").select("*").eq("id", pacienteId).maybeSingle();
       setPaciente(pac);
 
-      // INCLUI sessoes_realizadas NO SELECT
       const { data: pacs } = await supabase
         .from("paciente_pacotes")
         .select("*, sessoes_realizadas, pacote:pacotes(nome), autorizacao:autorizacoes(plano, numero_guia), servico:servicos(nome)")
@@ -75,13 +73,6 @@ export default function PacienteFinanceiro() {
         .neq("status_pagamento", "cancelado")
         .order("created_at", { ascending: false });
       setPacientePacotes(pacs || []);
-
-      const { data: servs } = await supabase
-        .from("paciente_servicos")
-        .select("*, servico:servicos(nome)")
-        .eq("paciente_id", pacienteId)
-        .order("created_at", { ascending: false });
-      setPacienteServicos(servs || []);
 
       const { data: pags } = await supabase
         .from("pagamentos")
@@ -171,7 +162,7 @@ export default function PacienteFinanceiro() {
     } catch (err: any) { toast.error("Erro: " + err.message); }
   };
 
-  // ========== FUNÇÕES PARA CONTRATOS (COM SESSOES_REALIZADAS) ==========
+  // ========== FUNÇÕES PARA CONTRATOS ==========
 
   const abrirEdicaoPacote = (p: any) => {
     setPacoteEditando(p);
@@ -186,7 +177,6 @@ export default function PacienteFinanceiro() {
 
   const salvarEdicaoPacote = async () => {
     try {
-      // Calcula sessoes_restantes automaticamente
       const novasRestantes = editForm.sessoes_totais - editForm.sessoes_realizadas;
       const { error } = await supabase.from("paciente_pacotes").update({
         sessoes_totais: editForm.sessoes_totais,
@@ -208,15 +198,6 @@ export default function PacienteFinanceiro() {
       const { error } = await supabase.from("paciente_pacotes").delete().eq("id", id);
       if (error) throw error;
       toast.success("Lançamento apagado com sucesso!");
-      carregarDados();
-    } catch (err: any) { toast.error("Erro ao apagar: " + err.message); }
-  };
-
-  const apagarServicoAvulso = async (id: string) => {
-    if (!confirm("Apagar este serviço avulso?")) return;
-    try {
-      await supabase.from("paciente_servicos").delete().eq("id", id);
-      toast.success("Serviço apagado com sucesso!");
       carregarDados();
     } catch (err: any) { toast.error("Erro ao apagar: " + err.message); }
   };
@@ -279,12 +260,11 @@ export default function PacienteFinanceiro() {
             <h2 className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5"><Package className="w-4 h-4" /> Contratos e Saldos</h2>
           </div>
 
-          {pacientePacotes.length === 0 && pacienteServicos.length === 0 && (
+          {pacientePacotes.length === 0 && (
             <Card className="p-6 text-center text-sm text-muted-foreground">Nenhum contrato ativo ou pendente encontrado.</Card>
           )}
 
           {pacientePacotes.map((p) => {
-            // Cálculo com sessões realizadas
             const realizadas = p.sessoes_realizadas ?? 0;
             const total = p.sessoes_totais;
             const restantes = total - realizadas;
@@ -313,7 +293,6 @@ export default function PacienteFinanceiro() {
                   )}
                 </div>
 
-                {/* Sessões: realizadas / total */}
                 <div className="flex items-center justify-between pt-1">
                   <Badge variant={restantes > 0 ? "default" : "secondary"} className="text-[10px] px-1.5 py-0">
                     {restantes > 0 ? `${restantes} restantes` : "Completo"}
@@ -323,7 +302,6 @@ export default function PacienteFinanceiro() {
                   </span>
                 </div>
 
-                {/* Barra de progresso */}
                 <div className="space-y-1">
                   <div className="flex justify-between text-xs">
                     <span>Sessões: {realizadas}/{total}</span>
@@ -338,7 +316,6 @@ export default function PacienteFinanceiro() {
 
                 <div className="text-xs text-muted-foreground mt-1">
                   Criado em: {new Date(p.created_at).toLocaleDateString("pt-BR")}
-                  {/* Só mostra badge de status para particulares (sem autorização) */}
                   {!p.autorizacao && (
                     <span className="ml-2 capitalize text-amber-600 font-medium">· {p.status_pagamento}</span>
                   )}
@@ -346,23 +323,6 @@ export default function PacienteFinanceiro() {
               </Card>
             );
           })}
-
-          {pacienteServicos.map((s) => (
-            <Card key={s.id} className="p-3 border-l-4 border-l-emerald-500 flex justify-between items-center">
-              <div>
-                <div className="font-semibold text-sm flex items-center gap-1"><Box className="w-3.5 h-3.5 text-emerald-500" /> {s.servico?.nome || "Serviço Avulso"}</div>
-                <div className="text-[10px] text-muted-foreground mt-0.5">Lançado em {new Date(s.created_at).toLocaleDateString("pt-BR")}</div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <Badge variant="outline" className="text-emerald-700 bg-emerald-50 border-emerald-200">Sessão Única</Badge>
-                {podeGerenciar && (
-                  <Button variant="ghost" size="icon" className="h-7 w-7 hover:bg-red-50" onClick={() => apagarServicoAvulso(s.id)}>
-                    <Trash2 className="w-3.5 h-3.5 text-red-500" />
-                  </Button>
-                )}
-              </div>
-            </Card>
-          ))}
         </TabsContent>
 
         <TabsContent value="historico" className="space-y-3 mt-3">
@@ -449,7 +409,7 @@ export default function PacienteFinanceiro() {
         </TabsContent>
       </Tabs>
 
-      {/* MODAL DE EDIÇÃO DE CONTRATO/PACOTE (COM SESSOES_REALIZADAS) */}
+      {/* MODAL DE EDIÇÃO DE CONTRATO/PACOTE */}
       <Dialog open={modalEdicaoPacote} onOpenChange={setModalEdicaoPacote}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
