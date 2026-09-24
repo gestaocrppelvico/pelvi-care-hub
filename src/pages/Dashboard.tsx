@@ -22,7 +22,6 @@ import {
   PieChart, Pie, Cell, BarChart, Bar, Legend
 } from 'recharts';
 
-// Painéis Secundários
 import DashboardFisio from "./DashboardFisio";
 import DashboardSecretaria from "./DashboardSecretaria";
 
@@ -36,23 +35,24 @@ export default function Dashboard() {
   const [nome, setNome] = useState("");
   const [loading, setLoading] = useState(true);
 
-  // ===== FILTRO DE PERÍODO =====
   const [filtroPeriodo, setFiltroPeriodo] = useState<FiltroPeriodo>("mes");
   const [dataInicio, setDataInicio] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
   const [dataFim, setDataFim] = useState(format(endOfMonth(new Date()), "yyyy-MM-dd"));
 
-  // ===== Estados de Auditoria (Ações) =====
+  // ===== Estados de Auditoria =====
   const [faltasPendentes, setFaltasPendentes] = useState<any[]>([]);
   const [evolucoesAtrasadas, setEvolucoesAtrasadas] = useState<any[]>([]);
   const [guiasRenovar, setGuiasRenovar] = useState<any[]>([]);
 
-  // ===== Estados de BI (Gráficos e KPIs) =====
+  // ===== Estados de BI =====
   const [atendimentosPeriodo, setAtendimentosPeriodo] = useState<any[]>([]);
   const [distribuicaoConvenios, setDistribuicaoConvenios] = useState<any[]>([]);
   const [totalPac, setTotalPac] = useState(0);
   const [pacAtivos, setPacAtivos] = useState(0);
   const [totalProf, setTotalProf] = useState(0);
-  const [atendHoje, setAtendHoje] = useState(0);
+  // 🔥 NOVOS: Atendimentos hoje (previstos + realizados)
+  const [atendPrevistosHoje, setAtendPrevistosHoje] = useState(0);
+  const [atendRealizadosHoje, setAtendRealizadosHoje] = useState(0);
   const [repassesPend, setRepassesPend] = useState(0);
   const [repassesPg, setRepassesPg] = useState(0);
   const [faturamento, setFaturamento] = useState(0);
@@ -69,7 +69,6 @@ export default function Dashboard() {
   const [alertasEstoque, setAlertasEstoque] = useState(0);
   const [dadosGraficoLinha, setDadosGraficoLinha] = useState<{ dia: string; agendados: number; realizados: number }[]>([]);
 
-  // ===== CALCULAR PERÍODO SELECIONADO =====
   const periodo = useMemo(() => {
     const hoje = new Date();
     let inicio: Date;
@@ -97,7 +96,6 @@ export default function Dashboard() {
     };
   }, [filtroPeriodo, dataInicio, dataFim]);
 
-  // ===== LABEL DO PERÍODO =====
   const labelPeriodo = useMemo(() => {
     if (filtroPeriodo === "dia") return "Hoje";
     if (filtroPeriodo === "semana") return "Esta Semana";
@@ -125,7 +123,6 @@ export default function Dashboard() {
         const inicioDia = startOfDay(agora).toISOString();
         const fimDia = endOfDay(agora).toISOString();
 
-        // Buscar ID do serviço "Avaliação"
         const { data: servicoAvaliacao } = await supabase
           .from("servicos")
           .select("id")
@@ -143,7 +140,7 @@ export default function Dashboard() {
           { count: totalPacCount },
           { count: pacAtivosCount },
           { count: totalProfCount },
-          { count: atendHojeCount },
+          { data: atendHojeData }, // 🔥 mudou: agora pega data e status
           { data: repassesData },
           { count: medCount },
           { data: medVisitados },
@@ -159,30 +156,33 @@ export default function Dashboard() {
           supabase.from("atendimentos").select("id, data_inicio, paciente:pacientes(nome), profissional:profissionais(nome)").eq("status", "faltou"),
           supabase.from("atendimentos").select("id, data_inicio, paciente:pacientes(nome), profissional:profissionais(nome)").eq("status", "agendado").lt("data_inicio", inicioDia),
           supabase.from("paciente_pacotes").select("id, paciente_id, sessoes_restantes, autorizacao:autorizacoes(plano), paciente:pacientes(nome)").not("autorizacao_id", "is", null).eq("status_renovacao", "vai_renovar"),
-          // Atendimentos do PERÍODO selecionado
           supabase.from("atendimentos").select("id, data_inicio, status, profissional_id, servico_id, profissional:profissionais(nome), servico:servicos(nome)").gte("data_inicio", inicioPeriodo).lte("data_inicio", fimPeriodo),
           supabase.from("paciente_pacotes").select("id, autorizacao:autorizacoes(plano)"),
           supabase.from("pacientes").select("id", { count: "exact", head: true }),
           supabase.from("pacientes").select("id", { count: "exact", head: true }).eq("ativo", true),
           supabase.from("profissionais").select("id", { count: "exact", head: true }).eq("ativo", true),
-          supabase.from("atendimentos").select("id", { count: "exact", head: true }).gte("data_inicio", inicioDia).lte("data_inicio", fimDia),
+          // 🔥 NOVO: busca hoje com status
+          supabase.from("atendimentos").select("id, status").gte("data_inicio", inicioDia).lte("data_inicio", fimDia),
           supabase.from("repasses_atendimento").select("id, valor_repasse, status").gte("created_at", inicioPeriodo).lte("created_at", fimPeriodo),
           supabase.from("medicos").select("id", { count: "exact", head: true }),
           supabase.from("medicos").select("id, ultima_visita").not("ultima_visita", "is", null),
           supabase.from("paciente_pacotes").select("id, sessoes_restantes").gt("sessoes_restantes", 0),
           supabase.from("estoque_insumos").select("id, quantidade_atual, quantidade_minima"),
-          // Pagamentos no período
           supabase.from("pagamentos").select("valor, data_pagamento").gte("data_pagamento", format(periodo.inicioDate, "yyyy-MM-dd")).lte("data_pagamento", format(periodo.fimDate, "yyyy-MM-dd")),
           supabase.from("atendimentos").select("id", { count: "exact", head: true }).eq("servico_id", servicoAvaliacaoId || "").eq("status", "realizado").gte("data_inicio", inicioPeriodo).lte("data_inicio", fimPeriodo),
           supabase.from("pacientes").select("id").gte("data_inicio_tratamento", format(periodo.inicioDate, "yyyy-MM-dd")).lte("data_inicio_tratamento", format(periodo.fimDate, "yyyy-MM-dd")),
           supabase.from("atendimentos").select("paciente_id").eq("servico_id", servicoAvaliacaoId || "").eq("status", "realizado").gte("data_inicio", inicioPeriodo).lte("data_inicio", fimPeriodo),
           servicoAvaliacaoId ? supabase.from("atendimentos").select("paciente_id").not("servico_id", "eq", servicoAvaliacaoId).eq("status", "realizado").gte("data_inicio", inicioPeriodo).lte("data_inicio", fimPeriodo) : supabase.from("atendimentos").select("paciente_id", { count: "exact", head: true }).limit(0),
-          // Altas no PERÍODO
           supabase.from("prontuarios").select("id, created_at, paciente_id, profissional_id, profissional:profissionais(nome)").eq("alta_medica", true).gte("created_at", inicioPeriodo).lte("created_at", fimPeriodo),
         ]);
 
         const atendPeriodo = resAtendPeriodo.data ?? [];
         const realizados = atendPeriodo.filter((a) => a.status === "realizado");
+
+        // 🔥 NOVO: calcular previstos e realizados hoje
+        const atendHojeLista = atendHojeData ?? [];
+        const previstosHoje = atendHojeLista.length;
+        const realizadosHoje = atendHojeLista.filter((a) => a.status === "realizado").length;
 
         const repasses = repassesData ?? [];
         const repassesPendSum = repasses.filter((r) => r.status === "pendente").reduce((s, r) => s + Number(r.valor_repasse), 0);
@@ -191,7 +191,6 @@ export default function Dashboard() {
         const faturamentoSum = (pagamentosData ?? []).reduce((s, p) => s + Number(p.valor), 0);
         const alertas = (estoqueData ?? []).filter((i) => Number(i.quantidade_atual) <= Number(i.quantidade_minima)).length;
 
-        // Novos tratamentos
         const manualCount = pacientesManual?.length || 0;
         const pacientesComAvaliacao = pacientesAvaliacao?.map((a: any) => a.paciente_id) || [];
         const pacientesComSessao = pacientesSessao?.map((a: any) => a.paciente_id) || [];
@@ -199,7 +198,6 @@ export default function Dashboard() {
         const automaticosFiltrados = automaticos.filter((id: string) => !pacientesManual?.some((p: any) => p.id === id));
         const novosTratamentosTotal = manualCount + automaticosFiltrados.length;
 
-        // Altas
         const altasPeriodo = altasData ?? [];
         const altasCount = altasPeriodo.length;
         const altaMap = new Map<string, number>();
@@ -209,7 +207,6 @@ export default function Dashboard() {
         });
         const topAltas = [...altaMap.entries()].map(([nome, count]) => ({ nome, count })).sort((a, b) => b.count - a.count);
 
-        // Top profissionais
         const profMap = new Map<string, number>();
         realizados.forEach((a: any) => {
           const nome = a.profissional?.nome ?? "—";
@@ -217,7 +214,6 @@ export default function Dashboard() {
         });
         const topProf = [...profMap.entries()].map(([nome, count]) => ({ nome, count })).sort((a, b) => b.count - a.count).slice(0, 5);
 
-        // Top serviços
         const servMap = new Map<string, number>();
         realizados.forEach((a: any) => {
           const nome = a.servico?.nome ?? "Sem serviço";
@@ -225,11 +221,9 @@ export default function Dashboard() {
         });
         const topServ = [...servMap.entries()].map(([nome, count]) => ({ nome, count })).sort((a, b) => b.count - a.count).slice(0, 5);
 
-        // Gráfico adaptado ao período
         const porDiaDetalhado: { dia: string; agendados: number; realizados: number }[] = [];
 
         if (filtroPeriodo === "dia") {
-          // Mostrar por HORA
           const horasMap: Record<string, { agendados: number; realizados: number }> = {};
           for (let h = 7; h <= 21; h++) {
             const label = `${h.toString().padStart(2, "0")}h`;
@@ -245,9 +239,7 @@ export default function Dashboard() {
           });
           Object.entries(horasMap).forEach(([dia, v]) => porDiaDetalhado.push({ dia, ...v }));
         } else {
-          // Mostrar por DIA (do período selecionado)
           const dias = eachDayOfInterval({ start: periodo.inicioDate, end: periodo.fimDate });
-          // Se for muito longo (ex: > 60 dias), mostrar apenas os últimos 60
           const diasLimitados = dias.length > 60 ? dias.slice(-60) : dias;
 
           diasLimitados.forEach((dia) => {
@@ -262,11 +254,9 @@ export default function Dashboard() {
           });
         }
 
-        // Médicos visitados (30d)
         const trintaDias = format(subDays(agora, 30), "yyyy-MM-dd");
         const medVisRecentes = (medVisitados ?? []).filter((m: any) => m.ultima_visita && m.ultima_visita >= trintaDias).length;
 
-        // Distribuição de convênios (pizza)
         const contagemPlanos: Record<string, number> = { "Particular": 0 };
         (resPacotesPlano.data || []).forEach((p: any) => {
           if (p.autorizacao?.plano) {
@@ -285,7 +275,10 @@ export default function Dashboard() {
         setTotalPac(totalPacCount ?? 0);
         setPacAtivos(pacAtivosCount ?? 0);
         setTotalProf(totalProfCount ?? 0);
-        setAtendHoje(atendHojeCount ?? 0);
+        // 🔥 NOVO
+        setAtendPrevistosHoje(previstosHoje);
+        setAtendRealizadosHoje(realizadosHoje);
+
         setRepassesPend(repassesPendSum);
         setRepassesPg(repassesPgSum);
         setFaturamento(faturamentoSum);
@@ -311,7 +304,6 @@ export default function Dashboard() {
     carregarDashboard();
   }, [user, isSecretaria, isAdmin, isFisio, filtroPeriodo, dataInicio, dataFim, periodo]);
 
-  // Processamento dos gráficos
   const dadosGraficoMensal = useMemo(() => {
     const dias: Record<string, number> = {};
     atendimentosPeriodo.forEach(at => {
@@ -341,7 +333,6 @@ export default function Dashboard() {
     }
   };
 
-  // ===== ROTEAMENTO POR PERFIL =====
   if (isSecretaria && !isAdmin) return <DashboardSecretaria nomeUsuario={nome} />;
   if (isFisio && !isAdmin && !isSecretaria) return <DashboardFisio />;
 
@@ -354,9 +345,10 @@ export default function Dashboard() {
   const totalAgendados = atendimentosPeriodo.filter(a => a.status === "agendado").length;
   const totalCancelados = atendimentosPeriodo.filter(a => a.status === "cancelado").length;
 
+  const percentualHoje = atendPrevistosHoje > 0 ? Math.round((atendRealizadosHoje / atendPrevistosHoje) * 100) : 0;
+
   return (
     <div className="space-y-6 p-2 pb-10 max-w-7xl mx-auto">
-      {/* CABEÇALHO */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-3">
         <div>
           <h1 className="text-2xl font-black tracking-tight text-slate-800">Diretoria 👋</h1>
@@ -368,7 +360,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ===== FILTRO DE PERÍODO ===== */}
       <Card className="p-3 border shadow-sm">
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 flex-wrap">
           <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600 shrink-0">
@@ -377,67 +368,26 @@ export default function Dashboard() {
           </div>
 
           <div className="flex gap-1 bg-slate-100 p-1 rounded-lg flex-wrap">
-            <Button
-              size="sm"
-              variant={filtroPeriodo === "dia" ? "default" : "ghost"}
-              onClick={() => setFiltroPeriodo("dia")}
-              className="h-8 text-xs"
-            >
-              Hoje
-            </Button>
-            <Button
-              size="sm"
-              variant={filtroPeriodo === "semana" ? "default" : "ghost"}
-              onClick={() => setFiltroPeriodo("semana")}
-              className="h-8 text-xs"
-            >
-              Esta Semana
-            </Button>
-            <Button
-              size="sm"
-              variant={filtroPeriodo === "mes" ? "default" : "ghost"}
-              onClick={() => setFiltroPeriodo("mes")}
-              className="h-8 text-xs"
-            >
-              Este Mês
-            </Button>
-            <Button
-              size="sm"
-              variant={filtroPeriodo === "personalizado" ? "default" : "ghost"}
-              onClick={() => setFiltroPeriodo("personalizado")}
-              className="h-8 text-xs"
-            >
-              Personalizado
-            </Button>
+            <Button size="sm" variant={filtroPeriodo === "dia" ? "default" : "ghost"} onClick={() => setFiltroPeriodo("dia")} className="h-8 text-xs">Hoje</Button>
+            <Button size="sm" variant={filtroPeriodo === "semana" ? "default" : "ghost"} onClick={() => setFiltroPeriodo("semana")} className="h-8 text-xs">Esta Semana</Button>
+            <Button size="sm" variant={filtroPeriodo === "mes" ? "default" : "ghost"} onClick={() => setFiltroPeriodo("mes")} className="h-8 text-xs">Este Mês</Button>
+            <Button size="sm" variant={filtroPeriodo === "personalizado" ? "default" : "ghost"} onClick={() => setFiltroPeriodo("personalizado")} className="h-8 text-xs">Personalizado</Button>
           </div>
 
           {filtroPeriodo === "personalizado" && (
             <div className="flex items-center gap-2 bg-background p-1 rounded-md border">
-              <Input
-                type="date"
-                value={dataInicio}
-                onChange={(e) => setDataInicio(e.target.value)}
-                className="h-8 border-none focus-visible:ring-0 w-[130px] text-xs"
-              />
+              <Input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} className="h-8 border-none focus-visible:ring-0 w-[130px] text-xs" />
               <span className="text-[10px] text-muted-foreground font-medium">até</span>
-              <Input
-                type="date"
-                value={dataFim}
-                onChange={(e) => setDataFim(e.target.value)}
-                className="h-8 border-none focus-visible:ring-0 w-[130px] text-xs"
-              />
+              <Input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} className="h-8 border-none focus-visible:ring-0 w-[130px] text-xs" />
             </div>
           )}
 
-          <Badge variant="outline" className="ml-auto text-[10px] h-6">
-            📅 {labelPeriodo}
-          </Badge>
+          <Badge variant="outline" className="ml-auto text-[10px] h-6">📅 {labelPeriodo}</Badge>
         </div>
       </Card>
 
       {/* ===== 1º ANDAR: AUDITORIA ===== */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        
         <Card className="p-0 overflow-hidden shadow-sm border-t-4 border-t-rose-500 flex flex-col h-64">
           <div className="bg-rose-50/50 p-3 border-b border-rose-100 flex items-center justify-between">
             <h3 className="font-bold text-xs uppercase tracking-wider text-rose-700 flex items-center gap-1.5"><AlertTriangle className="w-4 h-4"/> Auditoria de Faltas</h3>
@@ -515,191 +465,4 @@ export default function Dashboard() {
       </h2>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KPI icon={Calendar} label="Atend. hoje" value={atendHoje} />
-        <KPI icon={TrendingUp} label="Atend. no período" value={atendimentosPeriodo.length} />
-        <KPI icon={Users} label="Pacientes ativos" value={pacAtivos} />
-        <KPI icon={DollarSign} label="Faturamento" value={`R$ ${faturamento.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`} />
-        <KPI icon={FileText} label="Avaliações" value={avaliacoes} />
-        <KPI icon={TrendingUp} label="Novos tratamentos" value={novosTratamentos} />
-        <KPI icon={Award} label="Altas fisioterapêuticas" value={altas} />
-        <KPI icon={Activity} label="Repasses pagos" value={`R$ ${repassesPg.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`} />
-      </div>
-
-      {novosTratamentosManual > 0 && (
-        <div className="text-xs text-muted-foreground text-center -mt-1">
-          * {novosTratamentosManual} pacientes de plano com início manual
-        </div>
-      )}
-
-      {/* Taxa de realização */}
-      <Card className="p-4 space-y-2">
-        <div className="flex justify-between text-sm">
-          <span className="text-muted-foreground">Taxa de realização — {labelPeriodo}</span>
-          <span className="font-bold">{taxaRealizacao}%</span>
-        </div>
-        <Progress value={taxaRealizacao} className="h-3" />
-        <div className="flex gap-4 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-primary" /> {totalRealizados} realizados</span>
-          <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {totalAgendados} agendados</span>
-          <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-destructive" /> {totalCancelados} cancelados</span>
-        </div>
-      </Card>
-
-      {/* ===== 3º ANDAR: GRÁFICOS ===== */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
-        <Card className="p-4 shadow-sm">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-4 text-center">Curva de Atendimentos — {labelPeriodo}</h3>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={dadosGraficoMensal}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis dataKey="dia" tick={{fontSize: 10}} tickLine={false} axisLine={false} />
-                <YAxis tick={{fontSize: 10}} tickLine={false} axisLine={false} />
-                <ChartTooltip contentStyle={{ borderRadius: '8px', fontSize: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                <Line type="monotone" dataKey="Atendimentos" stroke="#4f46e5" strokeWidth={3} dot={{r: 4, strokeWidth: 2}} activeDot={{r: 6}} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-
-        <Card className="p-4 shadow-sm">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-4 text-center">Agendados vs Realizados — {labelPeriodo}</h3>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={dadosGraficoLinha}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis dataKey="dia" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
-                <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
-                <ChartTooltip contentStyle={{ borderRadius: '8px', fontSize: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                <Legend />
-                <Line type="monotone" dataKey="agendados" stroke="#f59e0b" strokeWidth={2.5} dot={{ r: 3 }} name="Agendados" />
-                <Line type="monotone" dataKey="realizados" stroke="#4f46e5" strokeWidth={2.5} dot={{ r: 3 }} name="Realizados" />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-
-        <Card className="p-4 shadow-sm flex flex-col justify-center items-center">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 text-center w-full">Receita: Particular vs Planos</h3>
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={distribuicaoConvenios} innerRadius={60} outerRadius={85} paddingAngle={3} dataKey="value">
-                  {distribuicaoConvenios.map((entry, index) => <Cell key={`cell-${index}`} fill={CORES_PIZZA[index % CORES_PIZZA.length]} />)}
-                </Pie>
-                <ChartTooltip contentStyle={{ fontSize: '12px', borderRadius: '8px' }} />
-                <Legend verticalAlign="bottom" height={36} wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-
-        <Card className="p-4 shadow-sm flex flex-col justify-center items-center">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 text-center w-full">Ocupação por Profissional — {labelPeriodo}</h3>
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={dadosOcupacao} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis dataKey="name" tick={{fontSize: 10}} tickLine={false} axisLine={false} />
-                <YAxis tick={{fontSize: 10}} tickLine={false} axisLine={false} />
-                <ChartTooltip cursor={{fill: '#f8fafc'}} contentStyle={{ fontSize: '12px', borderRadius: '8px' }} />
-                <Bar dataKey="Atendimentos" fill="#0ea5e9" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-      </div>
-
-      {/* ===== 4º ANDAR: RANKINGS E REPASSES ===== */}
-      <Card className="p-4 space-y-2">
-        <h2 className="font-semibold text-sm">Repasses do período — {labelPeriodo}</h2>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="text-center">
-            <div className="text-lg font-bold text-amber-500">R$ {repassesPend.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</div>
-            <div className="text-xs text-muted-foreground">Pendentes</div>
-          </div>
-          <div className="text-center">
-            <div className="text-lg font-bold text-primary">R$ {repassesPg.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</div>
-            <div className="text-xs text-muted-foreground">Pagos</div>
-          </div>
-        </div>
-      </Card>
-
-      {topAltasProfissionais.length > 0 && (
-        <Card className="p-4 space-y-2 border-l-4 border-l-purple-500">
-          <h2 className="font-semibold text-sm flex items-center gap-2">
-            <Award className="w-4 h-4 text-purple-600" />
-            Ranking de Altas Fisioterapêuticas — {labelPeriodo}
-          </h2>
-          <div className="space-y-1.5 mt-2">
-            {topAltasProfissionais.map((p, i) => {
-              const medalhas = ["🥇", "🥈", "🥉"];
-              const prefixo = i < 3 ? medalhas[i] : `${i + 1}.`;
-              return (
-                <div key={p.nome} className="flex items-center justify-between text-sm">
-                  <span className="flex items-center gap-2">
-                    <span className="w-6 text-center">{prefixo}</span>
-                    <span>{p.nome}</span>
-                  </span>
-                  <span className="font-semibold text-purple-600">
-                    {p.count} {p.count === 1 ? "alta" : "altas"}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </Card>
-      )}
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {topProfissionais.length > 0 && (
-          <Card className="p-4 space-y-2">
-            <h2 className="font-semibold text-sm">Top Profissionais — {labelPeriodo}</h2>
-            {topProfissionais.map((p, i) => (
-              <div key={p.nome} className="flex items-center justify-between text-sm">
-                <span>{i + 1}. {p.nome}</span>
-                <span className="font-semibold text-primary">{p.count}</span>
-              </div>
-            ))}
-          </Card>
-        )}
-        {topServicos.length > 0 && (
-          <Card className="p-4 space-y-2">
-            <h2 className="font-semibold text-sm">Top Serviços — {labelPeriodo}</h2>
-            {topServicos.map((s, i) => (
-              <div key={s.nome} className="flex items-center justify-between text-sm">
-                <span>{i + 1}. {s.nome}</span>
-                <span className="font-semibold text-primary">{s.count}</span>
-              </div>
-            ))}
-          </Card>
-        )}
-      </div>
-
-      <Card className="p-4 space-y-2">
-        <h2 className="font-semibold text-sm">Resumo geral</h2>
-        <div className="grid grid-cols-2 gap-y-2 text-sm">
-          <span className="text-muted-foreground">Total pacientes</span><span className="font-medium text-right">{totalPac}</span>
-          <span className="text-muted-foreground">Profissionais ativos</span><span className="font-medium text-right">{totalProf}</span>
-          <span className="text-muted-foreground">Médicos cadastrados</span><span className="font-medium text-right">{medicosCadastrados}</span>
-          <span className="text-muted-foreground">Médicos visitados (30d)</span><span className="font-medium text-right">{medicosVisitados}</span>
-          <span className="text-muted-foreground">Pacotes ativos</span><span className="font-medium text-right">{pacotesAtivos}</span>
-          <span className="text-muted-foreground">Alertas de estoque</span><span className="font-medium text-right text-destructive">{alertasEstoque}</span>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-function KPI({ icon: Icon, label, value }: { icon: any; label: string; value: string | number }) {
-  return (
-    <Card className="p-4 shadow-card">
-      <div className="flex items-center gap-2 mb-1">
-        <Icon className="w-4 h-4 text-primary" />
-        <span className="text-xs text-muted-foreground">{label}</span>
-      </div>
-      <div className="text-2xl font-bold text-foreground">{value}</div>
-    </Card>
-  );
-}
+        {/* 🔥 NOVO: Previstos hoje */}
