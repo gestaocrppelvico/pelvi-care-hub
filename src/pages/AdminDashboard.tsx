@@ -1,6 +1,6 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Users, Calendar, DollarSign, TrendingUp, Clock, CheckCircle, XCircle, Activity, FileText } from "lucide-react";
+import { ArrowLeft, Users, Calendar, DollarSign, TrendingUp, Clock, CheckCircle, XCircle, Activity, FileText, Award } from "lucide-react";
 import { format, subDays, startOfMonth, endOfMonth, startOfDay, endOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
@@ -34,6 +34,9 @@ interface DashData {
   novosTratamentosMes: number;
   novosTratamentosManual: number;
   dadosGraficoLinha: { dia: string; agendados: number; realizados: number }[];
+  // 🔥 NOVOS CAMPOS: ALTAS
+  altasMes: number;
+  topAltasProfissionais: { nome: string; count: number }[];
 }
 
 export default function AdminDashboard() {
@@ -78,6 +81,7 @@ export default function AdminDashboard() {
       { data: pacientesManual },
       { data: pacientesAvaliacao },
       { data: pacientesSessao },
+      { data: altasData },
     ] = await Promise.all([
       supabase.from("pacientes").select("id", { count: "exact", head: true }),
       supabase.from("pacientes").select("id", { count: "exact", head: true }).eq("ativo", true),
@@ -113,6 +117,10 @@ export default function AdminDashboard() {
         .gte("data_inicio", mesStart)
         .lte("data_inicio", mesEnd)
         : supabase.from("atendimentos").select("paciente_id", { count: "exact", head: true }).limit(0),
+      // 🔥 NOVO: Buscar TODAS as altas fisioterapêuticas (histórico total)
+      supabase.from("prontuarios")
+        .select("id, created_at, paciente_id, profissional_id, profissional:profissionais(nome)")
+        .eq("alta_medica", true),
     ]);
 
     const atendMes = atendMesData ?? [];
@@ -138,7 +146,25 @@ export default function AdminDashboard() {
     );
     const novosTratamentosTotal = manualCount + automaticosFiltrados.length;
 
-    // Top profissionais
+    // 🔥 PROCESSAR ALTAS
+    const altas = altasData ?? [];
+    
+    // Contagem de altas no mês atual
+    const altasMes = altas.filter((a: any) => 
+      a.created_at >= mesStart && a.created_at <= mesEnd
+    ).length;
+
+    // Ranking de altas por profissional (histórico total)
+    const altaMap = new Map<string, number>();
+    altas.forEach((a: any) => {
+      const nome = a.profissional?.nome ?? "—";
+      altaMap.set(nome, (altaMap.get(nome) ?? 0) + 1);
+    });
+    const topAltas = [...altaMap.entries()]
+      .map(([nome, count]) => ({ nome, count }))
+      .sort((a, b) => b.count - a.count);
+
+    // Top profissionais (atendimentos)
     const profMap = new Map<string, number>();
     realizados.forEach((a: any) => {
       const nome = a.profissional?.nome ?? "—";
@@ -154,7 +180,7 @@ export default function AdminDashboard() {
     });
     const topServ = [...servMap.entries()].map(([nome, count]) => ({ nome, count })).sort((a, b) => b.count - a.count).slice(0, 5);
 
-    // 🔥 CORREÇÃO: Array em vez de objeto, já ordenado cronologicamente
+    // Atendimentos por dia (últimos 14 dias)
     const porDiaDetalhado: { dia: string; agendados: number; realizados: number }[] = [];
 
     for (let i = 13; i >= 0; i--) {
@@ -173,13 +199,11 @@ export default function AdminDashboard() {
       });
     }
 
-    // Atendimentos por dia (total, para compatibilidade com outros gráficos)
     const porDiaTotal = porDiaDetalhado.map(item => ({
       dia: item.dia,
       count: item.agendados + item.realizados
     }));
 
-    // Médicos visitados nos últimos 30 dias
     const trintaDias = format(subDays(now, 30), "yyyy-MM-dd");
     const medVisRecentes = (medVisitados ?? []).filter((m) => m.ultima_visita && m.ultima_visita >= trintaDias).length;
 
@@ -206,6 +230,8 @@ export default function AdminDashboard() {
       novosTratamentosMes: novosTratamentosTotal,
       novosTratamentosManual: manualCount,
       dadosGraficoLinha: porDiaDetalhado,
+      altasMes,
+      topAltasProfissionais: topAltas,
     });
     setLoading(false);
   }
@@ -215,14 +241,6 @@ export default function AdminDashboard() {
 
   const maxDia = Math.max(...d.atendimentosPorDia.map((x) => x.count), 1);
   const taxaRealizacao = d.atendimentosMes > 0 ? Math.round((d.realizadosMes / d.atendimentosMes) * 100) : 0;
-
-  const planosData = [
-    { name: 'Particular', value: d.pacientesAtivos * 0.3 },
-    { name: 'TRT6 Saúde', value: d.pacientesAtivos * 0.2 },
-    { name: 'Luminar', value: d.pacientesAtivos * 0.15 },
-    { name: 'Fachesf', value: d.pacientesAtivos * 0.1 },
-    { name: 'Saúde Recife', value: d.pacientesAtivos * 0.25 },
-  ];
 
   return (
     <div className="space-y-6">
@@ -251,6 +269,11 @@ export default function AdminDashboard() {
         <KPI icon={TrendingUp} label="Atend. mês" value={d.atendimentosMes} />
         <KPI icon={Users} label="Pacientes ativos" value={d.pacientesAtivos} />
         <KPI icon={DollarSign} label="Faturamento mês" value={`R$ ${d.faturamentoMes.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`} />
+      </div>
+
+      {/* 🔥 NOVO KPI: Altas fisioterapêuticas no mês */}
+      <div className="grid grid-cols-1 gap-3">
+        <KPI icon={Award} label="Altas fisioterapêuticas no mês" value={d.altasMes} />
       </div>
 
       {/* Taxa de realização */}
@@ -316,11 +339,39 @@ export default function AdminDashboard() {
         </div>
       </Card>
 
-      {/* Rankings */}
+      {/* 🔥 NOVO: Ranking de Altas Fisioterapêuticas */}
+      {d.topAltasProfissionais.length > 0 && (
+        <Card className="p-4 space-y-2 border-l-4 border-l-purple-500">
+          <h2 className="font-semibold text-sm flex items-center gap-2">
+            <Award className="w-4 h-4 text-purple-600" />
+            Ranking de Altas Fisioterapêuticas
+          </h2>
+          <p className="text-[11px] text-muted-foreground">Histórico total de altas por profissional</p>
+          <div className="space-y-1.5 mt-2">
+            {d.topAltasProfissionais.map((p, i) => {
+              const medalhas = ["🥇", "🥈", "🥉"];
+              const prefixo = i < 3 ? medalhas[i] : `${i + 1}.`;
+              return (
+                <div key={p.nome} className="flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-2">
+                    <span className="w-6 text-center">{prefixo}</span>
+                    <span>{p.nome}</span>
+                  </span>
+                  <span className="font-semibold text-purple-600">
+                    {p.count} {p.count === 1 ? "alta" : "altas"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* Rankings existentes */}
       <div className="grid grid-cols-1 gap-3">
         {d.topProfissionais.length > 0 && (
           <Card className="p-4 space-y-2">
-            <h2 className="font-semibold text-sm">Top Profissionais</h2>
+            <h2 className="font-semibold text-sm">Top Profissionais (atendimentos no mês)</h2>
             {d.topProfissionais.map((p, i) => (
               <div key={p.nome} className="flex items-center justify-between text-sm">
                 <span>{i + 1}. {p.nome}</span>
