@@ -43,6 +43,7 @@ export default function Agenda() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [statusForm, setStatusForm] = useState("agendado");
   const [busy, setBusy] = useState(false);
+  const [sincronizando, setSincronizando] = useState(false);
 
   const [profissionalId, setProfissionalId] = useState<string | null>(null);
 
@@ -173,13 +174,23 @@ export default function Agenda() {
     return () => clearInterval(interval);
   }, [sheetOpen, carregarAtendimentos]);
 
-  // 🔥 REFRESH MANUAL com debug
+    // 🔥 REFRESH MANUAL: sincroniza com Google Calendar
   const handleRefreshManual = async () => {
-    alert("🔔 Botão de refresh clicado!");
-    await carregarAtendimentos();
-    setUltimaAtualizacao(new Date());
-    alert("✅ Dados recarregados!");
-    toast.success("Agenda atualizada!");
+    setSincronizando(true);
+    try {
+      const { error: syncError } = await supabase.functions.invoke("gcal-pull", { body: {} });
+      if (syncError) {
+        console.error("Erro ao sincronizar com Google:", syncError);
+        toast.error("Erro ao sincronizar. Recarregando dados locais...");
+      }
+      await carregarAtendimentos();
+      toast.success("Agenda atualizada do Google!");
+    } catch (err: any) {
+      console.error(err);
+      toast.error("Erro: " + err.message);
+    } finally {
+      setSincronizando(false);
+    }
   };
 
   const mapeamentoDias = useMemo(() => {
@@ -483,8 +494,15 @@ export default function Agenda() {
               {v === "day" ? "Dia" : v === "week" ? "Semana" : "Mês"}
             </Button>
           ))}
-          <Button variant="outline" size="icon" onClick={handleRefreshManual} className="h-8 w-8 bg-white">
-            <RefreshCw className="w-3.5 h-3.5" />
+                    <Button
+            variant="outline"
+            size="icon"
+            onClick={handleRefreshManual}
+            disabled={sincronizando}
+            className="h-8 w-8 bg-white"
+            title="Sincronizar com Google Calendar"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${sincronizando ? "animate-spin" : ""}`} />
           </Button>
         </div>
       </div>
@@ -852,3 +870,4 @@ export default function Agenda() {
     </div>
   );
 }
+Corrige botão de refresh com sincronização Google
