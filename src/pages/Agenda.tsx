@@ -870,4 +870,3 @@ export default function Agenda() {
     </div>
   );
 }
-Corrige botão de refresh com sincronização Google
