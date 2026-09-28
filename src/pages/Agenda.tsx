@@ -44,7 +44,6 @@ export default function Agenda() {
   const [statusForm, setStatusForm] = useState("agendado");
   const [busy, setBusy] = useState(false);
 
-  // 🔥 Estado para o botão de refresh manual (spinner)
   const [sincronizando, setSincronizando] = useState(false);
 
   const [profissionalId, setProfissionalId] = useState<string | null>(null);
@@ -162,7 +161,6 @@ export default function Agenda() {
     carregarAtendimentos();
   }, [carregarAtendimentos]);
 
-  // 🔥 AUTO-REFRESH: a cada 1 minuto
   useEffect(() => {
     if (sheetOpen) return;
 
@@ -173,11 +171,9 @@ export default function Agenda() {
     return () => clearInterval(interval);
   }, [sheetOpen, carregarAtendimentos]);
 
-  // 🔥 NOVO: refresh manual que TAMBÉM dispara o gcal-pull
   const handleRefreshManual = async () => {
     setSincronizando(true);
     try {
-      // 1. Dispara o gcal-pull para sincronizar com o Google
       const { error: syncError } = await supabase.functions.invoke("gcal-pull", {
         body: {},
       });
@@ -187,9 +183,8 @@ export default function Agenda() {
         toast.error("Erro ao sincronizar com o Google. Recarregando dados locais...");
       }
 
-      // 2. Recarrega os atendimentos do banco
       await carregarAtendimentos();
-      
+
       toast.success("Agenda atualizada do Google!");
     } catch (err: any) {
       console.error(err);
@@ -563,7 +558,11 @@ export default function Agenda() {
             <>
               <div className="bg-slate-50 p-3 rounded-xl border space-y-1 text-xs">
                 {selectedAtend.paciente_id && selectedAtend.paciente?.nome ? (
-                  <Link to={`/pacientes/${selectedAtend.paciente_id}`} className="font-bold text-sm text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1.5" target="_blank">
+                  <Link
+                    to={`/pacientes/${selectedAtend.paciente_id}`}
+                    className="font-bold text-sm text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1.5"
+                    target="_blank"
+                  >
                     {selectedAtend.paciente.nome}
                     <ExternalLink className="w-3.5 h-3.5" />
                   </Link>
@@ -600,17 +599,29 @@ export default function Agenda() {
                     <FileText className="w-3.5 h-3.5" /> Prontuário
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" className="flex-1 text-xs border-blue-300 text-blue-700 hover:bg-blue-50"
-                      onClick={() => navigate(`/pacientes/${selectedAtend.paciente_id}/anamnese/nova`)}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1 text-xs border-blue-300 text-blue-700 hover:bg-blue-50"
+                      onClick={() => navigate(`/pacientes/${selectedAtend.paciente_id}/anamnese/nova`)}
+                    >
                       <Plus className="w-3.5 h-3.5 mr-1" /> Anamnese
                     </Button>
-                    <Button size="sm" variant="outline" className="flex-1 text-xs border-blue-300 text-blue-700 hover:bg-blue-50"
-                      onClick={() => navigate(`/pacientes/${selectedAtend.paciente_id}/evolucao/nova?atendimento=${selectedAtend.id}`)}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1 text-xs border-blue-300 text-blue-700 hover:bg-blue-50"
+                      onClick={() => navigate(`/pacientes/${selectedAtend.paciente_id}/evolucao/nova?atendimento=${selectedAtend.id}`)}
+                    >
                       <ClipboardEdit className="w-3.5 h-3.5 mr-1" /> Evolução
                     </Button>
                     {temProntuario && prontuarioId && (
-                      <Button size="sm" variant="outline" className="flex-1 text-xs border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-                        onClick={() => navigate(`/pacientes/${selectedAtend.paciente_id}/prontuario/${prontuarioId}`)}>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1 text-xs border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                        onClick={() => navigate(`/pacientes/${selectedAtend.paciente_id}/prontuario/${prontuarioId}`)}
+                      >
                         <Eye className="w-3.5 h-3.5 mr-1" /> Ver
                       </Button>
                     )}
@@ -622,4 +633,36 @@ export default function Agenda() {
 
           <div className="space-y-2 border-b pb-3">
             <Label className="text-xs font-bold">Paciente</Label>
-            <Input placeholder="Buscar por nome..." value={buscaPaciente} onChange={(e) => setBuscaPaciente(e.target.value)} className="h-10 text-sm"
+            <Input
+              placeholder="Buscar por nome..."
+              value={buscaPaciente}
+              onChange={(e) => setBuscaPaciente(e.target.value)}
+              className="h-10 text-sm"
+            />
+            {pacientesSugeridos.length > 0 && (
+              <div className="border rounded-lg max-h-40 overflow-y-auto bg-white">
+                {pacientesSugeridos.map(p => (
+                  <button
+                    key={p.id}
+                    onClick={() => {
+                      setPacienteSelecionado(p);
+                      setBuscaPaciente("");
+                      carregarItensPaciente(p.id);
+                    }}
+                    className="w-full text-left px-3 py-2 hover:bg-blue-50 text-sm border-b last:border-0"
+                  >
+                    {p.nome} {p.telefone && `(${p.telefone})`}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2 mt-2">
+              <Input
+                placeholder="Nome do novo paciente..."
+                value={novoNome}
+                onChange={(e) => setNovoNome(e.target.value)}
+                className="flex-1 h-9 text-sm"
+              />
+              <Input
+                placeholder="Telefone"
+                value={novo
