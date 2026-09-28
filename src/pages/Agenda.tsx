@@ -421,7 +421,7 @@ export default function Agenda() {
         <SheetContent side="right" className="w-full sm:max-w-md p-5 space-y-4 overflow-y-auto">
           <SheetHeader>
             <SheetTitle className="text-lg font-bold text-slate-800">Gerenciar Atendimento</SheetTitle>
-          </SheetHeader>{selectedAtend && (
+          </SheetHeader>          {selectedAtend && (
             <>
               <div className="bg-slate-50 p-3 rounded-xl border space-y-1 text-xs">
                 {selectedAtend.paciente_id && selectedAtend.paciente?.nome ? (
@@ -696,5 +696,3 @@ export default function Agenda() {
 }
 
 export default Agenda;
-
-                   
