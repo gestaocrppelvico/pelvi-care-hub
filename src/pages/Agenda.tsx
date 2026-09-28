@@ -43,7 +43,6 @@ export default function Agenda() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [statusForm, setStatusForm] = useState("agendado");
   const [busy, setBusy] = useState(false);
-
   const [sincronizando, setSincronizando] = useState(false);
 
   const [profissionalId, setProfissionalId] = useState<string | null>(null);
@@ -163,28 +162,21 @@ export default function Agenda() {
 
   useEffect(() => {
     if (sheetOpen) return;
-
     const interval = setInterval(() => {
       carregarAtendimentos(true);
     }, 60 * 1000);
-
     return () => clearInterval(interval);
   }, [sheetOpen, carregarAtendimentos]);
 
   const handleRefreshManual = async () => {
     setSincronizando(true);
     try {
-      const { error: syncError } = await supabase.functions.invoke("gcal-pull", {
-        body: {},
-      });
-
+      const { error: syncError } = await supabase.functions.invoke("gcal-pull", { body: {} });
       if (syncError) {
         console.error("Erro ao sincronizar com Google:", syncError);
-        toast.error("Erro ao sincronizar com o Google. Recarregando dados locais...");
+        toast.error("Erro ao sincronizar. Recarregando dados locais...");
       }
-
       await carregarAtendimentos();
-
       toast.success("Agenda atualizada do Google!");
     } catch (err: any) {
       console.error(err);
@@ -207,26 +199,15 @@ export default function Agenda() {
   const carregarItensPaciente = async (pacienteId: string, itemIdParaSelecionar?: string | null) => {
     const { data } = await supabase
       .from("paciente_pacotes")
-      .select(`
-        id,
-        sessoes_restantes,
-        sessoes_totais,
-        autorizacao:autorizacoes(plano, numero_guia),
-        pacote:pacotes(nome),
-        servico:servicos(nome)
-      `)
+      .select(`id, sessoes_restantes, sessoes_totais, autorizacao:autorizacoes(plano, numero_guia), pacote:pacotes(nome), servico:servicos(nome)`)
       .eq("paciente_id", pacienteId)
       .gt("sessoes_restantes", 0)
       .order("created_at", { ascending: false });
 
     setItensPaciente(data || []);
-
     if (data && data.length > 0) {
-      if (itemIdParaSelecionar && data.some(item => item.id === itemIdParaSelecionar)) {
-        setItemSelecionadoId(itemIdParaSelecionar);
-      } else {
-        setItemSelecionadoId(data[0].id);
-      }
+      if (itemIdParaSelecionar && data.some(item => item.id === itemIdParaSelecionar)) setItemSelecionadoId(itemIdParaSelecionar);
+      else setItemSelecionadoId(data[0].id);
     } else {
       setItemSelecionadoId(null);
     }
@@ -237,129 +218,28 @@ export default function Agenda() {
     const { data, error } = await supabase
       .from("pacientes")
       .insert({ nome: novoNome.trim(), telefone: novoTelefone.trim() || null, ativo: true })
-      .select("id, nome, telefone")
-      .single();
+      .select("id, nome, telefone").single();
     if (error) { toast.error("Erro ao criar paciente: " + error.message); return; }
     setPacienteSelecionado(data);
-    setNovoNome("");
-    setNovoTelefone("");
+    setNovoNome(""); setNovoTelefone("");
     carregarItensPaciente(data.id);
     toast.success(`Paciente ${data.nome} criado com sucesso!`);
   };
 
-  const handleAdicionarItem = async () => {
-    if (!pacienteSelecionado) { toast.error("Selecione ou crie um paciente primeiro."); return; }
-    if (!pacoteServicoId) { toast.error("Selecione um pacote ou serviço."); return; }
-
-    const item = listaPacotesServicos.find(p => p.id === pacoteServicoId);
-    if (!item) return;
-
-    try {
-      let novoItemId: string | null = null;
-
-      if (tipoAdicionar === "plano") {
-        if (!planoSelecionadoId) { toast.error("Selecione o plano de saúde."); return; }
-        if (!numeroGuia.trim()) { toast.error("Informe o número da guia."); return; }
-
-        const { data: aut, error: errAut } = await supabase
-          .from("autorizacoes")
-          .insert({
-            paciente_id: pacienteSelecionado.id,
-            plano: listaPlanos.find(p => p.id === planoSelecionadoId)?.nome,
-            numero_guia: numeroGuia.trim(),
-            sessoes_autorizadas: item.tipo_item === "pacote" ? item.numero_sessoes : 1,
-            sessoes_realizadas: 0,
-            status: "ativa"
-          })
-          .select("id")
-          .single();
-        if (errAut) throw errAut;
-
-        const { data: pacoteCriado, error: errPac } = await supabase
-          .from("paciente_pacotes")
-          .insert({
-            paciente_id: pacienteSelecionado.id,
-            autorizacao_id: aut.id,
-            pacote_id: item.tipo_item === "pacote" ? item.id : null,
-            servico_id: item.tipo_item === "servico" ? item.id : null,
-            sessoes_totais: item.tipo_item === "pacote" ? item.numero_sessoes : 1,
-            sessoes_restantes: item.tipo_item === "pacote" ? item.numero_sessoes : 1,
-            preco_pago: item.tipo_item === "pacote" ? item.preco_total : (item.preco || 0),
-            status_pagamento: "pendente"
-          })
-          .select("id")
-          .single();
-        if (errPac) throw errPac;
-        novoItemId = pacoteCriado.id;
-        toast.success("Guia e pacote vinculados ao paciente!");
-      } else {
-        if (item.tipo_item === "pacote") {
-          const { data: pacoteCriado, error } = await supabase
-            .from("paciente_pacotes")
-            .insert({
-              paciente_id: pacienteSelecionado.id,
-              pacote_id: item.id,
-              sessoes_totais: item.numero_sessoes,
-              sessoes_restantes: item.numero_sessoes,
-              preco_pago: item.preco_total || 0,
-              status_pagamento: "pendente"
-            })
-            .select("id")
-            .single();
-          if (error) throw error;
-          novoItemId = pacoteCriado.id;
-        } else {
-          const { data: pacoteCriado, error } = await supabase
-            .from("paciente_pacotes")
-            .insert({
-              paciente_id: pacienteSelecionado.id,
-              servico_id: item.id,
-              sessoes_totais: 1,
-              sessoes_restantes: 1,
-              preco_pago: item.preco || 0,
-              status_pagamento: "pendente"
-            })
-            .select("id")
-            .single();
-          if (error) throw error;
-          novoItemId = pacoteCriado.id;
-        }
-        toast.success("Item vinculado ao paciente!");
-      }
-
-      await carregarItensPaciente(pacienteSelecionado.id);
-      if (novoItemId) setItemSelecionadoId(novoItemId);
-
-      setMostrarAdicionarItem(false);
-      setPlanoSelecionadoId("");
-      setNumeroGuia("");
-      setPacoteServicoId("");
-    } catch (err: any) {
-      toast.error("Erro ao adicionar item: " + err.message);
-    }
-  };
-
   const handleSalvarVinculacao = async () => {
     if (!selectedAtend || !pacienteSelecionado) { toast.error("Paciente não selecionado."); return; }
-    if (itensPaciente.length > 0 && !itemSelecionadoId) { toast.error("Selecione um pacote/serviço para consumir."); return; }
-    if (itensPaciente.length === 0 && !itemSelecionadoId) { toast.error("Este paciente não possui itens financeiros. Adicione um antes de prosseguir."); return; }
-
+    if (itensPaciente.length > 0 && !itemSelecionadoId) { toast.error("Selecione um pacote/serviço."); return; }
+    if (itensPaciente.length === 0 && !itemSelecionadoId) { toast.error("Sem itens financeiros."); return; }
     try {
       const updateData: any = { paciente_id: pacienteSelecionado.id };
       if (itemSelecionadoId) updateData.paciente_pacote_id = itemSelecionadoId;
-      const { error } = await supabase
-        .from("atendimentos")
-        .update(updateData)
-        .eq("id", selectedAtend.id);
+      const { error } = await supabase.from("atendimentos").update(updateData).eq("id", selectedAtend.id);
       if (error) throw error;
-
       setSelectedAtend(prev => prev ? { ...prev, ...updateData } : null);
-      toast.success("Atendimento vinculado ao paciente e ao pacote!");
+      toast.success("Atendimento vinculado!");
       setSheetOpen(false);
       carregarAtendimentos();
-    } catch (err: any) {
-      toast.error("Erro ao vincular: " + err.message);
-    }
+    } catch (err: any) { toast.error("Erro ao vincular: " + err.message); }
   };
 
   const handleSalvarStatus = async (e: React.FormEvent) => {
@@ -368,23 +248,16 @@ export default function Agenda() {
     setBusy(true);
     try {
       if (!selectedAtend.paciente_id || !selectedAtend.paciente_pacote_id) {
-        toast.error("Vincule o paciente e o pacote antes de realizar o check-in.");
-        setBusy(false);
-        return;
+        toast.error("Vincule o paciente e o pacote antes do check-in.");
+        setBusy(false); return;
       }
-      const { error } = await supabase
-        .from("atendimentos")
-        .update({ status: statusForm })
-        .eq("id", selectedAtend.id);
+      const { error } = await supabase.from("atendimentos").update({ status: statusForm }).eq("id", selectedAtend.id);
       if (error) throw error;
-      toast.success("Status atualizado! Sessão consumida e repasse gerado.");
+      toast.success("Status atualizado!");
       setSheetOpen(false);
       carregarAtendimentos();
-    } catch (err: any) {
-      toast.error(err.message);
-    } finally {
-      setBusy(false);
-    }
+    } catch (err: any) { toast.error(err.message); }
+    finally { setBusy(false); }
   };
 
   const handleAnterior = () => {
@@ -398,7 +271,7 @@ export default function Agenda() {
     else setCurrentDate(prev => addMonths(prev, 1));
   };
 
-  const obterEstiloCard = (status: string, corProfissional?: string) => {
+  const obterEstiloCard = (status: string) => {
     if (status === "faltou") return "border-l-4 border-slate-400 bg-slate-100/80 text-slate-400 shadow-none opacity-70";
     if (status === "realizado") return "border-l-4 border-emerald-500 bg-emerald-50/40 text-emerald-900";
     if (status === "cancelado") return "border-l-4 border-red-300 bg-red-50/30 text-red-400 line-through";
@@ -413,11 +286,8 @@ export default function Agenda() {
     setItemSelecionadoId(null);
     setMostrarAdicionarItem(false);
     setBuscaPaciente("");
-    setNovoNome("");
-    setNovoTelefone("");
-    setTemProntuario(false);
-    setProntuarioId(null);
-
+    setNovoNome(""); setNovoTelefone("");
+    setTemProntuario(false); setProntuarioId(null);
     if (at.paciente_id) {
       supabase.from("pacientes").select("id, nome, telefone").eq("id", at.paciente_id).single()
         .then(({ data }) => {
@@ -536,7 +406,6 @@ export default function Agenda() {
                     {listaEvts.slice(0, 2).map(ev => (
                       <div key={ev.id} onClick={() => abrirEdicao(ev)} className={`text-[10px] p-1 rounded font-semibold truncate cursor-pointer ${ev.status === 'faltou' ? 'bg-slate-200 text-slate-400 line-through' : 'bg-blue-100 text-blue-800'}`}>
                         {format(new Date(ev.data_inicio), "HH:mm")} {ev.paciente?.nome?.split(" ")[0] || ev.nome_paciente_livre?.split(" ")[0]}
-                        {ev.paciente_id && ev.tipo && (<span className="ml-1 text-[8px] opacity-70">({ev.tipo})</span>)}
                       </div>
                     ))}
                     {listaEvts.length > 2 && <span className="text-[9px] text-muted-foreground text-center font-bold block">+{listaEvts.length - 2} mais</span>}
@@ -553,8 +422,7 @@ export default function Agenda() {
           <SheetHeader>
             <SheetTitle className="text-lg font-bold text-slate-800">Gerenciar Atendimento</SheetTitle>
           </SheetHeader>
-
-          {selectedAtend && (
+                    {selectedAtend && (
             <>
               <div className="bg-slate-50 p-3 rounded-xl border space-y-1 text-xs">
                 {selectedAtend.paciente_id && selectedAtend.paciente?.nome ? (
@@ -665,4 +533,167 @@ export default function Agenda() {
               />
               <Input
                 placeholder="Telefone"
-                value={novo
+                value={novoTelefone}
+                onChange={(e) => setNovoTelefone(e.target.value)}
+                className="w-28 h-9 text-sm"
+              />
+              <Button variant="outline" size="sm" onClick={handleCriarPaciente} disabled={!novoNome.trim()} className="h-9">
+                <UserPlus className="w-4 h-4 mr-1" /> Criar
+              </Button>
+            </div>
+            {pacienteSelecionado && (
+              <div className="bg-green-50 p-2 rounded text-sm font-medium text-green-800 mt-2">
+                ✅ {pacienteSelecionado.nome} selecionado
+              </div>
+            )}
+          </div>
+
+          {pacienteSelecionado && (
+            <div className="space-y-2">
+              <Label className="text-xs font-bold">Pacote/Serviço a consumir</Label>
+              {itensPaciente.length > 0 ? (
+                <Select value={itemSelecionadoId || ""} onValueChange={setItemSelecionadoId}>
+                  <SelectTrigger className="h-10 text-sm">
+                    <SelectValue placeholder="Selecione um item com saldo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {itensPaciente.map(item => {
+                      const nome = item.pacote?.nome || item.servico?.nome || "Item";
+                      const info = item.autorizacao
+                        ? `${item.autorizacao.plano} (Guia: ${item.autorizacao.numero_guia})`
+                        : "Particular";
+                      return (
+                        <SelectItem key={item.id} value={item.id}>
+                          {nome} – {item.sessoes_restantes} restantes – {info}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <p className="text-xs text-amber-600">Este paciente não possui itens com saldo. Adicione um abaixo.</p>
+              )}
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setMostrarAdicionarItem(!mostrarAdicionarItem)}
+                className="w-full text-xs"
+              >
+                {mostrarAdicionarItem ? "Cancelar" : "+ Adicionar novo pacote/serviço à ficha"}
+              </Button>
+
+              {mostrarAdicionarItem && (
+                <div className="border p-3 rounded bg-slate-50 space-y-2">
+                  <div className="flex gap-2">
+                    <Label className="text-xs">Tipo:</Label>
+                    <div className="flex gap-3">
+                      <label>
+                        <input
+                          type="radio"
+                          value="plano"
+                          checked={tipoAdicionar === "plano"}
+                          onChange={() => setTipoAdicionar("plano")}
+                        /> Plano
+                      </label>
+                      <label>
+                        <input
+                          type="radio"
+                          value="particular"
+                          checked={tipoAdicionar === "particular"}
+                          onChange={() => setTipoAdicionar("particular")}
+                        /> Particular
+                      </label>
+                    </div>
+                  </div>
+
+                  {tipoAdicionar === "plano" && (
+                    <>
+                      <Select value={planoSelecionadoId} onValueChange={setPlanoSelecionadoId}>
+                        <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Plano de saúde" /></SelectTrigger>
+                        <SelectContent>
+                          {listaPlanos.map(p => <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        placeholder="Número da guia"
+                        value={numeroGuia}
+                        onChange={(e) => setNumeroGuia(e.target.value)}
+                        className="h-9 text-sm"
+                      />
+                    </>
+                  )}
+
+                  <Select value={pacoteServicoId} onValueChange={setPacoteServicoId}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Selecione o pacote/serviço" /></SelectTrigger>
+                    <SelectContent>
+                      {listaPacotesServicos.map(item => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.tipo_item === "pacote" ? `📦 ${item.nome} (${item.numero_sessoes} sessões)` : `📄 ${item.nome}`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <Button size="sm" onClick={handleAdicionarItem} className="w-full">
+                    Adicionar à ficha
+                  </Button>
+                </div>
+              )}
+
+              <Button
+                onClick={handleSalvarVinculacao}
+                className="w-full"
+                variant={itensPaciente.length > 0 && itemSelecionadoId ? "default" : "outline"}
+                disabled={!pacienteSelecionado || (itensPaciente.length > 0 && !itemSelecionadoId)}
+              >
+                {itensPaciente.length > 0 && itemSelecionadoId ? (
+                  <>
+                    <CheckCircle2 className="w-4 h-4 mr-2" />
+                    Vincular e Preparar Check-in
+                  </>
+                ) : (
+                  "Vincular e Preparar Check-in"
+                )}
+              </Button>
+            </div>
+          )}
+
+          <form onSubmit={handleSalvarStatus} className="space-y-4 pt-2 border-t">
+            <div className="space-y-2">
+              <Label htmlFor="status" className="text-xs font-bold uppercase tracking-wider text-slate-500">Alterar Status da Sessão</Label>
+              <Select value={statusForm} onValueChange={setStatusForm}>
+                <SelectTrigger id="status" className="h-12 text-sm font-semibold">
+                  <SelectValue placeholder="Selecione o status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="agendado" className="font-medium text-blue-600">Agendado</SelectItem>
+                  <SelectItem value="realizado" className="font-medium text-emerald-600">Realizado</SelectItem>
+                  <SelectItem value="faltou" className="font-medium text-slate-500">Faltou (Enviar para Auditoria)</SelectItem>
+                  <SelectItem value="cancelado" className="font-medium text-red-500">Cancelado / Desmarcado</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {statusForm === "realizado" && !prontoParaCheckin && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800 space-y-1">
+                <p className="font-bold">⚠️ Check-in Bloqueado:</p>
+                <p>Vincule o paciente e o pacote antes de confirmar.</p>
+              </div>
+            )}
+
+            <Button
+              type="submit"
+              className="w-full h-12 text-sm font-bold bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+              disabled={busy || (statusForm === "realizado" && !prontoParaCheckin)}
+            >
+              {busy ? "A atualizar..." : "Confirmar Alteração"}
+            </Button>
+          </form>
+        </SheetContent>
+      </Sheet>
+    </div>
+  );
+}
+
+export default Agenda;
