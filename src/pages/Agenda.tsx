@@ -43,7 +43,6 @@ export default function Agenda() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [statusForm, setStatusForm] = useState("agendado");
   const [busy, setBusy] = useState(false);
-  const [sincronizando, setSincronizando] = useState(false);
 
   const [profissionalId, setProfissionalId] = useState<string | null>(null);
 
@@ -68,6 +67,7 @@ export default function Agenda() {
   const [temProntuario, setTemProntuario] = useState(false);
   const [prontuarioId, setProntuarioId] = useState<string | null>(null);
 
+  // 🔥 Estado para controlar a última atualização
   const [ultimaAtualizacao, setUltimaAtualizacao] = useState<Date | null>(null);
 
   useEffect(() => {
@@ -94,7 +94,9 @@ export default function Agenda() {
         .select("id")
         .eq("user_id", user.id)
         .maybeSingle();
-      if (!error && data) setProfissionalId(data.id);
+      if (!error && data) {
+        setProfissionalId(data.id);
+      }
     };
     fetchProfissional();
   }, [user]);
@@ -148,7 +150,6 @@ export default function Agenda() {
       const { data, error } = await query;
       if (error) throw error;
       setAtendimentos((data as any[]) || []);
-      setUltimaAtualizacao(new Date());
     } catch (err: any) {
       if (!silencioso) toast.error("Erro ao carregar agenda: " + err.message);
     } finally {
@@ -160,30 +161,25 @@ export default function Agenda() {
     carregarAtendimentos();
   }, [carregarAtendimentos]);
 
+  // 🔥 AUTO-REFRESH: a cada 1 minuto (para teste)
   useEffect(() => {
     if (sheetOpen) return;
+
     const interval = setInterval(() => {
       carregarAtendimentos(true);
+      setUltimaAtualizacao(new Date());
     }, 60 * 1000);
+
     return () => clearInterval(interval);
   }, [sheetOpen, carregarAtendimentos]);
 
+  // 🔥 REFRESH MANUAL com debug
   const handleRefreshManual = async () => {
-    setSincronizando(true);
-    try {
-      const { error: syncError } = await supabase.functions.invoke("gcal-pull", { body: {} });
-      if (syncError) {
-        console.error("Erro ao sincronizar com Google:", syncError);
-        toast.error("Erro ao sincronizar. Recarregando dados locais...");
-      }
-      await carregarAtendimentos();
-      toast.success("Agenda atualizada do Google!");
-    } catch (err: any) {
-      console.error(err);
-      toast.error("Erro: " + err.message);
-    } finally {
-      setSincronizando(false);
-    }
+    alert("🔔 Botão de refresh clicado!");
+    await carregarAtendimentos();
+    setUltimaAtualizacao(new Date());
+    alert("✅ Dados recarregados!");
+    toast.success("Agenda atualizada!");
   };
 
   const mapeamentoDias = useMemo(() => {
@@ -199,36 +195,62 @@ export default function Agenda() {
   const carregarItensPaciente = async (pacienteId: string, itemIdParaSelecionar?: string | null) => {
     const { data } = await supabase
       .from("paciente_pacotes")
-      .select(`id, sessoes_restantes, sessoes_totais, autorizacao:autorizacoes(plano, numero_guia), pacote:pacotes(nome), servico:servicos(nome)`)
+      .select(`
+        id,
+        sessoes_restantes,
+        sessoes_totais,
+        autorizacao:autorizacoes(plano, numero_guia),
+        pacote:pacotes(nome),
+        servico:servicos(nome)
+      `)
       .eq("paciente_id", pacienteId)
       .gt("sessoes_restantes", 0)
       .order("created_at", { ascending: false });
-
+    
     setItensPaciente(data || []);
+    
     if (data && data.length > 0) {
-      if (itemIdParaSelecionar && data.some(item => item.id === itemIdParaSelecionar)) setItemSelecionadoId(itemIdParaSelecionar);
-      else setItemSelecionadoId(data[0].id);
+      if (itemIdParaSelecionar && data.some(item => item.id === itemIdParaSelecionar)) {
+        setItemSelecionadoId(itemIdParaSelecionar);
+      } else {
+        setItemSelecionadoId(data[0].id);
+      }
     } else {
       setItemSelecionadoId(null);
     }
   };
 
   const handleCriarPaciente = async () => {
-    if (!novoNome.trim()) { toast.error("Informe o nome do paciente"); return; }
+    if (!novoNome.trim()) {
+      toast.error("Informe o nome do paciente");
+      return;
+    }
     const { data, error } = await supabase
       .from("pacientes")
       .insert({ nome: novoNome.trim(), telefone: novoTelefone.trim() || null, ativo: true })
-      .select("id, nome, telefone").single();
-    if (error) { toast.error("Erro ao criar paciente: " + error.message); return; }
+      .select("id, nome, telefone")
+      .single();
+    if (error) {
+      toast.error("Erro ao criar paciente: " + error.message);
+      return;
+    }
     setPacienteSelecionado(data);
-    setNovoNome(""); setNovoTelefone("");
+    setNovoNome("");
+    setNovoTelefone("");
     carregarItensPaciente(data.id);
     toast.success(`Paciente ${data.nome} criado com sucesso!`);
   };
 
   const handleAdicionarItem = async () => {
-    if (!pacienteSelecionado) { toast.error("Selecione ou crie um paciente primeiro."); return; }
-    if (!pacoteServicoId) { toast.error("Selecione um pacote ou serviço."); return; }
+    if (!pacienteSelecionado) {
+      toast.error("Selecione ou crie um paciente primeiro.");
+      return;
+    }
+    if (!pacoteServicoId) {
+      toast.error("Selecione um pacote ou serviço.");
+      return;
+    }
+
     const item = listaPacotesServicos.find(p => p.id === pacoteServicoId);
     if (!item) return;
 
@@ -248,7 +270,9 @@ export default function Agenda() {
             sessoes_autorizadas: item.tipo_item === "pacote" ? item.numero_sessoes : 1,
             sessoes_realizadas: 0,
             status: "ativa"
-          }).select("id").single();
+          })
+          .select("id")
+          .single();
         if (errAut) throw errAut;
 
         const { data: pacoteCriado, error: errPac } = await supabase
@@ -262,9 +286,12 @@ export default function Agenda() {
             sessoes_restantes: item.tipo_item === "pacote" ? item.numero_sessoes : 1,
             preco_pago: item.tipo_item === "pacote" ? item.preco_total : (item.preco || 0),
             status_pagamento: "pendente"
-          }).select("id").single();
+          })
+          .select("id")
+          .single();
         if (errPac) throw errPac;
         novoItemId = pacoteCriado.id;
+
         toast.success("Guia e pacote vinculados ao paciente!");
       } else {
         if (item.tipo_item === "pacote") {
@@ -277,7 +304,9 @@ export default function Agenda() {
               sessoes_restantes: item.numero_sessoes,
               preco_pago: item.preco_total || 0,
               status_pagamento: "pendente"
-            }).select("id").single();
+            })
+            .select("id")
+            .single();
           if (error) throw error;
           novoItemId = pacoteCriado.id;
         } else {
@@ -290,7 +319,9 @@ export default function Agenda() {
               sessoes_restantes: 1,
               preco_pago: item.preco || 0,
               status_pagamento: "pendente"
-            }).select("id").single();
+            })
+            .select("id")
+            .single();
           if (error) throw error;
           novoItemId = pacoteCriado.id;
         }
@@ -298,7 +329,10 @@ export default function Agenda() {
       }
 
       await carregarItensPaciente(pacienteSelecionado.id);
-      if (novoItemId) setItemSelecionadoId(novoItemId);
+      if (novoItemId) {
+        setItemSelecionadoId(novoItemId);
+      }
+      
       setMostrarAdicionarItem(false);
       setPlanoSelecionadoId("");
       setNumeroGuia("");
@@ -309,19 +343,40 @@ export default function Agenda() {
   };
 
   const handleSalvarVinculacao = async () => {
-    if (!selectedAtend || !pacienteSelecionado) { toast.error("Paciente não selecionado."); return; }
-    if (itensPaciente.length > 0 && !itemSelecionadoId) { toast.error("Selecione um pacote/serviço."); return; }
-    if (itensPaciente.length === 0 && !itemSelecionadoId) { toast.error("Sem itens financeiros."); return; }
+    if (!selectedAtend || !pacienteSelecionado) {
+      toast.error("Paciente não selecionado.");
+      return;
+    }
+    if (itensPaciente.length > 0 && !itemSelecionadoId) {
+      toast.error("Selecione um pacote/serviço para consumir.");
+      return;
+    }
+    if (itensPaciente.length === 0 && !itemSelecionadoId) {
+      toast.error("Este paciente não possui itens financeiros. Adicione um antes de prosseguir.");
+      return;
+    }
+
     try {
-      const updateData: any = { paciente_id: pacienteSelecionado.id };
-      if (itemSelecionadoId) updateData.paciente_pacote_id = itemSelecionadoId;
-      const { error } = await supabase.from("atendimentos").update(updateData).eq("id", selectedAtend.id);
+      const updateData: any = {
+        paciente_id: pacienteSelecionado.id
+      };
+      if (itemSelecionadoId) {
+        updateData.paciente_pacote_id = itemSelecionadoId;
+      }
+      const { error } = await supabase
+        .from("atendimentos")
+        .update(updateData)
+        .eq("id", selectedAtend.id);
       if (error) throw error;
+
       setSelectedAtend(prev => prev ? { ...prev, ...updateData } : null);
-      toast.success("Atendimento vinculado!");
+
+      toast.success("Atendimento vinculado ao paciente e ao pacote!");
       setSheetOpen(false);
       carregarAtendimentos();
-    } catch (err: any) { toast.error("Erro ao vincular: " + err.message); }
+    } catch (err: any) {
+      toast.error("Erro ao vincular: " + err.message);
+    }
   };
 
   const handleSalvarStatus = async (e: React.FormEvent) => {
@@ -330,16 +385,23 @@ export default function Agenda() {
     setBusy(true);
     try {
       if (!selectedAtend.paciente_id || !selectedAtend.paciente_pacote_id) {
-        toast.error("Vincule o paciente e o pacote antes do check-in.");
-        setBusy(false); return;
+        toast.error("Vincule o paciente e o pacote antes de realizar o check-in.");
+        setBusy(false);
+        return;
       }
-      const { error } = await supabase.from("atendimentos").update({ status: statusForm }).eq("id", selectedAtend.id);
+      const { error } = await supabase
+        .from("atendimentos")
+        .update({ status: statusForm })
+        .eq("id", selectedAtend.id);
       if (error) throw error;
-      toast.success("Status atualizado!");
+      toast.success("Status atualizado! Sessão consumida e repasse gerado.");
       setSheetOpen(false);
       carregarAtendimentos();
-    } catch (err: any) { toast.error(err.message); }
-    finally { setBusy(false); }
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleAnterior = () => {
@@ -353,7 +415,7 @@ export default function Agenda() {
     else setCurrentDate(prev => addMonths(prev, 1));
   };
 
-  const obterEstiloCard = (status: string) => {
+  const obterEstiloCard = (status: string, corProfissional?: string) => {
     if (status === "faltou") return "border-l-4 border-slate-400 bg-slate-100/80 text-slate-400 shadow-none opacity-70";
     if (status === "realizado") return "border-l-4 border-emerald-500 bg-emerald-50/40 text-emerald-900";
     if (status === "cancelado") return "border-l-4 border-red-300 bg-red-50/30 text-red-400 line-through";
@@ -368,15 +430,21 @@ export default function Agenda() {
     setItemSelecionadoId(null);
     setMostrarAdicionarItem(false);
     setBuscaPaciente("");
-    setNovoNome(""); setNovoTelefone("");
-    setTemProntuario(false); setProntuarioId(null);
+    setNovoNome("");
+    setNovoTelefone("");
+    setTemProntuario(false);
+    setProntuarioId(null);
+    
     if (at.paciente_id) {
       supabase.from("pacientes").select("id, nome, telefone").eq("id", at.paciente_id).single()
         .then(({ data }) => {
           if (data) {
             setPacienteSelecionado(data);
             carregarItensPaciente(data.id, at.paciente_pacote_id);
-            supabase.from("prontuarios").select("id").eq("paciente_id", data.id).limit(1)
+            supabase.from("prontuarios")
+              .select("id")
+              .eq("paciente_id", data.id)
+              .limit(1)
               .then(({ data: prData }) => {
                 if (prData && prData.length > 0) {
                   setTemProntuario(true);
@@ -392,6 +460,7 @@ export default function Agenda() {
   const pacienteVinculado = selectedAtend?.paciente_id !== null && selectedAtend?.paciente_id !== undefined;
   const pacoteVinculado = selectedAtend?.paciente_pacote_id !== null && selectedAtend?.paciente_pacote_id !== undefined;
   const prontoParaCheckin = pacienteVinculado && pacoteVinculado;
+
   return (
     <div className="space-y-4 p-2 max-w-7xl mx-auto">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-white p-3 rounded-xl border shadow-sm">
@@ -414,15 +483,8 @@ export default function Agenda() {
               {v === "day" ? "Dia" : v === "week" ? "Semana" : "Mês"}
             </Button>
           ))}
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={handleRefreshManual}
-            disabled={sincronizando}
-            className="h-8 w-8 bg-white"
-            title="Sincronizar com Google Calendar"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${sincronizando ? "animate-spin" : ""}`} />
+          <Button variant="outline" size="icon" onClick={handleRefreshManual} className="h-8 w-8 bg-white">
+            <RefreshCw className="w-3.5 h-3.5" />
           </Button>
         </div>
       </div>
@@ -457,7 +519,9 @@ export default function Agenda() {
                     <span className="uppercase tracking-wider text-[10px]">{at.profissional?.nome || "Clínica"}</span>
                     <span>•</span>
                     {at.paciente_id && at.tipo && (
-                      <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4 font-bold uppercase">{at.tipo}</Badge>
+                      <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4 font-bold uppercase">
+                        {at.tipo}
+                      </Badge>
                     )}
                   </div>
                 </div>
@@ -487,6 +551,9 @@ export default function Agenda() {
                     {listaEvts.slice(0, 2).map(ev => (
                       <div key={ev.id} onClick={() => abrirEdicao(ev)} className={`text-[10px] p-1 rounded font-semibold truncate cursor-pointer ${ev.status === 'faltou' ? 'bg-slate-200 text-slate-400 line-through' : 'bg-blue-100 text-blue-800'}`}>
                         {format(new Date(ev.data_inicio), "HH:mm")} {ev.paciente?.nome?.split(" ")[0] || ev.nome_paciente_livre?.split(" ")[0]}
+                        {ev.paciente_id && ev.tipo && (
+                          <span className="ml-1 text-[8px] opacity-70">({ev.tipo})</span>
+                        )}
                       </div>
                     ))}
                     {listaEvts.length > 2 && <span className="text-[9px] text-muted-foreground text-center font-bold block">+{listaEvts.length - 2} mais</span>}
@@ -503,7 +570,7 @@ export default function Agenda() {
           <SheetHeader>
             <SheetTitle className="text-lg font-bold text-slate-800">Gerenciar Atendimento</SheetTitle>
           </SheetHeader>
-
+          
           {selectedAtend && (
             <>
               <div className="bg-slate-50 p-3 rounded-xl border space-y-1 text-xs">
@@ -525,13 +592,21 @@ export default function Agenda() {
 
               <div className="flex flex-col gap-1.5 bg-slate-50 p-3 rounded-xl border text-xs">
                 <div className="flex items-center gap-2">
-                  {pacienteVinculado ? <CheckCircle2 className="w-4 h-4 text-emerald-500" /> : <AlertCircle className="w-4 h-4 text-amber-500" />}
+                  {pacienteVinculado ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-amber-500" />
+                  )}
                   <span className={pacienteVinculado ? "text-emerald-700 font-medium" : "text-amber-700 font-medium"}>
                     {pacienteVinculado ? "Paciente vinculado" : "Paciente não vinculado"}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  {pacoteVinculado ? <CheckCircle2 className="w-4 h-4 text-emerald-500" /> : <AlertCircle className="w-4 h-4 text-amber-500" />}
+                  {pacoteVinculado ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-amber-500" />
+                  )}
                   <span className={pacoteVinculado ? "text-emerald-700 font-medium" : "text-amber-700 font-medium"}>
                     {pacoteVinculado ? "Pacote vinculado" : "Pacote não vinculado"}
                   </span>
@@ -723,8 +798,8 @@ export default function Agenda() {
                 </div>
               )}
 
-              <Button
-                onClick={handleSalvarVinculacao}
+              <Button 
+                onClick={handleSalvarVinculacao} 
                 className="w-full"
                 variant={itensPaciente.length > 0 && itemSelecionadoId ? "default" : "outline"}
                 disabled={!pacienteSelecionado || (itensPaciente.length > 0 && !itemSelecionadoId)}
@@ -740,6 +815,7 @@ export default function Agenda() {
               </Button>
             </div>
           )}
+
           <form onSubmit={handleSalvarStatus} className="space-y-4 pt-2 border-t">
             <div className="space-y-2">
               <Label htmlFor="status" className="text-xs font-bold uppercase tracking-wider text-slate-500">Alterar Status da Sessão</Label>
@@ -776,5 +852,3 @@ export default function Agenda() {
     </div>
   );
 }
-
-export default Agenda;
