@@ -226,6 +226,88 @@ export default function Agenda() {
     toast.success(`Paciente ${data.nome} criado com sucesso!`);
   };
 
+  const handleAdicionarItem = async () => {
+    if (!pacienteSelecionado) { toast.error("Selecione ou crie um paciente primeiro."); return; }
+    if (!pacoteServicoId) { toast.error("Selecione um pacote ou serviço."); return; }
+    const item = listaPacotesServicos.find(p => p.id === pacoteServicoId);
+    if (!item) return;
+
+    try {
+      let novoItemId: string | null = null;
+
+      if (tipoAdicionar === "plano") {
+        if (!planoSelecionadoId) { toast.error("Selecione o plano de saúde."); return; }
+        if (!numeroGuia.trim()) { toast.error("Informe o número da guia."); return; }
+
+        const { data: aut, error: errAut } = await supabase
+          .from("autorizacoes")
+          .insert({
+            paciente_id: pacienteSelecionado.id,
+            plano: listaPlanos.find(p => p.id === planoSelecionadoId)?.nome,
+            numero_guia: numeroGuia.trim(),
+            sessoes_autorizadas: item.tipo_item === "pacote" ? item.numero_sessoes : 1,
+            sessoes_realizadas: 0,
+            status: "ativa"
+          }).select("id").single();
+        if (errAut) throw errAut;
+
+        const { data: pacoteCriado, error: errPac } = await supabase
+          .from("paciente_pacotes")
+          .insert({
+            paciente_id: pacienteSelecionado.id,
+            autorizacao_id: aut.id,
+            pacote_id: item.tipo_item === "pacote" ? item.id : null,
+            servico_id: item.tipo_item === "servico" ? item.id : null,
+            sessoes_totais: item.tipo_item === "pacote" ? item.numero_sessoes : 1,
+            sessoes_restantes: item.tipo_item === "pacote" ? item.numero_sessoes : 1,
+            preco_pago: item.tipo_item === "pacote" ? item.preco_total : (item.preco || 0),
+            status_pagamento: "pendente"
+          }).select("id").single();
+        if (errPac) throw errPac;
+        novoItemId = pacoteCriado.id;
+        toast.success("Guia e pacote vinculados ao paciente!");
+      } else {
+        if (item.tipo_item === "pacote") {
+          const { data: pacoteCriado, error } = await supabase
+            .from("paciente_pacotes")
+            .insert({
+              paciente_id: pacienteSelecionado.id,
+              pacote_id: item.id,
+              sessoes_totais: item.numero_sessoes,
+              sessoes_restantes: item.numero_sessoes,
+              preco_pago: item.preco_total || 0,
+              status_pagamento: "pendente"
+            }).select("id").single();
+          if (error) throw error;
+          novoItemId = pacoteCriado.id;
+        } else {
+          const { data: pacoteCriado, error } = await supabase
+            .from("paciente_pacotes")
+            .insert({
+              paciente_id: pacienteSelecionado.id,
+              servico_id: item.id,
+              sessoes_totais: 1,
+              sessoes_restantes: 1,
+              preco_pago: item.preco || 0,
+              status_pagamento: "pendente"
+            }).select("id").single();
+          if (error) throw error;
+          novoItemId = pacoteCriado.id;
+        }
+        toast.success("Item vinculado ao paciente!");
+      }
+
+      await carregarItensPaciente(pacienteSelecionado.id);
+      if (novoItemId) setItemSelecionadoId(novoItemId);
+      setMostrarAdicionarItem(false);
+      setPlanoSelecionadoId("");
+      setNumeroGuia("");
+      setPacoteServicoId("");
+    } catch (err: any) {
+      toast.error("Erro ao adicionar item: " + err.message);
+    }
+  };
+
   const handleSalvarVinculacao = async () => {
     if (!selectedAtend || !pacienteSelecionado) { toast.error("Paciente não selecionado."); return; }
     if (itensPaciente.length > 0 && !itemSelecionadoId) { toast.error("Selecione um pacote/serviço."); return; }
@@ -310,7 +392,6 @@ export default function Agenda() {
   const pacienteVinculado = selectedAtend?.paciente_id !== null && selectedAtend?.paciente_id !== undefined;
   const pacoteVinculado = selectedAtend?.paciente_pacote_id !== null && selectedAtend?.paciente_pacote_id !== undefined;
   const prontoParaCheckin = pacienteVinculado && pacoteVinculado;
-
   return (
     <div className="space-y-4 p-2 max-w-7xl mx-auto">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-white p-3 rounded-xl border shadow-sm">
@@ -421,7 +502,9 @@ export default function Agenda() {
         <SheetContent side="right" className="w-full sm:max-w-md p-5 space-y-4 overflow-y-auto">
           <SheetHeader>
             <SheetTitle className="text-lg font-bold text-slate-800">Gerenciar Atendimento</SheetTitle>
-          </SheetHeader>          {selectedAtend && (
+          </SheetHeader>
+
+          {selectedAtend && (
             <>
               <div className="bg-slate-50 p-3 rounded-xl border space-y-1 text-xs">
                 {selectedAtend.paciente_id && selectedAtend.paciente?.nome ? (
@@ -657,7 +740,6 @@ export default function Agenda() {
               </Button>
             </div>
           )}
-
           <form onSubmit={handleSalvarStatus} className="space-y-4 pt-2 border-t">
             <div className="space-y-2">
               <Label htmlFor="status" className="text-xs font-bold uppercase tracking-wider text-slate-500">Alterar Status da Sessão</Label>
