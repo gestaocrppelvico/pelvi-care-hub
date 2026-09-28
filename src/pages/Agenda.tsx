@@ -44,6 +44,9 @@ export default function Agenda() {
   const [statusForm, setStatusForm] = useState("agendado");
   const [busy, setBusy] = useState(false);
 
+  // 🔥 Estado para o botão de refresh manual (spinner)
+  const [sincronizando, setSincronizando] = useState(false);
+
   const [profissionalId, setProfissionalId] = useState<string | null>(null);
 
   const [buscaPaciente, setBuscaPaciente] = useState("");
@@ -67,7 +70,6 @@ export default function Agenda() {
   const [temProntuario, setTemProntuario] = useState(false);
   const [prontuarioId, setProntuarioId] = useState<string | null>(null);
 
-  // 🔥 Estado para controlar a última atualização
   const [ultimaAtualizacao, setUltimaAtualizacao] = useState<Date | null>(null);
 
   useEffect(() => {
@@ -94,9 +96,7 @@ export default function Agenda() {
         .select("id")
         .eq("user_id", user.id)
         .maybeSingle();
-      if (!error && data) {
-        setProfissionalId(data.id);
-      }
+      if (!error && data) setProfissionalId(data.id);
     };
     fetchProfissional();
   }, [user]);
@@ -150,6 +150,7 @@ export default function Agenda() {
       const { data, error } = await query;
       if (error) throw error;
       setAtendimentos((data as any[]) || []);
+      setUltimaAtualizacao(new Date());
     } catch (err: any) {
       if (!silencioso) toast.error("Erro ao carregar agenda: " + err.message);
     } finally {
@@ -161,25 +162,41 @@ export default function Agenda() {
     carregarAtendimentos();
   }, [carregarAtendimentos]);
 
-  // 🔥 AUTO-REFRESH: a cada 1 minuto (para teste)
+  // 🔥 AUTO-REFRESH: a cada 1 minuto
   useEffect(() => {
     if (sheetOpen) return;
 
     const interval = setInterval(() => {
       carregarAtendimentos(true);
-      setUltimaAtualizacao(new Date());
     }, 60 * 1000);
 
     return () => clearInterval(interval);
   }, [sheetOpen, carregarAtendimentos]);
 
-  // 🔥 REFRESH MANUAL com debug
+  // 🔥 NOVO: refresh manual que TAMBÉM dispara o gcal-pull
   const handleRefreshManual = async () => {
-    alert("🔔 Botão de refresh clicado!");
-    await carregarAtendimentos();
-    setUltimaAtualizacao(new Date());
-    alert("✅ Dados recarregados!");
-    toast.success("Agenda atualizada!");
+    setSincronizando(true);
+    try {
+      // 1. Dispara o gcal-pull para sincronizar com o Google
+      const { error: syncError } = await supabase.functions.invoke("gcal-pull", {
+        body: {},
+      });
+
+      if (syncError) {
+        console.error("Erro ao sincronizar com Google:", syncError);
+        toast.error("Erro ao sincronizar com o Google. Recarregando dados locais...");
+      }
+
+      // 2. Recarrega os atendimentos do banco
+      await carregarAtendimentos();
+      
+      toast.success("Agenda atualizada do Google!");
+    } catch (err: any) {
+      console.error(err);
+      toast.error("Erro: " + err.message);
+    } finally {
+      setSincronizando(false);
+    }
   };
 
   const mapeamentoDias = useMemo(() => {
@@ -206,9 +223,9 @@ export default function Agenda() {
       .eq("paciente_id", pacienteId)
       .gt("sessoes_restantes", 0)
       .order("created_at", { ascending: false });
-    
+
     setItensPaciente(data || []);
-    
+
     if (data && data.length > 0) {
       if (itemIdParaSelecionar && data.some(item => item.id === itemIdParaSelecionar)) {
         setItemSelecionadoId(itemIdParaSelecionar);
@@ -221,19 +238,13 @@ export default function Agenda() {
   };
 
   const handleCriarPaciente = async () => {
-    if (!novoNome.trim()) {
-      toast.error("Informe o nome do paciente");
-      return;
-    }
+    if (!novoNome.trim()) { toast.error("Informe o nome do paciente"); return; }
     const { data, error } = await supabase
       .from("pacientes")
       .insert({ nome: novoNome.trim(), telefone: novoTelefone.trim() || null, ativo: true })
       .select("id, nome, telefone")
       .single();
-    if (error) {
-      toast.error("Erro ao criar paciente: " + error.message);
-      return;
-    }
+    if (error) { toast.error("Erro ao criar paciente: " + error.message); return; }
     setPacienteSelecionado(data);
     setNovoNome("");
     setNovoTelefone("");
@@ -242,14 +253,8 @@ export default function Agenda() {
   };
 
   const handleAdicionarItem = async () => {
-    if (!pacienteSelecionado) {
-      toast.error("Selecione ou crie um paciente primeiro.");
-      return;
-    }
-    if (!pacoteServicoId) {
-      toast.error("Selecione um pacote ou serviço.");
-      return;
-    }
+    if (!pacienteSelecionado) { toast.error("Selecione ou crie um paciente primeiro."); return; }
+    if (!pacoteServicoId) { toast.error("Selecione um pacote ou serviço."); return; }
 
     const item = listaPacotesServicos.find(p => p.id === pacoteServicoId);
     if (!item) return;
@@ -291,7 +296,6 @@ export default function Agenda() {
           .single();
         if (errPac) throw errPac;
         novoItemId = pacoteCriado.id;
-
         toast.success("Guia e pacote vinculados ao paciente!");
       } else {
         if (item.tipo_item === "pacote") {
@@ -329,10 +333,8 @@ export default function Agenda() {
       }
 
       await carregarItensPaciente(pacienteSelecionado.id);
-      if (novoItemId) {
-        setItemSelecionadoId(novoItemId);
-      }
-      
+      if (novoItemId) setItemSelecionadoId(novoItemId);
+
       setMostrarAdicionarItem(false);
       setPlanoSelecionadoId("");
       setNumeroGuia("");
@@ -343,26 +345,13 @@ export default function Agenda() {
   };
 
   const handleSalvarVinculacao = async () => {
-    if (!selectedAtend || !pacienteSelecionado) {
-      toast.error("Paciente não selecionado.");
-      return;
-    }
-    if (itensPaciente.length > 0 && !itemSelecionadoId) {
-      toast.error("Selecione um pacote/serviço para consumir.");
-      return;
-    }
-    if (itensPaciente.length === 0 && !itemSelecionadoId) {
-      toast.error("Este paciente não possui itens financeiros. Adicione um antes de prosseguir.");
-      return;
-    }
+    if (!selectedAtend || !pacienteSelecionado) { toast.error("Paciente não selecionado."); return; }
+    if (itensPaciente.length > 0 && !itemSelecionadoId) { toast.error("Selecione um pacote/serviço para consumir."); return; }
+    if (itensPaciente.length === 0 && !itemSelecionadoId) { toast.error("Este paciente não possui itens financeiros. Adicione um antes de prosseguir."); return; }
 
     try {
-      const updateData: any = {
-        paciente_id: pacienteSelecionado.id
-      };
-      if (itemSelecionadoId) {
-        updateData.paciente_pacote_id = itemSelecionadoId;
-      }
+      const updateData: any = { paciente_id: pacienteSelecionado.id };
+      if (itemSelecionadoId) updateData.paciente_pacote_id = itemSelecionadoId;
       const { error } = await supabase
         .from("atendimentos")
         .update(updateData)
@@ -370,7 +359,6 @@ export default function Agenda() {
       if (error) throw error;
 
       setSelectedAtend(prev => prev ? { ...prev, ...updateData } : null);
-
       toast.success("Atendimento vinculado ao paciente e ao pacote!");
       setSheetOpen(false);
       carregarAtendimentos();
@@ -434,17 +422,14 @@ export default function Agenda() {
     setNovoTelefone("");
     setTemProntuario(false);
     setProntuarioId(null);
-    
+
     if (at.paciente_id) {
       supabase.from("pacientes").select("id, nome, telefone").eq("id", at.paciente_id).single()
         .then(({ data }) => {
           if (data) {
             setPacienteSelecionado(data);
             carregarItensPaciente(data.id, at.paciente_pacote_id);
-            supabase.from("prontuarios")
-              .select("id")
-              .eq("paciente_id", data.id)
-              .limit(1)
+            supabase.from("prontuarios").select("id").eq("paciente_id", data.id).limit(1)
               .then(({ data: prData }) => {
                 if (prData && prData.length > 0) {
                   setTemProntuario(true);
@@ -483,8 +468,15 @@ export default function Agenda() {
               {v === "day" ? "Dia" : v === "week" ? "Semana" : "Mês"}
             </Button>
           ))}
-          <Button variant="outline" size="icon" onClick={handleRefreshManual} className="h-8 w-8 bg-white">
-            <RefreshCw className="w-3.5 h-3.5" />
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={handleRefreshManual}
+            disabled={sincronizando}
+            className="h-8 w-8 bg-white"
+            title="Sincronizar com Google Calendar"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${sincronizando ? "animate-spin" : ""}`} />
           </Button>
         </div>
       </div>
@@ -519,9 +511,7 @@ export default function Agenda() {
                     <span className="uppercase tracking-wider text-[10px]">{at.profissional?.nome || "Clínica"}</span>
                     <span>•</span>
                     {at.paciente_id && at.tipo && (
-                      <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4 font-bold uppercase">
-                        {at.tipo}
-                      </Badge>
+                      <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4 font-bold uppercase">{at.tipo}</Badge>
                     )}
                   </div>
                 </div>
@@ -551,9 +541,7 @@ export default function Agenda() {
                     {listaEvts.slice(0, 2).map(ev => (
                       <div key={ev.id} onClick={() => abrirEdicao(ev)} className={`text-[10px] p-1 rounded font-semibold truncate cursor-pointer ${ev.status === 'faltou' ? 'bg-slate-200 text-slate-400 line-through' : 'bg-blue-100 text-blue-800'}`}>
                         {format(new Date(ev.data_inicio), "HH:mm")} {ev.paciente?.nome?.split(" ")[0] || ev.nome_paciente_livre?.split(" ")[0]}
-                        {ev.paciente_id && ev.tipo && (
-                          <span className="ml-1 text-[8px] opacity-70">({ev.tipo})</span>
-                        )}
+                        {ev.paciente_id && ev.tipo && (<span className="ml-1 text-[8px] opacity-70">({ev.tipo})</span>)}
                       </div>
                     ))}
                     {listaEvts.length > 2 && <span className="text-[9px] text-muted-foreground text-center font-bold block">+{listaEvts.length - 2} mais</span>}
@@ -570,16 +558,12 @@ export default function Agenda() {
           <SheetHeader>
             <SheetTitle className="text-lg font-bold text-slate-800">Gerenciar Atendimento</SheetTitle>
           </SheetHeader>
-          
+
           {selectedAtend && (
             <>
               <div className="bg-slate-50 p-3 rounded-xl border space-y-1 text-xs">
                 {selectedAtend.paciente_id && selectedAtend.paciente?.nome ? (
-                  <Link
-                    to={`/pacientes/${selectedAtend.paciente_id}`}
-                    className="font-bold text-sm text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1.5"
-                    target="_blank"
-                  >
+                  <Link to={`/pacientes/${selectedAtend.paciente_id}`} className="font-bold text-sm text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1.5" target="_blank">
                     {selectedAtend.paciente.nome}
                     <ExternalLink className="w-3.5 h-3.5" />
                   </Link>
@@ -592,21 +576,13 @@ export default function Agenda() {
 
               <div className="flex flex-col gap-1.5 bg-slate-50 p-3 rounded-xl border text-xs">
                 <div className="flex items-center gap-2">
-                  {pacienteVinculado ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                  ) : (
-                    <AlertCircle className="w-4 h-4 text-amber-500" />
-                  )}
+                  {pacienteVinculado ? <CheckCircle2 className="w-4 h-4 text-emerald-500" /> : <AlertCircle className="w-4 h-4 text-amber-500" />}
                   <span className={pacienteVinculado ? "text-emerald-700 font-medium" : "text-amber-700 font-medium"}>
                     {pacienteVinculado ? "Paciente vinculado" : "Paciente não vinculado"}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  {pacoteVinculado ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                  ) : (
-                    <AlertCircle className="w-4 h-4 text-amber-500" />
-                  )}
+                  {pacoteVinculado ? <CheckCircle2 className="w-4 h-4 text-emerald-500" /> : <AlertCircle className="w-4 h-4 text-amber-500" />}
                   <span className={pacoteVinculado ? "text-emerald-700 font-medium" : "text-amber-700 font-medium"}>
                     {pacoteVinculado ? "Pacote vinculado" : "Pacote não vinculado"}
                   </span>
@@ -624,29 +600,17 @@ export default function Agenda() {
                     <FileText className="w-3.5 h-3.5" /> Prontuário
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="flex-1 text-xs border-blue-300 text-blue-700 hover:bg-blue-50"
-                      onClick={() => navigate(`/pacientes/${selectedAtend.paciente_id}/anamnese/nova`)}
-                    >
+                    <Button size="sm" variant="outline" className="flex-1 text-xs border-blue-300 text-blue-700 hover:bg-blue-50"
+                      onClick={() => navigate(`/pacientes/${selectedAtend.paciente_id}/anamnese/nova`)}>
                       <Plus className="w-3.5 h-3.5 mr-1" /> Anamnese
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="flex-1 text-xs border-blue-300 text-blue-700 hover:bg-blue-50"
-                      onClick={() => navigate(`/pacientes/${selectedAtend.paciente_id}/evolucao/nova?atendimento=${selectedAtend.id}`)}
-                    >
+                    <Button size="sm" variant="outline" className="flex-1 text-xs border-blue-300 text-blue-700 hover:bg-blue-50"
+                      onClick={() => navigate(`/pacientes/${selectedAtend.paciente_id}/evolucao/nova?atendimento=${selectedAtend.id}`)}>
                       <ClipboardEdit className="w-3.5 h-3.5 mr-1" /> Evolução
                     </Button>
                     {temProntuario && prontuarioId && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="flex-1 text-xs border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-                        onClick={() => navigate(`/pacientes/${selectedAtend.paciente_id}/prontuario/${prontuarioId}`)}
-                      >
+                      <Button size="sm" variant="outline" className="flex-1 text-xs border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                        onClick={() => navigate(`/pacientes/${selectedAtend.paciente_id}/prontuario/${prontuarioId}`)}>
                         <Eye className="w-3.5 h-3.5 mr-1" /> Ver
                       </Button>
                     )}
@@ -658,197 +622,4 @@ export default function Agenda() {
 
           <div className="space-y-2 border-b pb-3">
             <Label className="text-xs font-bold">Paciente</Label>
-            <Input
-              placeholder="Buscar por nome..."
-              value={buscaPaciente}
-              onChange={(e) => setBuscaPaciente(e.target.value)}
-              className="h-10 text-sm"
-            />
-            {pacientesSugeridos.length > 0 && (
-              <div className="border rounded-lg max-h-40 overflow-y-auto bg-white">
-                {pacientesSugeridos.map(p => (
-                  <button
-                    key={p.id}
-                    onClick={() => {
-                      setPacienteSelecionado(p);
-                      setBuscaPaciente("");
-                      carregarItensPaciente(p.id);
-                    }}
-                    className="w-full text-left px-3 py-2 hover:bg-blue-50 text-sm border-b last:border-0"
-                  >
-                    {p.nome} {p.telefone && `(${p.telefone})`}
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="flex gap-2 mt-2">
-              <Input
-                placeholder="Nome do novo paciente..."
-                value={novoNome}
-                onChange={(e) => setNovoNome(e.target.value)}
-                className="flex-1 h-9 text-sm"
-              />
-              <Input
-                placeholder="Telefone"
-                value={novoTelefone}
-                onChange={(e) => setNovoTelefone(e.target.value)}
-                className="w-28 h-9 text-sm"
-              />
-              <Button variant="outline" size="sm" onClick={handleCriarPaciente} disabled={!novoNome.trim()} className="h-9">
-                <UserPlus className="w-4 h-4 mr-1" /> Criar
-              </Button>
-            </div>
-            {pacienteSelecionado && (
-              <div className="bg-green-50 p-2 rounded text-sm font-medium text-green-800 mt-2">
-                ✅ {pacienteSelecionado.nome} selecionado
-              </div>
-            )}
-          </div>
-
-          {pacienteSelecionado && (
-            <div className="space-y-2">
-              <Label className="text-xs font-bold">Pacote/Serviço a consumir</Label>
-              {itensPaciente.length > 0 ? (
-                <Select value={itemSelecionadoId || ""} onValueChange={setItemSelecionadoId}>
-                  <SelectTrigger className="h-10 text-sm">
-                    <SelectValue placeholder="Selecione um item com saldo" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {itensPaciente.map(item => {
-                      const nome = item.pacote?.nome || item.servico?.nome || "Item";
-                      const info = item.autorizacao
-                        ? `${item.autorizacao.plano} (Guia: ${item.autorizacao.numero_guia})`
-                        : "Particular";
-                      return (
-                        <SelectItem key={item.id} value={item.id}>
-                          {nome} – {item.sessoes_restantes} restantes – {info}
-                        </SelectItem>
-                      );
-                    })}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <p className="text-xs text-amber-600">Este paciente não possui itens com saldo. Adicione um abaixo.</p>
-              )}
-
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setMostrarAdicionarItem(!mostrarAdicionarItem)}
-                className="w-full text-xs"
-              >
-                {mostrarAdicionarItem ? "Cancelar" : "+ Adicionar novo pacote/serviço à ficha"}
-              </Button>
-
-              {mostrarAdicionarItem && (
-                <div className="border p-3 rounded bg-slate-50 space-y-2">
-                  <div className="flex gap-2">
-                    <Label className="text-xs">Tipo:</Label>
-                    <div className="flex gap-3">
-                      <label>
-                        <input
-                          type="radio"
-                          value="plano"
-                          checked={tipoAdicionar === "plano"}
-                          onChange={() => setTipoAdicionar("plano")}
-                        /> Plano
-                      </label>
-                      <label>
-                        <input
-                          type="radio"
-                          value="particular"
-                          checked={tipoAdicionar === "particular"}
-                          onChange={() => setTipoAdicionar("particular")}
-                        /> Particular
-                      </label>
-                    </div>
-                  </div>
-
-                  {tipoAdicionar === "plano" && (
-                    <>
-                      <Select value={planoSelecionadoId} onValueChange={setPlanoSelecionadoId}>
-                        <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Plano de saúde" /></SelectTrigger>
-                        <SelectContent>
-                          {listaPlanos.map(p => <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                      <Input
-                        placeholder="Número da guia"
-                        value={numeroGuia}
-                        onChange={(e) => setNumeroGuia(e.target.value)}
-                        className="h-9 text-sm"
-                      />
-                    </>
-                  )}
-
-                  <Select value={pacoteServicoId} onValueChange={setPacoteServicoId}>
-                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Selecione o pacote/serviço" /></SelectTrigger>
-                    <SelectContent>
-                      {listaPacotesServicos.map(item => (
-                        <SelectItem key={item.id} value={item.id}>
-                          {item.tipo_item === "pacote" ? `📦 ${item.nome} (${item.numero_sessoes} sessões)` : `📄 ${item.nome}`}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-
-                  <Button size="sm" onClick={handleAdicionarItem} className="w-full">
-                    Adicionar à ficha
-                  </Button>
-                </div>
-              )}
-
-              <Button 
-                onClick={handleSalvarVinculacao} 
-                className="w-full"
-                variant={itensPaciente.length > 0 && itemSelecionadoId ? "default" : "outline"}
-                disabled={!pacienteSelecionado || (itensPaciente.length > 0 && !itemSelecionadoId)}
-              >
-                {itensPaciente.length > 0 && itemSelecionadoId ? (
-                  <>
-                    <CheckCircle2 className="w-4 h-4 mr-2" />
-                    Vincular e Preparar Check-in
-                  </>
-                ) : (
-                  "Vincular e Preparar Check-in"
-                )}
-              </Button>
-            </div>
-          )}
-
-          <form onSubmit={handleSalvarStatus} className="space-y-4 pt-2 border-t">
-            <div className="space-y-2">
-              <Label htmlFor="status" className="text-xs font-bold uppercase tracking-wider text-slate-500">Alterar Status da Sessão</Label>
-              <Select value={statusForm} onValueChange={setStatusForm}>
-                <SelectTrigger id="status" className="h-12 text-sm font-semibold">
-                  <SelectValue placeholder="Selecione o status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="agendado" className="font-medium text-blue-600">Agendado</SelectItem>
-                  <SelectItem value="realizado" className="font-medium text-emerald-600">Realizado</SelectItem>
-                  <SelectItem value="faltou" className="font-medium text-slate-500">Faltou (Enviar para Auditoria)</SelectItem>
-                  <SelectItem value="cancelado" className="font-medium text-red-500">Cancelado / Desmarcado</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {statusForm === "realizado" && !prontoParaCheckin && (
-              <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800 space-y-1">
-                <p className="font-bold">⚠️ Check-in Bloqueado:</p>
-                <p>Vincule o paciente e o pacote antes de confirmar.</p>
-              </div>
-            )}
-
-            <Button
-              type="submit"
-              className="w-full h-12 text-sm font-bold bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
-              disabled={busy || (statusForm === "realizado" && !prontoParaCheckin)}
-            >
-              {busy ? "A atualizar..." : "Confirmar Alteração"}
-            </Button>
-          </form>
-        </SheetContent>
-      </Sheet>
-    </div>
-  );
-}
+            <Input placeholder="Buscar por nome..." value={buscaPaciente} onChange={(e) => setBuscaPaciente(e.target.value)} className="h-10 text-sm"
