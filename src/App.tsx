@@ -1,4 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { Toaster } from "@/components/ui/toaster";
+import { Toaster as Sonner } from "@/components/ui/sonner";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Layout } from "@/components/Layout";
 import Auth from "@/pages/Auth";
@@ -25,10 +27,14 @@ import CrmTemplates from "@/pages/CrmTemplates";
 import Configuracoes from "@/pages/Configuracoes";
 import PlanosConfig from "@/pages/PlanosConfig";
 import VinculoPacientes from "@/pages/VinculoPacientes";
+import RelatorioRepasses from "@/pages/RelatorioRepasses";
+import NotFound from "@/pages/NotFound";
 
 function App() {
   return (
     <BrowserRouter>
+      <Toaster />
+      <Sonner />
       <Routes>
         <Route path="/auth" element={<Auth />} />
         <Route element={<ProtectedRoute />}>
@@ -54,6 +60,7 @@ function App() {
             <Route path="/financeiro" element={<Financeiro />} />
             <Route path="/financeiro/servicos" element={<FinanceiroServicos />} />
             <Route path="/financeiro/repasses" element={<FinanceiroRepasses />} />
+            <Route path="/financeiro/relatorios" element={<RelatorioRepasses />} />
             <Route path="/financeiro/vincular" element={<VinculoPacientes />} />
             <Route path="/financeiro/pagamentos" element={<Pagamentos />} />
             
@@ -65,6 +72,7 @@ function App() {
             <Route path="/configuracoes/planos" element={<PlanosConfig />} />
             
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="*" element={<NotFound />} />
           </Route>
         </Route>
       </Routes>
