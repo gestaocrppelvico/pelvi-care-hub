@@ -11,8 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Clock, RefreshCw, ChevronLeft, ChevronRight, Link2, Wallet, Plus, UserPlus, CheckCircle2, AlertCircle, FileText, ClipboardEdit, Eye, ExternalLink } from "lucide-react";
-
+import { Clock, RefreshCw, ChevronLeft, ChevronRight, Link2, Wallet, Plus, UserPlus, CheckCircle2, AlertCircle, FileText, ClipboardEdit, Eye, ExternalLink, Trash2 } from "lucide-react";
 interface Atendimento {
   id: string;
   data_inicio: string;
