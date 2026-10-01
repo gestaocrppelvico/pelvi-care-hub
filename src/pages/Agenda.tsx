@@ -543,7 +543,7 @@ export default function Agenda() {
                     )}
                   </div>
                 </div>
-                <Badge className={`text-[10px] font-bold uppercase h-5 px-2 ${at.status === "realizado" ? "bg-emerald-600" : at.status === "faltou" ? "bg-slate-400" : at.status === "cancelado" ? "bg-red-400" : "bg-blue-600"}`}>
+                <Badge className={`text-[10px] font-bold uppercase h-5 px-2 ${at.status === "realizado" ? "bg-emerald-600" : at.status === "faltou" ? "bg-slate-400" : at.status === "cancelado" ? "bg-red-400" : at.status === "remarcado" ? "bg-orange-500" : "bg-blue-600"}`}>
                   {at.status}
                 </Badge>
               </div>
