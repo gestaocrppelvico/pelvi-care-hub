@@ -215,7 +215,10 @@ export default function Financeiro() {
       }
       
       if (start && end) {
-        filtrados = filtrados.filter(r => isWithinInterval(parseISO(r.created_at), { start, end }));
+        filtrados = filtrados.filter(r => {
+  const dataRef = (r as any).data_atendimento || r.created_at;
+  return isWithinInterval(parseISO(dataRef), { start, end });
+});
       }
     }
 
