@@ -413,6 +413,36 @@ export default function Agenda() {
       setBusy(false);
     }
   };
+  // 🔥 NOVO: apagar atendimento manualmente (apenas admin)
+  const handleApagarAtendimento = async () => {
+    if (!selectedAtend) return;
+    if (!isAdmin) {
+      toast.error("Apenas administradores podem apagar.");
+      return;
+    }
+
+    const confirmacao = confirm(
+      `Tem certeza que deseja apagar este atendimento?\n\n` +
+      `Paciente: ${selectedAtend.paciente?.nome || selectedAtend.nome_paciente_livre || "Sem nome"}\n` +
+      `Data: ${format(new Date(selectedAtend.data_inicio), "dd/MM/yyyy 'às' HH:mm")}\n\n` +
+      `⚠️ ATENÇÃO: Se o evento ainda estiver no Google Calendar, ele vai voltar em até 10 minutos.`
+    );
+    if (!confirmacao) return;
+
+    try {
+      const { error } = await supabase
+        .from("atendimentos")
+        .delete()
+        .eq("id", selectedAtend.id);
+      if (error) throw error;
+
+      toast.success("Atendimento apagado do app!");
+      setSheetOpen(false);
+      carregarAtendimentos();
+    } catch (err: any) {
+      toast.error("Erro ao apagar: " + err.message);
+    }
+  };
 
   const handleAnterior = () => {
     if (view === "day") setCurrentDate(prev => addDays(prev, -1));
@@ -864,6 +894,23 @@ export default function Agenda() {
               {busy ? "A atualizar..." : "Confirmar Alteração"}
             </Button>
           </form>
+          
+          {/* 🔥 BOTÃO APAGAR — APENAS ADMIN */}
+          {isAdmin && selectedAtend && (
+            <div className="pt-4 border-t border-red-200">
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={handleApagarAtendimento}
+                className="w-full h-11 text-sm font-bold"
+              >
+                <Trash2 className="w-4 h-4 mr-2" /> Apagar do app
+              </Button>
+              <p className="text-[10px] text-center text-muted-foreground mt-2">
+                Remove apenas do app. Se ainda estiver no Google Calendar, volta em 10 min.
+              </p>
+            </div>
+          )}
         </SheetContent>
       </Sheet>
     </div>
