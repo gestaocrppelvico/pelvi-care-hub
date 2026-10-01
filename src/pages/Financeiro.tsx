@@ -229,12 +229,16 @@ export default function Financeiro() {
       );
     }
 
-    const comparar = (a: RepasseRow, b: RepasseRow) => {
+        const comparar = (a: RepasseRow, b: RepasseRow) => {
+      // 🔥 Usar data_atendimento (data da sessão) em vez de created_at
+      const dataA = (a as any).data_atendimento || a.atendimento?.data_inicio || a.created_at;
+      const dataB = (b as any).data_atendimento || b.atendimento?.data_inicio || b.created_at;
+      
       switch (ordenacao) {
         case "data_desc":
-          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          return new Date(dataB).getTime() - new Date(dataA).getTime();
         case "data_asc":
-          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+          return new Date(dataA).getTime() - new Date(dataB).getTime();
         case "paciente_asc":
           const nomeA = a.atendimento?.paciente?.nome || "";
           const nomeB = b.atendimento?.paciente?.nome || "";
