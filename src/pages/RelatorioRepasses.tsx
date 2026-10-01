@@ -1,7 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/hooks/useAuth";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,25 +16,21 @@ interface Repasse {
   valor_repasse: number;
   status: string;
   created_at: string;
+  data_atendimento: string | null;
   profissional?: { id: string; nome: string };
-  atendimento?: { tipo: string; paciente?: { nome: string } };
+  atendimento?: { tipo: string; data_inicio: string; paciente?: { nome: string } };
 }
 
 export default function RelatorioRepasses() {
   const navigate = useNavigate();
-  const { isAdmin, isSecretaria } = useAuth();
-  const podeGerenciar = isAdmin || isSecretaria;
-  
   const [loading, setLoading] = useState(false);
   const [repasses, setRepasses] = useState<Repasse[]>([]);
-  
   const [profissionaisLista, setProfissionaisLista] = useState<{id: string, nome: string}[]>([]);
 
   const [dataInicio, setDataInicio] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
   const [dataFim, setDataFim] = useState(format(endOfMonth(new Date()), "yyyy-MM-dd"));
   const [filtroFisio, setFiltroFisio] = useState("todos");
 
-  // O useEffect agora carrega os profissionais sem ser bloqueado pela ansiedade do state inicial
   useEffect(() => {
     supabase.from("profissionais").select("id, nome").then(({ data }) => {
       if (data) setProfissionaisLista(data);
@@ -52,13 +47,13 @@ export default function RelatorioRepasses() {
     let query = supabase
       .from("repasses_atendimento")
       .select(`
-        id, valor_atendimento, valor_repasse, status, created_at,
+        id, valor_atendimento, valor_repasse, status, created_at, data_atendimento,
         profissional:profissionais(id, nome),
-        atendimento:atendimentos(tipo, paciente:pacientes(nome))
+        atendimento:atendimentos(tipo, data_inicio, paciente:pacientes(nome))
       `)
-      .gte("created_at", `${dataInicio}T00:00:00.000Z`)
-      .lte("created_at", `${dataFim}T23:59:59.999Z`)
-      .order("created_at", { ascending: true });
+      .gte("data_atendimento", `${dataInicio}T00:00:00.000Z`)
+      .lte("data_atendimento", `${dataFim}T23:59:59.999Z`)
+      .order("data_atendimento", { ascending: true });
 
     if (filtroFisio !== "todos") {
       query = query.eq("profissional_id", filtroFisio);
@@ -134,11 +129,11 @@ export default function RelatorioRepasses() {
       <Card className="p-4 print:hidden bg-muted/30 border-dashed">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold">Data Início</label>
+            <label className="text-xs font-semibold">Data Início (da sessão)</label>
             <Input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} />
           </div>
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold">Data Fim</label>
+            <label className="text-xs font-semibold">Data Fim (da sessão)</label>
             <Input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} />
           </div>
           <div className="space-y-1.5">
@@ -229,7 +224,7 @@ export default function RelatorioRepasses() {
               <table className="w-full text-sm text-left">
                 <thead className="bg-slate-800 text-slate-100">
                   <tr>
-                    <th className="p-3 font-medium">Data</th>
+                    <th className="p-3 font-medium">Data da Sessão</th>
                     <th className="p-3 font-medium">Paciente</th>
                     <th className="p-3 font-medium">Serviço/Guia</th>
                     <th className="p-3 font-medium">Profissional</th>
@@ -241,7 +236,11 @@ export default function RelatorioRepasses() {
                 <tbody className="divide-y bg-card text-foreground">
                   {repasses.map((r) => (
                     <tr key={r.id} className="hover:bg-muted/50 transition-colors">
-                      <td className="p-3 text-xs">{format(parseISO(r.created_at), "dd/MM/yyyy")}</td>
+                      <td className="p-3 text-xs">
+                        {r.data_atendimento 
+                          ? format(parseISO(r.data_atendimento), "dd/MM/yyyy") 
+                          : format(parseISO(r.created_at), "dd/MM/yyyy")}
+                      </td>
                       <td className="p-3 font-medium">{r.atendimento?.paciente?.nome || "N/A"}</td>
                       <td className="p-3 text-xs text-muted-foreground">{r.atendimento?.tipo || "Geral"}</td>
                       <td className="p-3">{r.profissional?.nome || "N/A"}</td>
