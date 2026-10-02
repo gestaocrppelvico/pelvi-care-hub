@@ -318,17 +318,29 @@ export default function Dashboard() {
     return Object.entries(profs).map(([name, Atendimentos]) => ({ name, Atendimentos }));
   }, [atendimentosPeriodo]);
 
-  const processarFalta = async (id: string, decisao: "cobrada" | "abonada") => {
+    const processarFalta = async (id: string, decisao: "cobrada" | "abonada") => {
     try {
-      const { error } = await supabase.from("atendimentos").update({ status: `falta_${decisao}` }).eq("id", id);
-      if (error) throw error;
-      toast.success(`Falta ${decisao} registrada com sucesso!`);
+      if (decisao === "abonada") {
+        // Abonar: só muda o status para falta_abonada
+        const { error } = await supabase
+          .from("atendimentos")
+          .update({ status: "falta_abonada" })
+          .eq("id", id);
+        if (error) throw error;
+        toast.success("Falta abonada!");
+      } else {
+        // Cobrar: chama a RPC que consome sessão + gera repasse
+        const { error } = await supabase.rpc("cobrar_falta", {
+          atendimento_id: id,
+        });
+        if (error) throw error;
+        toast.success("Falta cobrada! Repasse gerado.");
+      }
       setFaltasPendentes(prev => prev.filter(f => f.id !== id));
     } catch (err: any) {
-      toast.error("Erro ao processar falta.");
+      toast.error("Erro: " + err.message);
     }
   };
-
   if (isSecretaria && !isAdmin) return <DashboardSecretaria nomeUsuario={nome} />;
   if (isFisio && !isAdmin && !isSecretaria) return <DashboardFisio />;
 
