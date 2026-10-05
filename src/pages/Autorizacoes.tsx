@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { 
   FileText, AlertTriangle, CheckCircle, XCircle, Clock, 
-  Filter, ExternalLink, Award, TrendingUp, Phone
+  Filter, ExternalLink, Award, Phone
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
