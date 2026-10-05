@@ -1,15 +1,17 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { 
-  FileText, AlertTriangle, CheckCircle, XCircle, Clock, 
-  Filter, ExternalLink, Award, Phone
+  CheckCircle, XCircle, Filter, ExternalLink, Award, Phone,
+  Download, Eye, PhoneCall, Paperclip
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
@@ -43,6 +45,27 @@ type PacoteComDados = {
   } | null;
 };
 
+type SolicitacaoGuia = {
+  id: string;
+  paciente_id: string;
+  plano: string | null;
+  numero_carteirinha: string | null;
+  foto_pedido_url: string | null;
+  observacoes: string | null;
+  status: string;
+  created_at: string;
+  paciente: {
+    id: string;
+    nome: string;
+    profissional_responsavel_id: string | null;
+  } | null;
+  profissional: {
+    id: string;
+    nome: string;
+    cor_agenda: string | null;
+  } | null;
+};
+
 type PlanoSaude = {
   id: string;
   nome: string;
@@ -54,23 +77,31 @@ export default function Autorizacoes() {
   const navigate = useNavigate();
   const [pacotes, setPacotes] = useState<PacoteComDados[]>([]);
   const [pacotesAtivos, setPacotesAtivos] = useState<PacoteComDados[]>([]);
+  const [solicitacoes, setSolicitacoes] = useState<SolicitacaoGuia[]>([]);
   const [planos, setPlanos] = useState<PlanoSaude[]>([]);
   const [profissionais, setProfissionais] = useState<{ id: string; nome: string; cor_agenda: string | null }[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Filtros
   const [filtroProfissional, setFiltroProfissional] = useState<string>("");
   const [filtroPlano, setFiltroPlano] = useState<string>("");
   const [filtroUrgencia, setFiltroUrgencia] = useState<string>("");
 
-  useEffect(() => {
-    carregarDados();
-  }, []);
+  // Modal "Guia Recebida"
+  const [guiaRecebida, setGuiaRecebida] = useState<SolicitacaoGuia | null>(null);
+  const [formGuia, setFormGuia] = useState({
+    numero_guia: "",
+    sessoes_autorizadas: 10,
+    data_emissao: "",
+    data_validade: "",
+    observacoes: "",
+  });
+  const [salvandoGuia, setSalvandoGuia] = useState(false);
+
+  useEffect(() => { carregarDados(); }, []);
 
   async function carregarDados() {
     setLoading(true);
     try {
-      // 1. Pacotes pendentes de renovação (status_renovacao = 'vai_renovar' e não dispensado)
       const { data: pendentes } = await supabase
         .from("paciente_pacotes")
         .select(`
@@ -82,7 +113,6 @@ export default function Autorizacoes() {
         .eq("status_renovacao", "vai_renovar")
         .eq("dispensado_renovacao", false);
 
-      // 2. Todos os pacotes ativos de plano (para aba "Ativas")
       const { data: ativos } = await supabase
         .from("paciente_pacotes")
         .select(`
@@ -94,34 +124,49 @@ export default function Autorizacoes() {
         .not("autorizacao_id", "is", null)
         .gt("sessoes_restantes", 0);
 
-      // 3. Planos de saúde
+      const { data: sols } = await supabase
+        .from("solicitacoes_guia")
+        .select(`
+          id, paciente_id, plano, numero_carteirinha, foto_pedido_url,
+          observacoes, status, created_at,
+          paciente:pacientes(id, nome, profissional_responsavel_id)
+        `)
+        .eq("status", "pendente")
+        .order("created_at", { ascending: false });
+
       const { data: planosData } = await supabase
         .from("planos_saude")
         .select("id, nome, link_portal, ativo")
         .eq("ativo", true)
         .order("nome");
 
-      // 4. Profissionais
       const { data: profsData } = await supabase
         .from("profissionais")
         .select("id, nome, cor_agenda")
         .eq("ativo", true)
         .order("nome");
 
-      // 5. Buscar profissionais para os pacotes
       const profMap = new Map((profsData ?? []).map(p => [p.id, p]));
-      
-      const enriquecer = (lista: any[]): PacoteComDados[] => {
-        return (lista ?? []).map(p => ({
+
+      const enriquecerPacote = (lista: any[]): PacoteComDados[] =>
+        (lista ?? []).map(p => ({
           ...p,
-          profissional: p.paciente?.profissional_responsavel_id 
+          profissional: p.paciente?.profissional_responsavel_id
             ? profMap.get(p.paciente.profissional_responsavel_id) ?? null
             : null,
         }));
-      };
 
-      setPacotes(enriquecer(pendentes ?? []));
-      setPacotesAtivos(enriquecer(ativos ?? []));
+      const enriquecerSolicitacao = (lista: any[]): SolicitacaoGuia[] =>
+        (lista ?? []).map(s => ({
+          ...s,
+          profissional: s.paciente?.profissional_responsavel_id
+            ? profMap.get(s.paciente.profissional_responsavel_id) ?? null
+            : null,
+        }));
+
+      setPacotes(enriquecerPacote(pendentes ?? []));
+      setPacotesAtivos(enriquecerPacote(ativos ?? []));
+      setSolicitacoes(enriquecerSolicitacao(sols ?? []));
       setPlanos(planosData ?? []);
       setProfissionais(profsData ?? []);
     } catch (err) {
@@ -132,42 +177,127 @@ export default function Autorizacoes() {
     }
   }
 
-  async function darAlta(pacoteId: string, pacienteNome: string) {
-    if (!confirm(`Marcar alta fisioterapêutica programada para ${pacienteNome}?`)) return;
+  async function darAlta(pacoteId: string, nome: string) {
+    if (!confirm(`Marcar alta fisioterapêutica programada para ${nome}?`)) return;
     const { error } = await supabase.rpc("dar_alta_programada", { pacote_id: pacoteId });
-    if (error) {
-      toast.error("Erro ao dar alta: " + error.message);
-      return;
-    }
-    toast.success(`Alta programada para ${pacienteNome}`);
+    if (error) { toast.error("Erro: " + error.message); return; }
+    toast.success(`Alta programada para ${nome}`);
     carregarDados();
   }
 
-  async function dispensar(pacoteId: string, pacienteNome: string) {
-    if (!confirm(`Remover ${pacienteNome} da lista de renovações?`)) return;
+  async function dispensar(pacoteId: string, nome: string) {
+    if (!confirm(`Remover ${nome} da lista de renovações?`)) return;
     const { error } = await supabase.rpc("dispensar_renovacao", { pacote_id: pacoteId });
-    if (error) {
-      toast.error("Erro ao dispensar: " + error.message);
-      return;
-    }
-    toast.success(`${pacienteNome} removido da lista`);
+    if (error) { toast.error("Erro: " + error.message); return; }
+    toast.success(`${nome} removido`);
     carregarDados();
   }
 
-  function pedirGuia(pacote: PacoteComDados) {
-    const planoNome = pacote.autorizacao?.plano;
-    const plano = planos.find(p => p.nome.toLowerCase() === planoNome?.toLowerCase());
-    
+  function abrirPortalPlano(nomePlano: string | null, pacienteId?: string) {
+    const plano = planos.find(p => p.nome.toLowerCase() === nomePlano?.toLowerCase());
     if (plano?.link_portal) {
       window.open(plano.link_portal, "_blank");
       toast.info(`Abrindo portal ${plano.nome}`);
     } else {
-      toast.warning(`Portal do plano ${planoNome ?? "—"} não cadastrado. Cadastre em Configurações → Planos.`);
-      navigate(`/pacientes/${pacote.paciente_id}`);
+      toast.warning(`Portal do plano ${nomePlano ?? "—"} não cadastrado.`);
+      if (pacienteId) navigate(`/pacientes/${pacienteId}`);
     }
   }
 
-  // ===== Filtros =====
+  function pedirGuia(pacote: PacoteComDados) {
+    abrirPortalPlano(pacote.autorizacao?.plano ?? null, pacote.paciente_id);
+  }
+
+  async function cancelarSolicitacao(sol: SolicitacaoGuia) {
+    if (!confirm(`Cancelar a solicitação de ${sol.paciente?.nome}?`)) return;
+    const { error } = await supabase
+      .from("solicitacoes_guia")
+      .update({ status: "cancelada" })
+      .eq("id", sol.id);
+    if (error) { toast.error("Erro: " + error.message); return; }
+    toast.success("Solicitação cancelada");
+    carregarDados();
+  }
+
+  function abrirModalGuiaRecebida(sol: SolicitacaoGuia) {
+    setGuiaRecebida(sol);
+    setFormGuia({
+      numero_guia: "",
+      sessoes_autorizadas: 10,
+      data_emissao: format(new Date(), "yyyy-MM-dd"),
+      data_validade: "",
+      observacoes: "",
+    });
+  }
+
+  async function salvarGuiaRecebida() {
+    if (!guiaRecebida) return;
+    if (!formGuia.sessoes_autorizadas || formGuia.sessoes_autorizadas <= 0) {
+      toast.error("Informe a quantidade de sessões autorizadas");
+      return;
+    }
+    setSalvandoGuia(true);
+    try {
+      const { data: novaAut, error: autErr } = await supabase
+        .from("autorizacoes")
+        .insert({
+          paciente_id: guiaRecebida.paciente_id,
+          plano: guiaRecebida.plano || "—",
+          numero_guia: formGuia.numero_guia || null,
+          sessoes_autorizadas: formGuia.sessoes_autorizadas,
+          sessoes_realizadas: 0,
+          data_emissao: formGuia.data_emissao || null,
+          data_validade: formGuia.data_validade || null,
+          status: "ativa",
+          observacoes: formGuia.observacoes || null,
+        })
+        .select()
+        .single();
+      if (autErr) throw autErr;
+
+      await supabase.from("paciente_pacotes").insert({
+        paciente_id: guiaRecebida.paciente_id,
+        autorizacao_id: novaAut.id,
+        sessoes_totais: formGuia.sessoes_autorizadas,
+        sessoes_restantes: formGuia.sessoes_autorizadas,
+        sessoes_realizadas: 0,
+        preco_pago: 0,
+        status_pagamento: "pago",
+      });
+
+      await supabase
+        .from("solicitacoes_guia")
+        .update({ status: "guia_recebida", autorizacao_id: novaAut.id })
+        .eq("id", guiaRecebida.id);
+
+      toast.success("Guia cadastrada com sucesso!");
+      setGuiaRecebida(null);
+      carregarDados();
+    } catch (err: any) {
+      toast.error("Erro: " + err.message);
+    } finally {
+      setSalvandoGuia(false);
+    }
+  }
+
+  async function baixarFoto(url: string, nomePaciente: string) {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const ext = url.split(".").pop()?.split("?")[0] || "jpg";
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `pedido-${nomePaciente.replace(/\s+/g, "-")}-${Date.now()}.${ext}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(link.href);
+      toast.success("Download iniciado");
+    } catch {
+      toast.error("Erro ao baixar imagem");
+    }
+  }
+
   const pacotesFiltrados = useMemo(() => {
     return pacotes.filter(p => {
       if (filtroProfissional && p.profissional?.id !== filtroProfissional) return false;
@@ -184,7 +314,6 @@ export default function Autorizacoes() {
     return [...set];
   }, [pacotes]);
 
-  // ===== Agrupamento por plano =====
   const porPlano = useMemo(() => {
     const map: Record<string, { nome: string; ativos: number; pendentes: number; portal: string | null }> = {};
     planos.forEach(p => {
@@ -207,7 +336,6 @@ export default function Autorizacoes() {
 
   return (
     <div className="space-y-4 p-4 pb-10 max-w-7xl mx-auto">
-      {/* Header */}
       <div className="flex justify-between items-end">
         <div>
           <h1 className="text-2xl font-black tracking-tight text-slate-800">Autorizações 📋</h1>
@@ -220,7 +348,6 @@ export default function Autorizacoes() {
         </Button>
       </div>
 
-      {/* Filtros */}
       <Card className="p-3 border shadow-sm">
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 flex-wrap">
           <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600 shrink-0">
@@ -228,26 +355,14 @@ export default function Autorizacoes() {
             <span className="uppercase tracking-wider">Filtros:</span>
           </div>
 
-          <select
-            className="text-xs h-8 px-2 rounded border bg-background"
-            value={filtroProfissional}
-            onChange={(e) => setFiltroProfissional(e.target.value)}
-          >
+          <select className="text-xs h-8 px-2 rounded border bg-background" value={filtroProfissional} onChange={(e) => setFiltroProfissional(e.target.value)}>
             <option value="">Todos profissionais</option>
-            {profissionais.map(p => (
-              <option key={p.id} value={p.id}>{p.nome}</option>
-            ))}
+            {profissionais.map(p => (<option key={p.id} value={p.id}>{p.nome}</option>))}
           </select>
 
-          <select
-            className="text-xs h-8 px-2 rounded border bg-background"
-            value={filtroPlano}
-            onChange={(e) => setFiltroPlano(e.target.value)}
-          >
+          <select className="text-xs h-8 px-2 rounded border bg-background" value={filtroPlano} onChange={(e) => setFiltroPlano(e.target.value)}>
             <option value="">Todos planos</option>
-            {planosUnicos.map(p => (
-              <option key={p} value={p!}>{p}</option>
-            ))}
+            {planosUnicos.map(p => (<option key={p} value={p!}>{p}</option>))}
           </select>
 
           <div className="flex gap-1 bg-slate-100 p-1 rounded-lg">
@@ -263,21 +378,21 @@ export default function Autorizacoes() {
         </div>
       </Card>
 
-      {/* Tabs */}
       <Tabs defaultValue="pendentes" className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="pendentes">🚨 Pendentes ({pacotesFiltrados.length})</TabsTrigger>
-          <TabsTrigger value="ativas">📋 Ativas ({pacotesAtivos.length})</TabsTrigger>
-          <TabsTrigger value="planos">📊 Por Plano</TabsTrigger>
-          <TabsTrigger value="historico">📜 Histórico</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-5">
+          <TabsTrigger value="pendentes" className="text-xs">🚨 Pendentes ({pacotesFiltrados.length})</TabsTrigger>
+          <TabsTrigger value="primeiras" className="text-xs">📞 Primeiras ({solicitacoes.length})</TabsTrigger>
+          <TabsTrigger value="ativas" className="text-xs">📋 Ativas ({pacotesAtivos.length})</TabsTrigger>
+          <TabsTrigger value="planos" className="text-xs">📊 Por Plano</TabsTrigger>
+          <TabsTrigger value="historico" className="text-xs">📜 Histórico</TabsTrigger>
         </TabsList>
 
-        {/* ===== ABA 1: PENDENTES ===== */}
+        {/* ABA: PENDENTES */}
         <TabsContent value="pendentes" className="space-y-3 mt-4">
           {pacotesFiltrados.length === 0 ? (
             <Card className="p-10 text-center">
               <CheckCircle className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
-              <p className="text-sm text-muted-foreground">Nenhuma renovação pendente com esses filtros.</p>
+              <p className="text-sm text-muted-foreground">Nenhuma renovação pendente.</p>
             </Card>
           ) : (
             pacotesFiltrados.map(p => (
@@ -293,7 +408,29 @@ export default function Autorizacoes() {
           )}
         </TabsContent>
 
-        {/* ===== ABA 2: ATIVAS ===== */}
+        {/* ABA: PRIMEIRAS GUIAS */}
+        <TabsContent value="primeiras" className="space-y-3 mt-4">
+          {solicitacoes.length === 0 ? (
+            <Card className="p-10 text-center">
+              <PhoneCall className="w-10 h-10 text-indigo-400 mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground">Nenhuma solicitação de primeira guia.</p>
+            </Card>
+          ) : (
+            solicitacoes.map(s => (
+              <CardSolicitacao
+                key={s.id}
+                sol={s}
+                onCancelar={() => cancelarSolicitacao(s)}
+                onPedirGuia={() => abrirPortalPlano(s.plano, s.paciente_id)}
+                onGuiaRecebida={() => abrirModalGuiaRecebida(s)}
+                onAbrirFicha={() => navigate(`/pacientes/${s.paciente_id}`)}
+                onBaixarFoto={() => s.foto_pedido_url && baixarFoto(s.foto_pedido_url, s.paciente?.nome ?? "paciente")}
+              />
+            ))
+          )}
+        </TabsContent>
+
+        {/* ABA: ATIVAS */}
         <TabsContent value="ativas" className="mt-4">
           <Card className="overflow-hidden">
             <div className="overflow-x-auto">
@@ -317,14 +454,9 @@ export default function Autorizacoes() {
                         <td className="p-3 font-medium">{p.paciente?.nome}</td>
                         <td className="p-3">{p.autorizacao?.plano ?? "—"}</td>
                         <td className="p-3 text-muted-foreground">{p.autorizacao?.numero_guia ?? "—"}</td>
-                        <td className={`p-3 text-center font-bold ${cor}`}>
-                          {p.sessoes_restantes}/{p.sessoes_totais}
-                        </td>
+                        <td className={`p-3 text-center font-bold ${cor}`}>{p.sessoes_restantes}/{p.sessoes_totais}</td>
                         <td className="p-3">
-                          <span 
-                            className="inline-block w-2 h-2 rounded-full mr-1.5" 
-                            style={{ backgroundColor: p.profissional?.cor_agenda || "#94a3b8" }}
-                          />
+                          <span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ backgroundColor: p.profissional?.cor_agenda || "#94a3b8" }} />
                           {p.profissional?.nome?.split(" ")[0] ?? "—"}
                         </td>
                         <td className="p-3">
@@ -345,7 +477,6 @@ export default function Autorizacoes() {
           </Card>
         </TabsContent>
 
-        {/* ===== ABA 3: POR PLANO ===== */}
         <TabsContent value="planos" className="mt-4">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {porPlano.length === 0 ? (
@@ -381,24 +512,102 @@ export default function Autorizacoes() {
           </div>
         </TabsContent>
 
-        {/* ===== ABA 4: HISTÓRICO ===== */}
         <TabsContent value="historico" className="mt-4">
           <HistoricoTab />
         </TabsContent>
       </Tabs>
+
+      {/* MODAL: Guia Recebida */}
+      <Dialog open={!!guiaRecebida} onOpenChange={(o) => !o && setGuiaRecebida(null)}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Cadastrar Guia Recebida</DialogTitle>
+          </DialogHeader>
+          {guiaRecebida && (
+            <div className="space-y-4 pt-2">
+              <div className="text-xs bg-slate-50 border rounded p-3 space-y-1">
+                <div><span className="font-medium">Paciente:</span> {guiaRecebida.paciente?.nome}</div>
+                <div><span className="font-medium">Plano:</span> {guiaRecebida.plano || "—"}</div>
+                <div><span className="font-medium">Carteirinha:</span> {guiaRecebida.numero_carteirinha || "—"}</div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Nº da guia</label>
+                <Input
+                  value={formGuia.numero_guia}
+                  onChange={(e) => setFormGuia({ ...formGuia, numero_guia: e.target.value })}
+                  placeholder="Ex: 12345/2026"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Sessões autorizadas *</label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={formGuia.sessoes_autorizadas}
+                  onChange={(e) => setFormGuia({ ...formGuia, sessoes_autorizadas: parseInt(e.target.value) || 0 })}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Emissão</label>
+                  <Input
+                    type="date"
+                    value={formGuia.data_emissao}
+                    onChange={(e) => setFormGuia({ ...formGuia, data_emissao: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Validade</label>
+                  <Input
+                    type="date"
+                    value={formGuia.data_validade}
+                    onChange={(e) => setFormGuia({ ...formGuia, data_validade: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Observações</label>
+                <Textarea
+                  value={formGuia.observacoes}
+                  onChange={(e) => setFormGuia({ ...formGuia, observacoes: e.target.value })}
+                  rows={2}
+                />
+              </div>
+
+              <div className="flex flex-col gap-2 pt-2">
+                <Button 
+                  className="w-full bg-emerald-600 hover:bg-emerald-700"
+                  onClick={salvarGuiaRecebida}
+                  disabled={salvandoGuia}
+                >
+                  {salvandoGuia ? "Salvando..." : "✅ Cadastrar Guia"}
+                </Button>
+                <Button 
+                  variant="outline" 
+                  className="w-full"
+                  onClick={() => setGuiaRecebida(null)}
+                  disabled={salvandoGuia}
+                >
+                  Fechar (já cadastrei pela ficha)
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
 // =====================================================
-// COMPONENTE: CARD DO PACIENTE (aba pendentes)
+// CARD DO PACIENTE (aba Pendentes)
 // =====================================================
 function CardPaciente({
-  pacote,
-  onAlta,
-  onDispensar,
-  onPedirGuia,
-  onAbrirFicha,
+  pacote, onAlta, onDispensar, onPedirGuia, onAbrirFicha,
 }: {
   pacote: PacoteComDados;
   onAlta: () => void;
@@ -408,75 +617,45 @@ function CardPaciente({
 }) {
   const cor = pacote.profissional?.cor_agenda || "#94a3b8";
   const sessoes = pacote.sessoes_restantes;
-  
-  const urgencia = sessoes === 0 
+  const urgencia = sessoes === 0
     ? { bg: "bg-rose-100", text: "text-rose-700", border: "border-rose-300", label: "0 sessões" }
-    : sessoes === 1 
+    : sessoes === 1
     ? { bg: "bg-orange-100", text: "text-orange-700", border: "border-orange-300", label: "1 sessão" }
     : { bg: "bg-amber-100", text: "text-amber-700", border: "border-amber-300", label: `${sessoes} sessões` };
 
   return (
-    <div 
-      className="rounded-lg border-l-4 shadow-sm overflow-hidden bg-white"
-      style={{ borderLeftColor: cor }}
-    >
+    <div className="rounded-lg border-l-4 shadow-sm overflow-hidden bg-white" style={{ borderLeftColor: cor }}>
       <div className="p-3" style={{ backgroundColor: cor + "10" }}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <button 
-              onClick={onAbrirFicha}
-              className="font-bold text-slate-800 hover:text-indigo-600 text-sm truncate block w-full text-left"
-            >
+            <button onClick={onAbrirFicha} className="font-bold text-slate-800 hover:text-indigo-600 text-sm truncate block w-full text-left">
               {pacote.paciente?.nome}
             </button>
             <div className="text-[11px] text-muted-foreground mt-1 space-y-0.5">
               <div><span className="font-medium">Plano:</span> {pacote.autorizacao?.plano ?? "—"}</div>
-              {pacote.paciente?.numero_carteirinha && (
-                <div><span className="font-medium">Carteirinha:</span> {pacote.paciente.numero_carteirinha}</div>
-              )}
-              {pacote.autorizacao?.numero_guia && (
-                <div><span className="font-medium">Guia:</span> {pacote.autorizacao.numero_guia}</div>
-              )}
-              {pacote.autorizacao?.data_validade && (
-                <div><span className="font-medium">Validade:</span> {format(new Date(pacote.autorizacao.data_validade), "dd/MM/yyyy")}</div>
-              )}
+              {pacote.paciente?.numero_carteirinha && (<div><span className="font-medium">Carteirinha:</span> {pacote.paciente.numero_carteirinha}</div>)}
+              {pacote.autorizacao?.numero_guia && (<div><span className="font-medium">Guia:</span> {pacote.autorizacao.numero_guia}</div>)}
+              {pacote.autorizacao?.data_validade && (<div><span className="font-medium">Validade:</span> {format(new Date(pacote.autorizacao.data_validade), "dd/MM/yyyy")}</div>)}
             </div>
           </div>
           <div className="flex flex-col items-end gap-2 shrink-0">
             <Badge className={`${urgencia.bg} ${urgencia.text} border ${urgencia.border} text-[10px] font-bold`}>
               {pacote.alta_programada ? "🏁 Alta programada" : urgencia.label}
             </Badge>
-            <span 
-              className="text-[10px] font-medium px-2 py-0.5 rounded-full"
-              style={{ backgroundColor: cor + "20", color: cor }}
-            >
+            <span className="text-[10px] font-medium px-2 py-0.5 rounded-full" style={{ backgroundColor: cor + "20", color: cor }}>
               {pacote.profissional?.nome?.split(" ")[0] ?? "—"}
             </span>
           </div>
         </div>
 
         <div className="flex gap-2 mt-3">
-          <Button 
-            size="sm" 
-            variant="outline" 
-            className="h-7 text-[10px] flex-1 border-rose-200 text-rose-700 hover:bg-rose-50"
-            onClick={onDispensar}
-          >
+          <Button size="sm" variant="outline" className="h-7 text-[10px] flex-1 border-rose-200 text-rose-700 hover:bg-rose-50" onClick={onDispensar}>
             <XCircle className="w-3 h-3 mr-1" /> Remover
           </Button>
-          <Button 
-            size="sm" 
-            variant="outline"
-            className="h-7 text-[10px] flex-1 border-purple-200 text-purple-700 hover:bg-purple-50"
-            onClick={onAlta}
-          >
+          <Button size="sm" variant="outline" className="h-7 text-[10px] flex-1 border-purple-200 text-purple-700 hover:bg-purple-50" onClick={onAlta}>
             <Award className="w-3 h-3 mr-1" /> Alta
           </Button>
-          <Button 
-            size="sm"
-            className="h-7 text-[10px] flex-1 bg-indigo-600 hover:bg-indigo-700"
-            onClick={onPedirGuia}
-          >
+          <Button size="sm" className="h-7 text-[10px] flex-1 bg-indigo-600 hover:bg-indigo-700" onClick={onPedirGuia}>
             <ExternalLink className="w-3 h-3 mr-1" /> Pedir Guia
           </Button>
         </div>
@@ -486,7 +665,77 @@ function CardPaciente({
 }
 
 // =====================================================
-// COMPONENTE: ABA HISTÓRICO
+// CARD DE SOLICITAÇÃO (aba Primeiras Guias)
+// =====================================================
+function CardSolicitacao({
+  sol, onCancelar, onPedirGuia, onGuiaRecebida, onAbrirFicha, onBaixarFoto,
+}: {
+  sol: SolicitacaoGuia;
+  onCancelar: () => void;
+  onPedirGuia: () => void;
+  onGuiaRecebida: () => void;
+  onAbrirFicha: () => void;
+  onBaixarFoto: () => void;
+}) {
+  const cor = sol.profissional?.cor_agenda || "#94a3b8";
+  const dias = Math.floor((Date.now() - new Date(sol.created_at).getTime()) / (1000 * 60 * 60 * 24));
+
+  return (
+    <div className="rounded-lg border-l-4 shadow-sm overflow-hidden bg-white" style={{ borderLeftColor: cor }}>
+      <div className="p-3" style={{ backgroundColor: cor + "10" }}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <button onClick={onAbrirFicha} className="font-bold text-slate-800 hover:text-indigo-600 text-sm truncate block w-full text-left">
+              {sol.paciente?.nome}
+            </button>
+            <div className="text-[11px] text-muted-foreground mt-1 space-y-0.5">
+              <div><span className="font-medium">Plano:</span> {sol.plano || "—"}</div>
+              {sol.numero_carteirinha && (<div><span className="font-medium">Carteirinha:</span> {sol.numero_carteirinha}</div>)}
+              <div><span className="font-medium">Solicitada em:</span> {format(new Date(sol.created_at), "dd/MM/yyyy")} ({dias}d)</div>
+              {sol.observacoes && (<div className="italic">"{sol.observacoes}"</div>)}
+            </div>
+          </div>
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            <Badge className="bg-indigo-100 text-indigo-700 border border-indigo-300 text-[10px] font-bold">
+              📞 Aguardando guia
+            </Badge>
+            <span className="text-[10px] font-medium px-2 py-0.5 rounded-full" style={{ backgroundColor: cor + "20", color: cor }}>
+              {sol.profissional?.nome?.split(" ")[0] ?? "—"}
+            </span>
+          </div>
+        </div>
+
+        {sol.foto_pedido_url && (
+          <div className="mt-3 flex items-center gap-2 p-2 bg-white/70 border rounded text-[11px]">
+            <Paperclip className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+            <span className="text-muted-foreground flex-1 truncate">Pedido médico anexado</span>
+            <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]" onClick={() => window.open(sol.foto_pedido_url!, "_blank")}>
+              <Eye className="w-3 h-3 mr-1" /> Ver
+            </Button>
+            <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]" onClick={onBaixarFoto}>
+              <Download className="w-3 h-3 mr-1" /> Baixar
+            </Button>
+          </div>
+        )}
+
+        <div className="flex gap-2 mt-3">
+          <Button size="sm" variant="outline" className="h-7 text-[10px] flex-1 border-rose-200 text-rose-700 hover:bg-rose-50" onClick={onCancelar}>
+            <XCircle className="w-3 h-3 mr-1" /> Cancelar
+          </Button>
+          <Button size="sm" variant="outline" className="h-7 text-[10px] flex-1 border-indigo-200 text-indigo-700 hover:bg-indigo-50" onClick={onPedirGuia}>
+            <ExternalLink className="w-3 h-3 mr-1" /> Pedir Guia
+          </Button>
+          <Button size="sm" className="h-7 text-[10px] flex-1 bg-emerald-600 hover:bg-emerald-700" onClick={onGuiaRecebida}>
+            <CheckCircle className="w-3 h-3 mr-1" /> Guia Recebida
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =====================================================
+// ABA HISTÓRICO
 // =====================================================
 function HistoricoTab() {
   const [historico, setHistorico] = useState<any[]>([]);
@@ -495,14 +744,9 @@ function HistoricoTab() {
   useEffect(() => {
     (async () => {
       setLoading(true);
-      // Autorizações com validade expirada ou sessões esgotadas
       const { data } = await supabase
         .from("autorizacoes")
-        .select(`
-          id, plano, numero_guia, sessoes_autorizadas, sessoes_realizadas,
-          data_emissao, data_validade, status,
-          paciente:pacientes(id, nome)
-        `)
+        .select(`id, plano, numero_guia, sessoes_autorizadas, sessoes_realizadas, data_emissao, data_validade, status, paciente:pacientes(id, nome)`)
         .order("data_validade", { ascending: false })
         .limit(100);
       setHistorico(data ?? []);
@@ -513,11 +757,7 @@ function HistoricoTab() {
   if (loading) return <div className="p-10 text-center text-xs text-muted-foreground animate-pulse">Carregando histórico...</div>;
 
   if (historico.length === 0) {
-    return (
-      <Card className="p-10 text-center">
-        <p className="text-sm text-muted-foreground">Nenhuma autorização registrada.</p>
-      </Card>
-    );
+    return <Card className="p-10 text-center"><p className="text-sm text-muted-foreground">Nenhuma autorização registrada.</p></Card>;
   }
 
   return (
@@ -544,9 +784,7 @@ function HistoricoTab() {
                 <td className="p-3">{a.data_emissao ? format(new Date(a.data_emissao), "dd/MM/yy") : "—"}</td>
                 <td className="p-3">{a.data_validade ? format(new Date(a.data_validade), "dd/MM/yy") : "—"}</td>
                 <td className="p-3 text-center">{a.sessoes_realizadas ?? 0}/{a.sessoes_autorizadas ?? 0}</td>
-                <td className="p-3">
-                  <Badge variant="outline" className="text-[10px]">{a.status ?? "—"}</Badge>
-                </td>
+                <td className="p-3"><Badge variant="outline" className="text-[10px]">{a.status ?? "—"}</Badge></td>
               </tr>
             ))}
           </tbody>
