@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { 
   Wallet, Package, Settings, CheckCircle2, Activity, Undo2, Pencil, 
-  Search, ArrowUpDown, AlertTriangle, Check, X, DollarSign, Calendar 
+  Search, ArrowUpDown, AlertTriangle, Check, X, DollarSign, Calendar, FileText 
 } from "lucide-react";
 import { toast } from "sonner";
 import { startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval, parseISO, startOfDay, endOfDay, format } from "date-fns";
@@ -454,35 +454,40 @@ export default function Financeiro() {
         <h1 className="text-2xl font-bold">Financeiro</h1>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-        <Link to="/financeiro/servicos">
-          <Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full">
-            <Package className="w-5 h-5 text-primary" />
-            <div className="font-medium text-sm">Serviços e Pacotes</div>
-          </Card>
-        </Link>
-        {isAdmin && (
-          <Link to="/financeiro/repasses">
-            <Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full">
-              <Settings className="w-5 h-5 text-primary" />
-              <div className="font-medium text-sm">Regras de Repasse</div>
-            </Card>
-          </Link>
-        )}
-        <Link to="/financeiro/relatorios">
-          <Card className="p-3 flex items-center gap-2 hover:bg-emerald-50 transition-colors h-full border-emerald-200">
-            <Activity className="w-5 h-5 text-emerald-600" />
-            <div className="font-medium text-sm text-emerald-800">Relatórios</div>
-          </Card>
-        </Link>
-        <Link to="/financeiro/pagamentos">
-          <Card className="p-3 flex items-center gap-2 hover:bg-blue-50 transition-colors h-full border-blue-200">
-            <DollarSign className="w-5 h-5 text-blue-600" />
-            <div className="font-medium text-sm text-blue-800">Pagamentos</div>
-          </Card>
-        </Link>
-      </div>
-
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+  <Link to="/financeiro/servicos">
+    <Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full">
+      <Package className="w-5 h-5 text-primary" />
+      <div className="font-medium text-sm">Serviços e Pacotes</div>
+    </Card>
+  </Link>
+  {isAdmin && (
+    <Link to="/financeiro/repasses">
+      <Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full">
+        <Settings className="w-5 h-5 text-primary" />
+        <div className="font-medium text-sm">Regras de Repasse</div>
+      </Card>
+    </Link>
+  )}
+  <Link to="/financeiro/relatorios">
+    <Card className="p-3 flex items-center gap-2 hover:bg-emerald-50 transition-colors h-full border-emerald-200">
+      <Activity className="w-5 h-5 text-emerald-600" />
+      <div className="font-medium text-sm text-emerald-800">Relatórios</div>
+    </Card>
+  </Link>
+  <Link to="/financeiro/pagamentos">
+    <Card className="p-3 flex items-center gap-2 hover:bg-blue-50 transition-colors h-full border-blue-200">
+      <DollarSign className="w-5 h-5 text-blue-600" />
+      <div className="font-medium text-sm text-blue-800">Pagamentos</div>
+    </Card>
+  </Link>
+  <Link to="/financeiro/autorizacoes">
+    <Card className="p-3 flex items-center gap-2 hover:bg-purple-50 transition-colors h-full border-purple-200">
+      <FileText className="w-5 h-5 text-purple-600" />
+      <div className="font-medium text-sm text-purple-800">Autorizações</div>
+    </Card>
+  </Link>
+</div>
       {/* Filtros */}
       <div className="flex flex-col sm:flex-row gap-3 p-3 bg-muted/50 rounded-lg border flex-wrap items-center">
         <Select value={filtroPeriodo} onValueChange={setFiltroPeriodo}>
