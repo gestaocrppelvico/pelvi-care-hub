@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { 
   ArrowLeft, Phone, Calendar, Pencil, ShoppingBag, CheckCircle2, 
   XCircle, AlertCircle, Clock, UserCircle, FileText, Plus, 
-  ClipboardEdit, Eye, CircleAlert, BadgeCheck 
+  ClipboardEdit, Eye, CircleAlert, BadgeCheck, Paperclip 
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -20,6 +20,7 @@ import { toast } from "sonner";
 
 import PacienteFinanceiro from "./PacienteFinanceiro";
 import PacienteAutorizacoes from "./PacienteAutorizacoes";
+import { PacienteAnexos } from "./PacienteAnexos";
 
 export default function PacienteDetalhe() {
   const { id } = useParams<{ id: string }>();
@@ -177,12 +178,13 @@ export default function PacienteDetalhe() {
       </div>
 
       <Tabs defaultValue="historico">
-        <TabsList className="w-full grid grid-cols-5 h-auto py-1">
+        <TabsList className="w-full grid grid-cols-6 h-auto py-1">
           <TabsTrigger value="historico" className="text-xs sm:text-sm">Histórico</TabsTrigger>
           <TabsTrigger value="prontuario" className="text-xs sm:text-sm">Prontuário</TabsTrigger>
           <TabsTrigger value="servicos" className="text-xs sm:text-sm">Serviços</TabsTrigger>
           <TabsTrigger value="financeiro" className="text-xs sm:text-sm">Financeiro</TabsTrigger>
           <TabsTrigger value="autorizacoes" className="text-xs sm:text-sm">Guias</TabsTrigger>
+          <TabsTrigger value="anexos" className="text-xs sm:text-sm">Anexos</TabsTrigger>
         </TabsList>
 
         {/* ============ ABA HISTÓRICO ============ */}
@@ -459,8 +461,11 @@ export default function PacienteDetalhe() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="financeiro" className="mt-4"><PacienteFinanceiro /></TabsContent>
+               <TabsContent value="financeiro" className="mt-4"><PacienteFinanceiro /></TabsContent>
         <TabsContent value="autorizacoes" className="mt-4"><PacienteAutorizacoes /></TabsContent>
+        <TabsContent value="anexos" className="mt-4">
+          <PacienteAnexos pacienteId={id!} />
+        </TabsContent>
       </Tabs>
     </div>
   );
