@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { ArrowLeft, ShieldCheck, Plus, Pencil, Trash2, AlertTriangle } from "lucide-react";
+import { ArrowLeft, ShieldCheck, Plus, Pencil, Trash2, AlertTriangle, PhoneCall, Image as ImageIcon } from "lucide-react";
 import { format } from "date-fns";
 
 type StatusAutorizacao = "ativa" | "esgotada" | "expirada";
@@ -22,7 +22,7 @@ interface Autorizacao {
   sessoes_realizadas: number;
   data_emissao: string | null;
   data_validade: string | null;
-  status: string; 
+  status: string;
   observacoes: string | null;
   created_at: string;
 }
@@ -62,27 +62,57 @@ export default function PacienteAutorizacoes() {
   const [open, setOpen] = useState(false);
   const [editando, setEditando] = useState<Autorizacao | null>(null);
   const [form, setForm] = useState(EMPTY);
-  
-  const [listaPlanos, setListaPlanos] = useState<{id: string, nome: string}[]>([]);
+
+  const [listaPlanos, setListaPlanos] = useState<{ id: string; nome: string }[]>([]);
+
+  // 🔥 Novos states para o fluxo de Solicitação de Primeira Guia
+  const [pacDados, setPacDados] = useState<{
+    nome: string;
+    plano_saude: string | null;
+    numero_carteirinha: string | null;
+  }>({ nome: "", plano_saude: null, numero_carteirinha: null });
+  const [modalSolicitarOpen, setModalSolicitarOpen] = useState(false);
+  const [fotoPedido, setFotoPedido] = useState<File | null>(null);
+  const [obsSolicitar, setObsSolicitar] = useState("");
+  const [enviando, setEnviando] = useState(false);
 
   useEffect(() => {
-    supabase.from("planos_saude").select("id, nome").eq("ativo", true).then(({ data }) => {
-      if (data) setListaPlanos(data);
-    });
+    supabase
+      .from("planos_saude")
+      .select("id, nome")
+      .eq("ativo", true)
+      .then(({ data }) => {
+        if (data) setListaPlanos(data);
+      });
   }, []);
 
   async function carregar() {
     if (!id) return;
     const [{ data: pac }, { data: aut }] = await Promise.all([
-      supabase.from("pacientes").select("nome").eq("id", id).maybeSingle(),
-      supabase.from("autorizacoes").select("*").eq("paciente_id", id).order("created_at", { ascending: false }),
+      supabase
+        .from("pacientes")
+        .select("nome, plano_saude, numero_carteirinha")
+        .eq("id", id)
+        .maybeSingle(),
+      supabase
+        .from("autorizacoes")
+        .select("*")
+        .eq("paciente_id", id)
+        .order("created_at", { ascending: false }),
     ]);
+    setPacDados({
+      nome: pac?.nome ?? "",
+      plano_saude: pac?.plano_saude ?? null,
+      numero_carteirinha: pac?.numero_carteirinha ?? null,
+    });
     setPacNome(pac?.nome ?? "");
     setAutorizacoes((aut as any) ?? []);
     setLoading(false);
   }
 
-  useEffect(() => { carregar(); }, [id]);
+  useEffect(() => {
+    carregar();
+  }, [id]);
 
   function abrirNovo() {
     setEditando(null);
@@ -105,12 +135,15 @@ export default function PacienteAutorizacoes() {
   }
 
   async function excluirAutorizacao(autorizacaoId: string) {
-    if (!confirm("Tem certeza que deseja excluir esta guia? Todos os pacotes vinculados e seus históricos serão removidos permanentemente.")) {
+    if (
+      !confirm(
+        "Tem certeza que deseja excluir esta guia? Todos os pacotes vinculados e seus históricos serão removidos permanentemente."
+      )
+    ) {
       return;
     }
 
     try {
-      // 1. Buscar todos os paciente_pacotes vinculados a esta autorização
       const { data: pacotesVinculados, error: buscaError } = await supabase
         .from("paciente_pacotes")
         .select("id")
@@ -118,9 +151,8 @@ export default function PacienteAutorizacoes() {
 
       if (buscaError) throw buscaError;
 
-      // 2. Deletar os paciente_pacotes
       if (pacotesVinculados && pacotesVinculados.length > 0) {
-        const ids = pacotesVinculados.map(p => p.id);
+        const ids = pacotesVinculados.map((p) => p.id);
         const { error: deletePacotesError } = await supabase
           .from("paciente_pacotes")
           .delete()
@@ -128,7 +160,6 @@ export default function PacienteAutorizacoes() {
         if (deletePacotesError) throw deletePacotesError;
       }
 
-      // 3. Deletar a autorização
       const { error: deleteAutError } = await supabase
         .from("autorizacoes")
         .delete()
@@ -148,7 +179,7 @@ export default function PacienteAutorizacoes() {
       toast.error("Selecione o plano de saúde");
       return;
     }
-    
+
     const payload = {
       paciente_id: id!,
       plano: form.plano,
@@ -157,18 +188,31 @@ export default function PacienteAutorizacoes() {
       sessoes_realizadas: form.sessoes_realizadas,
       data_emissao: form.data_emissao || null,
       data_validade: form.data_validade || null,
-      status: "ativa", 
+      status: "ativa",
       observacoes: form.observacoes || null,
     };
 
     if (editando) {
-      const { error } = await supabase.from("autorizacoes").update(payload).eq("id", editando.id);
-      if (error) { toast.error(error.message); return; }
+      const { error } = await supabase
+        .from("autorizacoes")
+        .update(payload)
+        .eq("id", editando.id);
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
       toast.success("Autorização atualizada");
     } else {
-      const { data: novaAut, error } = await supabase.from("autorizacoes").insert(payload).select().single();
-      if (error) { toast.error(error.message); return; }
-      
+      const { data: novaAut, error } = await supabase
+        .from("autorizacoes")
+        .insert(payload)
+        .select()
+        .single();
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+
       if (novaAut) {
         await supabase.from("paciente_pacotes").insert({
           paciente_id: id!,
@@ -176,7 +220,7 @@ export default function PacienteAutorizacoes() {
           sessoes_totais: form.sessoes_autorizadas,
           sessoes_restantes: form.sessoes_autorizadas - form.sessoes_realizadas,
           preco_pago: 0,
-          status_pagamento: "pago"
+          status_pagamento: "pago",
         });
       }
       toast.success("Guia e Pacote Financeiro criados!");
@@ -185,7 +229,58 @@ export default function PacienteAutorizacoes() {
     carregar();
   }
 
-  if (loading) return <p className="text-muted-foreground text-center py-8">Carregando...</p>;
+  // 🔥 NOVO: Função para solicitar primeira guia
+  async function solicitarGuia() {
+    if (!id) return;
+    if (!fotoPedido && !obsSolicitar.trim()) {
+      toast.error("Anexe a foto do pedido médico ou escreva uma observação");
+      return;
+    }
+
+    setEnviando(true);
+    try {
+      let fotoUrl: string | null = null;
+
+      if (fotoPedido) {
+        const ext = fotoPedido.name.split(".").pop() || "jpg";
+        const path = `solicitacoes/${id}/${Date.now()}.${ext}`;
+        const { error: upErr } = await supabase.storage
+          .from("pedidos-medicos")
+          .upload(path, fotoPedido, {
+            upsert: false,
+            contentType: fotoPedido.type,
+          });
+        if (upErr) throw upErr;
+
+        const { data: urlData } = supabase.storage
+          .from("pedidos-medicos")
+          .getPublicUrl(path);
+        fotoUrl = urlData.publicUrl;
+      }
+
+      const { error } = await supabase.from("solicitacoes_guia").insert({
+        paciente_id: id,
+        plano: pacDados.plano_saude,
+        numero_carteirinha: pacDados.numero_carteirinha,
+        foto_pedido_url: fotoUrl,
+        observacoes: obsSolicitar.trim() || null,
+        status: "pendente",
+      });
+      if (error) throw error;
+
+      toast.success("Solicitação enviada! Vá em Financeiro → Autorizações.");
+      setModalSolicitarOpen(false);
+      setFotoPedido(null);
+      setObsSolicitar("");
+    } catch (err: any) {
+      toast.error("Erro ao solicitar: " + err.message);
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  if (loading)
+    return <p className="text-muted-foreground text-center py-8">Carregando...</p>;
 
   return (
     <div className="space-y-4">
@@ -199,42 +294,69 @@ export default function PacienteAutorizacoes() {
         </div>
       </div>
 
-      <Button size="sm" onClick={abrirNovo}>
-        <Plus className="w-4 h-4 mr-1" /> Nova autorização
-      </Button>
+      {/* 🔥 Botões: Nova Autorização + Solicitar Primeira Guia */}
+      <div className="flex gap-2 flex-wrap">
+        <Button size="sm" onClick={abrirNovo}>
+          <Plus className="w-4 h-4 mr-1" /> Nova autorização
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setModalSolicitarOpen(true)}
+          className="border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+        >
+          <PhoneCall className="w-4 h-4 mr-1" /> Solicitar Primeira Guia
+        </Button>
+      </div>
 
       {autorizacoes.length === 0 ? (
         <Card className="p-8 text-center">
           <ShieldCheck className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
-          <p className="text-muted-foreground text-sm">Nenhuma autorização registrada.</p>
+          <p className="text-muted-foreground text-sm">
+            Nenhuma autorização registrada.
+          </p>
         </Card>
       ) : (
         <div className="space-y-2">
           {autorizacoes.map((a) => {
             const restantes = a.sessoes_autorizadas - a.sessoes_realizadas;
-            const pctUsado = a.sessoes_autorizadas > 0
-              ? Math.round((a.sessoes_realizadas / a.sessoes_autorizadas) * 100)
-              : 0;
-            
+            const pctUsado =
+              a.sessoes_autorizadas > 0
+                ? Math.round((a.sessoes_realizadas / a.sessoes_autorizadas) * 100)
+                : 0;
+
             const statusCalculado = calcularStatus(a);
             const vencida = statusCalculado === "expirada";
 
             return (
               <Card
                 key={a.id}
-                className={`p-4 space-y-3 ${statusCalculado === "esgotada" ? "opacity-75" : ""}`}
+                className={`p-4 space-y-3 ${
+                  statusCalculado === "esgotada" ? "opacity-75" : ""
+                }`}
               >
                 <div className="flex items-start justify-between">
-                  <div className="flex-1 cursor-pointer" onClick={() => abrirEditar(a)}>
+                  <div
+                    className="flex-1 cursor-pointer"
+                    onClick={() => abrirEditar(a)}
+                  >
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-sm">{a.plano}</span>
-                      <Badge className={`text-[10px] uppercase ${STATUS_COLORS[statusCalculado]}`}>
+                      <Badge
+                        className={`text-[10px] uppercase ${
+                          STATUS_COLORS[statusCalculado]
+                        }`}
+                      >
                         {statusCalculado}
                       </Badge>
-                      {vencida && <AlertTriangle className="w-4 h-4 text-destructive" />}
+                      {vencida && (
+                        <AlertTriangle className="w-4 h-4 text-destructive" />
+                      )}
                     </div>
                     {a.numero_guia && (
-                      <p className="text-xs text-muted-foreground">Guia: {a.numero_guia}</p>
+                      <p className="text-xs text-muted-foreground">
+                        Guia: {a.numero_guia}
+                      </p>
                     )}
                   </div>
                   <div className="flex gap-1 shrink-0">
@@ -263,23 +385,49 @@ export default function PacienteAutorizacoes() {
                   </div>
                 </div>
 
-                <div className="space-y-1 cursor-pointer" onClick={() => abrirEditar(a)}>
+                <div
+                  className="space-y-1 cursor-pointer"
+                  onClick={() => abrirEditar(a)}
+                >
                   <div className="flex justify-between text-xs">
-                    <span>Sessões: {a.sessoes_realizadas}/{a.sessoes_autorizadas}</span>
-                    <span className={restantes <= 2 && restantes > 0 ? "text-yellow-600 font-medium" : restantes <= 0 ? "text-destructive font-medium" : ""}>
+                    <span>
+                      Sessões: {a.sessoes_realizadas}/{a.sessoes_autorizadas}
+                    </span>
+                    <span
+                      className={
+                        restantes <= 2 && restantes > 0
+                          ? "text-yellow-600 font-medium"
+                          : restantes <= 0
+                          ? "text-destructive font-medium"
+                          : ""
+                      }
+                    >
                       {restantes > 0 ? `${restantes} restantes` : "Esgotado"}
                     </span>
                   </div>
                   <div className="w-full bg-muted rounded-full h-2">
                     <div
-                      className={`h-2 rounded-full transition-all ${pctUsado >= 100 ? "bg-destructive" : pctUsado >= 80 ? "bg-yellow-500" : "bg-primary"}`}
+                      className={`h-2 rounded-full transition-all ${
+                        pctUsado >= 100
+                          ? "bg-destructive"
+                          : pctUsado >= 80
+                          ? "bg-yellow-500"
+                          : "bg-primary"
+                      }`}
                       style={{ width: `${Math.min(pctUsado, 100)}%` }}
                     />
                   </div>
                 </div>
 
-                <div className="flex gap-4 text-[11px] text-muted-foreground cursor-pointer" onClick={() => abrirEditar(a)}>
-                  {a.data_emissao && <span>Emissão: {format(new Date(a.data_emissao), "dd/MM/yy")}</span>}
+                <div
+                  className="flex gap-4 text-[11px] text-muted-foreground cursor-pointer"
+                  onClick={() => abrirEditar(a)}
+                >
+                  {a.data_emissao && (
+                    <span>
+                      Emissão: {format(new Date(a.data_emissao), "dd/MM/yy")}
+                    </span>
+                  )}
                   {a.data_validade && (
                     <span className={vencida ? "text-destructive font-semibold" : ""}>
                       Validade: {format(new Date(a.data_validade), "dd/MM/yy")}
@@ -292,16 +440,19 @@ export default function PacienteAutorizacoes() {
         </div>
       )}
 
+      {/* MODAL: Nova Autorização / Editar */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{editando ? "Editar autorização" : "Nova autorização"}</DialogTitle>
+            <DialogTitle>
+              {editando ? "Editar autorização" : "Nova autorização"}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 pt-2">
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Plano de saúde *</label>
-              <Select 
-                value={form.plano || undefined} 
+              <Select
+                value={form.plano || undefined}
                 onValueChange={(v) => setForm({ ...form, plano: v })}
               >
                 <SelectTrigger className="bg-background">
@@ -309,7 +460,9 @@ export default function PacienteAutorizacoes() {
                 </SelectTrigger>
                 <SelectContent>
                   {listaPlanos.map((p) => (
-                    <SelectItem key={p.id} value={p.nome}>{p.nome}</SelectItem>
+                    <SelectItem key={p.id} value={p.nome}>
+                      {p.nome}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -317,7 +470,11 @@ export default function PacienteAutorizacoes() {
 
             <div>
               <label className="text-sm font-medium">Número da guia</label>
-              <Input value={form.numero_guia ?? ""} onChange={(e) => setForm({ ...form, numero_guia: e.target.value })} placeholder="Opcional" />
+              <Input
+                value={form.numero_guia ?? ""}
+                onChange={(e) => setForm({ ...form, numero_guia: e.target.value })}
+                placeholder="Opcional"
+              />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -326,7 +483,12 @@ export default function PacienteAutorizacoes() {
                   type="number"
                   min={0}
                   value={form.sessoes_autorizadas}
-                  onChange={(e) => setForm({ ...form, sessoes_autorizadas: parseInt(e.target.value) || 0 })}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      sessoes_autorizadas: parseInt(e.target.value) || 0,
+                    })
+                  }
                 />
               </div>
               <div>
@@ -335,30 +497,111 @@ export default function PacienteAutorizacoes() {
                   type="number"
                   min={0}
                   value={form.sessoes_realizadas}
-                  onChange={(e) => setForm({ ...form, sessoes_realizadas: parseInt(e.target.value) || 0 })}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      sessoes_realizadas: parseInt(e.target.value) || 0,
+                    })
+                  }
                 />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-sm font-medium">Data emissão</label>
-                <Input type="date" value={form.data_emissao ?? ""} onChange={(e) => setForm({ ...form, data_emissao: e.target.value })} />
+                <Input
+                  type="date"
+                  value={form.data_emissao ?? ""}
+                  onChange={(e) =>
+                    setForm({ ...form, data_emissao: e.target.value })
+                  }
+                />
               </div>
               <div>
                 <label className="text-sm font-medium">Data validade</label>
-                <Input type="date" value={form.data_validade ?? ""} onChange={(e) => setForm({ ...form, data_validade: e.target.value })} />
+                <Input
+                  type="date"
+                  value={form.data_validade ?? ""}
+                  onChange={(e) =>
+                    setForm({ ...form, data_validade: e.target.value })
+                  }
+                />
               </div>
             </div>
             <div>
               <label className="text-sm font-medium">Observações</label>
               <Textarea
                 value={form.observacoes ?? ""}
-                onChange={(e) => setForm({ ...form, observacoes: e.target.value })}
+                onChange={(e) =>
+                  setForm({ ...form, observacoes: e.target.value })
+                }
                 rows={3}
                 placeholder="Opcional"
               />
             </div>
-            <Button className="w-full" onClick={salvar}>Salvar</Button>
+            <Button className="w-full" onClick={salvar}>
+              Salvar
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 🔥 MODAL: Solicitar Primeira Guia */}
+      <Dialog open={modalSolicitarOpen} onOpenChange={setModalSolicitarOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Solicitar Primeira Guia</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div className="text-xs bg-slate-50 border rounded p-3 space-y-1">
+              <div>
+                <span className="font-medium">Paciente:</span> {pacDados.nome}
+              </div>
+              <div>
+                <span className="font-medium">Plano:</span>{" "}
+                {pacDados.plano_saude || "⚠️ Não cadastrado na ficha"}
+              </div>
+              <div>
+                <span className="font-medium">Carteirinha:</span>{" "}
+                {pacDados.numero_carteirinha || "⚠️ Não cadastrado"}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium flex items-center gap-1.5">
+                <ImageIcon className="w-4 h-4" /> Foto do pedido médico
+              </label>
+              <Input
+                type="file"
+                accept="image/jpeg,image/png,application/pdf"
+                onChange={(e) => setFotoPedido(e.target.files?.[0] ?? null)}
+                className="text-xs cursor-pointer"
+              />
+              {fotoPedido && (
+                <p className="text-[11px] text-emerald-600">
+                  ✅ Anexado: {fotoPedido.name} (
+                  {(fotoPedido.size / 1024).toFixed(0)} KB)
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Observações</label>
+              <Textarea
+                value={obsSolicitar}
+                onChange={(e) => setObsSolicitar(e.target.value)}
+                rows={2}
+                placeholder="Ex: Paciente com urgência, guia deve sair até dia X..."
+              />
+            </div>
+
+            <Button
+              className="w-full bg-indigo-600 hover:bg-indigo-700"
+              onClick={solicitarGuia}
+              disabled={enviando}
+            >
+              {enviando ? "Enviando..." : "Solicitar Guia"}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
