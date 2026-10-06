@@ -1,8 +1,8 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { 
-  CheckCircle, XCircle, Filter, ExternalLink, Award, Phone,
-  Download, Eye, PhoneCall, Paperclip
+  CheckCircle, XCircle, Filter, ExternalLink, Award, FileCheck2,
+  Download, Eye, Paperclip, Clock, User
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
@@ -73,11 +73,16 @@ type PlanoSaude = {
   ativo: boolean;
 };
 
+type ItemPendente =
+  | { tipo: "solicitacao"; ordem: number; data: SolicitacaoGuia }
+  | { tipo: "renovacao"; ordem: number; data: PacoteComDados };
+
 export default function Autorizacoes() {
   const navigate = useNavigate();
   const [pacotes, setPacotes] = useState<PacoteComDados[]>([]);
   const [pacotesAtivos, setPacotesAtivos] = useState<PacoteComDados[]>([]);
   const [solicitacoes, setSolicitacoes] = useState<SolicitacaoGuia[]>([]);
+  const [emAnalise, setEmAnalise] = useState<SolicitacaoGuia[]>([]);
   const [planos, setPlanos] = useState<PlanoSaude[]>([]);
   const [profissionais, setProfissionais] = useState<{ id: string; nome: string; cor_agenda: string | null }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -86,7 +91,6 @@ export default function Autorizacoes() {
   const [filtroPlano, setFiltroPlano] = useState<string>("");
   const [filtroUrgencia, setFiltroUrgencia] = useState<string>("");
 
-  // Modal "Guia Recebida"
   const [guiaRecebida, setGuiaRecebida] = useState<SolicitacaoGuia | null>(null);
   const [formGuia, setFormGuia] = useState({
     numero_guia: "",
@@ -124,6 +128,7 @@ export default function Autorizacoes() {
         .not("autorizacao_id", "is", null)
         .gt("sessoes_restantes", 0);
 
+      // Solicitações pendentes (novas, ainda não pedidas ao plano)
       const { data: sols } = await supabase
         .from("solicitacoes_guia")
         .select(`
@@ -132,6 +137,17 @@ export default function Autorizacoes() {
           paciente:pacientes(id, nome, profissional_responsavel_id)
         `)
         .eq("status", "pendente")
+        .order("created_at", { ascending: false });
+
+      // Solicitações em análise (já pedidas ao plano, aguardando resposta)
+      const { data: solsAnalise } = await supabase
+        .from("solicitacoes_guia")
+        .select(`
+          id, paciente_id, plano, numero_carteirinha, foto_pedido_url,
+          observacoes, status, created_at,
+          paciente:pacientes(id, nome, profissional_responsavel_id)
+        `)
+        .eq("status", "em_analise")
         .order("created_at", { ascending: false });
 
       const { data: planosData } = await supabase
@@ -167,6 +183,7 @@ export default function Autorizacoes() {
       setPacotes(enriquecerPacote(pendentes ?? []));
       setPacotesAtivos(enriquecerPacote(ativos ?? []));
       setSolicitacoes(enriquecerSolicitacao(sols ?? []));
+      setEmAnalise(enriquecerSolicitacao(solsAnalise ?? []));
       setPlanos(planosData ?? []);
       setProfissionais(profsData ?? []);
     } catch (err) {
@@ -193,19 +210,40 @@ export default function Autorizacoes() {
     carregarDados();
   }
 
-  function abrirPortalPlano(nomePlano: string | null, pacienteId?: string) {
-    const plano = planos.find(p => p.nome.toLowerCase() === nomePlano?.toLowerCase());
+  // 🔥 NOVO: pedir guia marca solicitação como em_analise
+  async function pedirGuiaSolicitacao(sol: SolicitacaoGuia) {
+    // Abre portal do plano primeiro
+    const plano = planos.find(p => p.nome.toLowerCase() === sol.plano?.toLowerCase());
     if (plano?.link_portal) {
       window.open(plano.link_portal, "_blank");
       toast.info(`Abrindo portal ${plano.nome}`);
     } else {
-      toast.warning(`Portal do plano ${nomePlano ?? "—"} não cadastrado.`);
-      if (pacienteId) navigate(`/pacientes/${pacienteId}`);
+      toast.warning(`Portal do plano ${sol.plano ?? "—"} não cadastrado`);
     }
+
+    // Marca como em_analise
+    const { error } = await supabase
+      .from("solicitacoes_guia")
+      .update({ status: "em_analise" })
+      .eq("id", sol.id);
+    if (error) {
+      toast.error("Erro ao atualizar status: " + error.message);
+      return;
+    }
+    toast.success(`${sol.paciente?.nome} movido para Em Análise`);
+    carregarDados();
   }
 
-  function pedirGuia(pacote: PacoteComDados) {
-    abrirPortalPlano(pacote.autorizacao?.plano ?? null, pacote.paciente_id);
+  // Pedir guia para renovação (pacote)
+  function pedirGuiaPacote(pacote: PacoteComDados) {
+    const plano = planos.find(p => p.nome.toLowerCase() === pacote.autorizacao?.plano?.toLowerCase());
+    if (plano?.link_portal) {
+      window.open(plano.link_portal, "_blank");
+      toast.info(`Abrindo portal ${plano.nome}`);
+    } else {
+      toast.warning(`Portal do plano ${pacote.autorizacao?.plano ?? "—"} não cadastrado`);
+      navigate(`/pacientes/${pacote.paciente_id}`);
+    }
   }
 
   async function cancelarSolicitacao(sol: SolicitacaoGuia) {
@@ -216,6 +254,18 @@ export default function Autorizacoes() {
       .eq("id", sol.id);
     if (error) { toast.error("Erro: " + error.message); return; }
     toast.success("Solicitação cancelada");
+    carregarDados();
+  }
+
+  // 🔥 NOVO: reabrir solicitação (volta para Pendentes)
+  async function reabrirSolicitacao(sol: SolicitacaoGuia) {
+    if (!confirm(`Voltar ${sol.paciente?.nome} para Pendentes?`)) return;
+    const { error } = await supabase
+      .from("solicitacoes_guia")
+      .update({ status: "pendente" })
+      .eq("id", sol.id);
+    if (error) { toast.error("Erro: " + error.message); return; }
+    toast.success("Solicitação reaberta");
     carregarDados();
   }
 
@@ -259,8 +309,8 @@ export default function Autorizacoes() {
         paciente_id: guiaRecebida.paciente_id,
         autorizacao_id: novaAut.id,
         sessoes_totais: formGuia.sessoes_autorizadas,
-        sessoes_restantes: formGuia.sessoes_autorizadas,
         sessoes_realizadas: 0,
+        sessoes_restantes: formGuia.sessoes_autorizadas,
         preco_pago: 0,
         status_pagamento: "pago",
       });
@@ -298,6 +348,7 @@ export default function Autorizacoes() {
     }
   }
 
+  // ===== Filtros =====
   const pacotesFiltrados = useMemo(() => {
     return pacotes.filter(p => {
       if (filtroProfissional && p.profissional?.id !== filtroProfissional) return false;
@@ -305,14 +356,45 @@ export default function Autorizacoes() {
       if (filtroUrgencia === "2" && p.sessoes_restantes !== 2) return false;
       if (filtroUrgencia === "1" && p.sessoes_restantes !== 1) return false;
       if (filtroUrgencia === "0" && p.sessoes_restantes !== 0) return false;
+      if (filtroUrgencia === "solicitacao") return false;
       return true;
     });
   }, [pacotes, filtroProfissional, filtroPlano, filtroUrgencia]);
 
+  const solicitacoesFiltradas = useMemo(() => {
+    return solicitacoes.filter(s => {
+      if (filtroProfissional && s.profissional?.id !== filtroProfissional) return false;
+      if (filtroPlano && s.plano !== filtroPlano) return false;
+      if (filtroUrgencia && filtroUrgencia !== "solicitacao") return false;
+      return true;
+    });
+  }, [solicitacoes, filtroProfissional, filtroPlano, filtroUrgencia]);
+
+  // Ordenação: 0 sessões → solicitações → 1 sessão → 2 sessões
+  const listaOrdenada = useMemo((): ItemPendente[] => {
+    const itens: ItemPendente[] = [];
+
+    pacotesFiltrados.forEach(p => {
+      let ordem = 4;
+      if (p.sessoes_restantes === 0) ordem = 1;
+      else if (p.sessoes_restantes === 1) ordem = 3;
+      else if (p.sessoes_restantes === 2) ordem = 4;
+      itens.push({ tipo: "renovacao", ordem, data: p });
+    });
+
+    solicitacoesFiltradas.forEach(s => {
+      itens.push({ tipo: "solicitacao", ordem: 2, data: s });
+    });
+
+    return itens.sort((a, b) => a.ordem - b.ordem);
+  }, [pacotesFiltrados, solicitacoesFiltradas]);
+
   const planosUnicos = useMemo(() => {
-    const set = new Set(pacotes.map(p => p.autorizacao?.plano).filter(Boolean));
+    const set = new Set<string>();
+    pacotes.forEach(p => p.autorizacao?.plano && set.add(p.autorizacao.plano));
+    solicitacoes.forEach(s => s.plano && set.add(s.plano));
     return [...set];
-  }, [pacotes]);
+  }, [pacotes, solicitacoes]);
 
   const porPlano = useMemo(() => {
     const map: Record<string, { nome: string; ativos: number; pendentes: number; portal: string | null }> = {};
@@ -330,6 +412,9 @@ export default function Autorizacoes() {
     return Object.values(map).filter(p => p.ativos > 0 || p.pendentes > 0);
   }, [pacotes, pacotesAtivos, planos]);
 
+  // Contagem total de pendentes
+  const totalPendentes = pacotesFiltrados.length + solicitacoesFiltradas.length;
+
   if (loading) {
     return <div className="p-10 text-center text-muted-foreground animate-pulse">A carregar autorizações...</div>;
   }
@@ -344,44 +429,73 @@ export default function Autorizacoes() {
           </p>
         </div>
         <Button size="sm" className="shadow-sm bg-slate-800" onClick={() => navigate("/pacientes")}>
-          <Phone className="w-4 h-4 mr-2" /> Nova Autorização
+          <FileCheck2 className="w-4 h-4 mr-2" /> Nova Autorização
         </Button>
       </div>
 
-      <Card className="p-3 border shadow-sm">
+      {/* FILTROS */}
+      <Card className="p-3 border shadow-sm space-y-3">
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 flex-wrap">
           <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600 shrink-0">
             <Filter className="w-3.5 h-3.5" />
             <span className="uppercase tracking-wider">Filtros:</span>
           </div>
 
-          <select className="text-xs h-8 px-2 rounded border bg-background" value={filtroProfissional} onChange={(e) => setFiltroProfissional(e.target.value)}>
-            <option value="">Todos profissionais</option>
-            {profissionais.map(p => (<option key={p.id} value={p.id}>{p.nome}</option>))}
-          </select>
-
           <select className="text-xs h-8 px-2 rounded border bg-background" value={filtroPlano} onChange={(e) => setFiltroPlano(e.target.value)}>
             <option value="">Todos planos</option>
-            {planosUnicos.map(p => (<option key={p} value={p!}>{p}</option>))}
+            {planosUnicos.map(p => (<option key={p} value={p}>{p}</option>))}
           </select>
 
-          <div className="flex gap-1 bg-slate-100 p-1 rounded-lg">
+          <div className="flex gap-1 bg-slate-100 p-1 rounded-lg flex-wrap">
             <Button size="sm" variant={filtroUrgencia === "" ? "default" : "ghost"} onClick={() => setFiltroUrgencia("")} className="h-7 text-xs">Todos</Button>
-            <Button size="sm" variant={filtroUrgencia === "2" ? "default" : "ghost"} onClick={() => setFiltroUrgencia("2")} className="h-7 text-xs">🟡 2</Button>
-            <Button size="sm" variant={filtroUrgencia === "1" ? "default" : "ghost"} onClick={() => setFiltroUrgencia("1")} className="h-7 text-xs">🟠 1</Button>
             <Button size="sm" variant={filtroUrgencia === "0" ? "default" : "ghost"} onClick={() => setFiltroUrgencia("0")} className="h-7 text-xs">🔴 0</Button>
+            <Button size="sm" variant={filtroUrgencia === "1" ? "default" : "ghost"} onClick={() => setFiltroUrgencia("1")} className="h-7 text-xs">🟠 1</Button>
+            <Button size="sm" variant={filtroUrgencia === "2" ? "default" : "ghost"} onClick={() => setFiltroUrgencia("2")} className="h-7 text-xs">🟡 2</Button>
+            <Button size="sm" variant={filtroUrgencia === "solicitacao" ? "default" : "ghost"} onClick={() => setFiltroUrgencia("solicitacao")} className="h-7 text-xs">🆕 Solicitações</Button>
           </div>
 
           <Badge variant="outline" className="ml-auto text-[10px] h-6">
-            {pacotesFiltrados.length} pendentes
+            {totalPendentes} pendentes
           </Badge>
+        </div>
+
+        {/* BONUS: Filtro por profissional com cores */}
+        <div className="flex items-center gap-1.5 flex-wrap border-t pt-2">
+          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-1">Profissional:</span>
+          <Button
+            size="sm"
+            variant={filtroProfissional === "" ? "default" : "ghost"}
+            onClick={() => setFiltroProfissional("")}
+            className="h-6 text-[10px] px-2"
+          >
+            <User className="w-3 h-3 mr-1" /> Todos
+          </Button>
+          {profissionais.map(p => {
+            const ativo = filtroProfissional === p.id;
+            return (
+              <button
+                key={p.id}
+                onClick={() => setFiltroProfissional(ativo ? "" : p.id)}
+                className={`h-6 text-[10px] px-2 rounded-full font-medium border transition-all ${
+                  ativo ? "ring-2 ring-offset-1" : "opacity-70 hover:opacity-100"
+                }`}
+                style={{
+                  backgroundColor: (p.cor_agenda || "#94a3b8") + (ativo ? "30" : "15"),
+                  borderColor: p.cor_agenda || "#94a3b8",
+                  color: p.cor_agenda || "#64748b",
+                }}
+              >
+                {p.nome.split(" ")[0]}
+              </button>
+            );
+          })}
         </div>
       </Card>
 
       <Tabs defaultValue="pendentes" className="w-full">
         <TabsList className="grid w-full grid-cols-5">
-          <TabsTrigger value="pendentes" className="text-xs">🚨 Pendentes ({pacotesFiltrados.length})</TabsTrigger>
-          <TabsTrigger value="primeiras" className="text-xs">📞 Primeiras ({solicitacoes.length})</TabsTrigger>
+          <TabsTrigger value="pendentes" className="text-xs">🚨 Pendentes ({totalPendentes})</TabsTrigger>
+          <TabsTrigger value="analise" className="text-xs">⏳ Em Análise ({emAnalise.length})</TabsTrigger>
           <TabsTrigger value="ativas" className="text-xs">📋 Ativas ({pacotesAtivos.length})</TabsTrigger>
           <TabsTrigger value="planos" className="text-xs">📊 Por Plano</TabsTrigger>
           <TabsTrigger value="historico" className="text-xs">📜 Histórico</TabsTrigger>
@@ -389,39 +503,55 @@ export default function Autorizacoes() {
 
         {/* ABA: PENDENTES */}
         <TabsContent value="pendentes" className="space-y-3 mt-4">
-          {pacotesFiltrados.length === 0 ? (
+          {listaOrdenada.length === 0 ? (
             <Card className="p-10 text-center">
               <CheckCircle className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
-              <p className="text-sm text-muted-foreground">Nenhuma renovação pendente.</p>
+              <p className="text-sm text-muted-foreground">Nenhuma pendência no momento.</p>
             </Card>
           ) : (
-            pacotesFiltrados.map(p => (
-              <CardPaciente
-                key={p.id}
-                pacote={p}
-                onAlta={() => darAlta(p.id, p.paciente?.nome ?? "")}
-                onDispensar={() => dispensar(p.id, p.paciente?.nome ?? "")}
-                onPedirGuia={() => pedirGuia(p)}
-                onAbrirFicha={() => navigate(`/pacientes/${p.paciente_id}`)}
-              />
-            ))
+            listaOrdenada.map(item => {
+              if (item.tipo === "solicitacao") {
+                return (
+                  <CardSolicitacao
+                    key={item.data.id}
+                    sol={item.data}
+                    onCancelar={() => cancelarSolicitacao(item.data)}
+                    onPedirGuia={() => pedirGuiaSolicitacao(item.data)}
+                    onGuiaRecebida={() => abrirModalGuiaRecebida(item.data)}
+                    onAbrirFicha={() => navigate(`/pacientes/${item.data.paciente_id}`)}
+                    onBaixarFoto={() => item.data.foto_pedido_url && baixarFoto(item.data.foto_pedido_url, item.data.paciente?.nome ?? "paciente")}
+                  />
+                );
+              }
+              return (
+                <CardPaciente
+                  key={item.data.id}
+                  pacote={item.data}
+                  onAlta={() => darAlta(item.data.id, item.data.paciente?.nome ?? "")}
+                  onDispensar={() => dispensar(item.data.id, item.data.paciente?.nome ?? "")}
+                  onPedirGuia={() => pedirGuiaPacote(item.data)}
+                  onAbrirFicha={() => navigate(`/pacientes/${item.data.paciente_id}`)}
+                />
+              );
+            })
           )}
         </TabsContent>
 
-        {/* ABA: PRIMEIRAS GUIAS */}
-        <TabsContent value="primeiras" className="space-y-3 mt-4">
-          {solicitacoes.length === 0 ? (
+        {/* ABA: EM ANÁLISE */}
+        <TabsContent value="analise" className="space-y-3 mt-4">
+          {emAnalise.length === 0 ? (
             <Card className="p-10 text-center">
-              <PhoneCall className="w-10 h-10 text-indigo-400 mx-auto mb-2" />
-              <p className="text-sm text-muted-foreground">Nenhuma solicitação de primeira guia.</p>
+              <Clock className="w-10 h-10 text-amber-400 mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground">Nenhuma solicitação em análise.</p>
             </Card>
           ) : (
-            solicitacoes.map(s => (
+            emAnalise.map(s => (
               <CardSolicitacao
                 key={s.id}
                 sol={s}
-                onCancelar={() => cancelarSolicitacao(s)}
-                onPedirGuia={() => abrirPortalPlano(s.plano, s.paciente_id)}
+                modoAnalise
+                onCancelar={() => reabrirSolicitacao(s)}
+                onPedirGuia={() => pedirGuiaSolicitacao(s)}
                 onGuiaRecebida={() => abrirModalGuiaRecebida(s)}
                 onAbrirFicha={() => navigate(`/pacientes/${s.paciente_id}`)}
                 onBaixarFoto={() => s.foto_pedido_url && baixarFoto(s.foto_pedido_url, s.paciente?.nome ?? "paciente")}
@@ -477,6 +607,7 @@ export default function Autorizacoes() {
           </Card>
         </TabsContent>
 
+        {/* ABA: POR PLANO */}
         <TabsContent value="planos" className="mt-4">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {porPlano.length === 0 ? (
@@ -512,6 +643,7 @@ export default function Autorizacoes() {
           </div>
         </TabsContent>
 
+        {/* ABA: HISTÓRICO */}
         <TabsContent value="historico" className="mt-4">
           <HistoricoTab />
         </TabsContent>
@@ -533,65 +665,35 @@ export default function Autorizacoes() {
 
               <div className="space-y-1.5">
                 <label className="text-sm font-medium">Nº da guia</label>
-                <Input
-                  value={formGuia.numero_guia}
-                  onChange={(e) => setFormGuia({ ...formGuia, numero_guia: e.target.value })}
-                  placeholder="Ex: 12345/2026"
-                />
+                <Input value={formGuia.numero_guia} onChange={(e) => setFormGuia({ ...formGuia, numero_guia: e.target.value })} placeholder="Ex: 12345/2026" />
               </div>
 
               <div className="space-y-1.5">
                 <label className="text-sm font-medium">Sessões autorizadas *</label>
-                <Input
-                  type="number"
-                  min={1}
-                  value={formGuia.sessoes_autorizadas}
-                  onChange={(e) => setFormGuia({ ...formGuia, sessoes_autorizadas: parseInt(e.target.value) || 0 })}
-                />
+                <Input type="number" min={1} value={formGuia.sessoes_autorizadas} onChange={(e) => setFormGuia({ ...formGuia, sessoes_autorizadas: parseInt(e.target.value) || 0 })} />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <label className="text-sm font-medium">Emissão</label>
-                  <Input
-                    type="date"
-                    value={formGuia.data_emissao}
-                    onChange={(e) => setFormGuia({ ...formGuia, data_emissao: e.target.value })}
-                  />
+                  <Input type="date" value={formGuia.data_emissao} onChange={(e) => setFormGuia({ ...formGuia, data_emissao: e.target.value })} />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-sm font-medium">Validade</label>
-                  <Input
-                    type="date"
-                    value={formGuia.data_validade}
-                    onChange={(e) => setFormGuia({ ...formGuia, data_validade: e.target.value })}
-                  />
+                  <Input type="date" value={formGuia.data_validade} onChange={(e) => setFormGuia({ ...formGuia, data_validade: e.target.value })} />
                 </div>
               </div>
 
               <div className="space-y-1.5">
                 <label className="text-sm font-medium">Observações</label>
-                <Textarea
-                  value={formGuia.observacoes}
-                  onChange={(e) => setFormGuia({ ...formGuia, observacoes: e.target.value })}
-                  rows={2}
-                />
+                <Textarea value={formGuia.observacoes} onChange={(e) => setFormGuia({ ...formGuia, observacoes: e.target.value })} rows={2} />
               </div>
 
               <div className="flex flex-col gap-2 pt-2">
-                <Button 
-                  className="w-full bg-emerald-600 hover:bg-emerald-700"
-                  onClick={salvarGuiaRecebida}
-                  disabled={salvandoGuia}
-                >
+                <Button className="w-full bg-emerald-600 hover:bg-emerald-700" onClick={salvarGuiaRecebida} disabled={salvandoGuia}>
                   {salvandoGuia ? "Salvando..." : "✅ Cadastrar Guia"}
                 </Button>
-                <Button 
-                  variant="outline" 
-                  className="w-full"
-                  onClick={() => setGuiaRecebida(null)}
-                  disabled={salvandoGuia}
-                >
+                <Button variant="outline" className="w-full" onClick={() => setGuiaRecebida(null)} disabled={salvandoGuia}>
                   Fechar (já cadastrei pela ficha)
                 </Button>
               </div>
@@ -604,7 +706,7 @@ export default function Autorizacoes() {
 }
 
 // =====================================================
-// CARD DO PACIENTE (aba Pendentes)
+// CARD DO PACIENTE (renovação)
 // =====================================================
 function CardPaciente({
   pacote, onAlta, onDispensar, onPedirGuia, onAbrirFicha,
@@ -618,10 +720,10 @@ function CardPaciente({
   const cor = pacote.profissional?.cor_agenda || "#94a3b8";
   const sessoes = pacote.sessoes_restantes;
   const urgencia = sessoes === 0
-    ? { bg: "bg-rose-100", text: "text-rose-700", border: "border-rose-300", label: "0 sessões" }
+    ? { bg: "bg-rose-100", text: "text-rose-700", border: "border-rose-300", label: "🔴 0 sessões" }
     : sessoes === 1
-    ? { bg: "bg-orange-100", text: "text-orange-700", border: "border-orange-300", label: "1 sessão" }
-    : { bg: "bg-amber-100", text: "text-amber-700", border: "border-amber-300", label: `${sessoes} sessões` };
+    ? { bg: "bg-orange-100", text: "text-orange-700", border: "border-orange-300", label: "🟠 1 sessão" }
+    : { bg: "bg-amber-100", text: "text-amber-700", border: "border-amber-300", label: `🟡 ${sessoes} sessões` };
 
   return (
     <div className="rounded-lg border-l-4 shadow-sm overflow-hidden bg-white" style={{ borderLeftColor: cor }}>
@@ -639,6 +741,9 @@ function CardPaciente({
             </div>
           </div>
           <div className="flex flex-col items-end gap-2 shrink-0">
+            <Badge className="bg-slate-100 text-slate-700 border border-slate-300 text-[10px] font-bold">
+              🔄 Renovação
+            </Badge>
             <Badge className={`${urgencia.bg} ${urgencia.text} border ${urgencia.border} text-[10px] font-bold`}>
               {pacote.alta_programada ? "🏁 Alta programada" : urgencia.label}
             </Badge>
@@ -665,12 +770,13 @@ function CardPaciente({
 }
 
 // =====================================================
-// CARD DE SOLICITAÇÃO (aba Primeiras Guias)
+// CARD DE SOLICITAÇÃO (nova ou em análise)
 // =====================================================
 function CardSolicitacao({
-  sol, onCancelar, onPedirGuia, onGuiaRecebida, onAbrirFicha, onBaixarFoto,
+  sol, modoAnalise, onCancelar, onPedirGuia, onGuiaRecebida, onAbrirFicha, onBaixarFoto,
 }: {
   sol: SolicitacaoGuia;
+  modoAnalise?: boolean;
   onCancelar: () => void;
   onPedirGuia: () => void;
   onGuiaRecebida: () => void;
@@ -696,9 +802,15 @@ function CardSolicitacao({
             </div>
           </div>
           <div className="flex flex-col items-end gap-2 shrink-0">
-            <Badge className="bg-indigo-100 text-indigo-700 border border-indigo-300 text-[10px] font-bold">
-              📞 Aguardando guia
-            </Badge>
+            {modoAnalise ? (
+              <Badge className="bg-amber-100 text-amber-700 border border-amber-300 text-[10px] font-bold">
+                ⏳ Em análise
+              </Badge>
+            ) : (
+              <Badge className="bg-indigo-100 text-indigo-700 border border-indigo-300 text-[10px] font-bold">
+                🆕 Primeira guia
+              </Badge>
+            )}
             <span className="text-[10px] font-medium px-2 py-0.5 rounded-full" style={{ backgroundColor: cor + "20", color: cor }}>
               {sol.profissional?.nome?.split(" ")[0] ?? "—"}
             </span>
@@ -720,7 +832,7 @@ function CardSolicitacao({
 
         <div className="flex gap-2 mt-3">
           <Button size="sm" variant="outline" className="h-7 text-[10px] flex-1 border-rose-200 text-rose-700 hover:bg-rose-50" onClick={onCancelar}>
-            <XCircle className="w-3 h-3 mr-1" /> Cancelar
+            <XCircle className="w-3 h-3 mr-1" /> {modoAnalise ? "Voltar p/ Pendentes" : "Cancelar"}
           </Button>
           <Button size="sm" variant="outline" className="h-7 text-[10px] flex-1 border-indigo-200 text-indigo-700 hover:bg-indigo-50" onClick={onPedirGuia}>
             <ExternalLink className="w-3 h-3 mr-1" /> Pedir Guia
