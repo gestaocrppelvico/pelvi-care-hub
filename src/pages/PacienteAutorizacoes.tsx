@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { ArrowLeft, ShieldCheck, Plus, Pencil, Trash2, AlertTriangle, PhoneCall, Image as ImageIcon } from "lucide-react";
+import { ArrowLeft, ShieldCheck, Plus, Pencil, Trash2, AlertTriangle, FileCheck2, Image as ImageIcon } from "lucide-react";
 import { format } from "date-fns";
 
 type StatusAutorizacao = "ativa" | "esgotada" | "expirada";
@@ -306,7 +306,7 @@ export default function PacienteAutorizacoes() {
           onClick={() => setModalSolicitarOpen(true)}
           className="border-indigo-200 text-indigo-700 hover:bg-indigo-50"
         >
-          <PhoneCall className="w-4 h-4 mr-1" /> Solicitar Primeira Guia
+          <FileCheck2 className="w-4 h-4 mr-1" /> Solicitar Guia
         </Button>
       </div>
 
