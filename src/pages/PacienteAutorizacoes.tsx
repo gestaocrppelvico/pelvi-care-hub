@@ -217,6 +217,7 @@ export default function PacienteAutorizacoes() {
         await supabase.from("paciente_pacotes").insert({
           paciente_id: id!,
           autorizacao_id: novaAut.id,
+          sessoes_realizadas: form.sessoes_realizadas,
           sessoes_totais: form.sessoes_autorizadas,
           sessoes_restantes: form.sessoes_autorizadas - form.sessoes_realizadas,
           preco_pago: 0,
