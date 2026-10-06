@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { 
   CheckCircle, XCircle, Filter, ExternalLink, Award, FileCheck2,
-  Download, Eye, Paperclip, Clock, User
+  Download, Eye, Paperclip, Clock, User, Undo2
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
@@ -128,7 +128,6 @@ export default function Autorizacoes() {
         .not("autorizacao_id", "is", null)
         .gt("sessoes_restantes", 0);
 
-      // Solicitações pendentes (novas, ainda não pedidas ao plano)
       const { data: sols } = await supabase
         .from("solicitacoes_guia")
         .select(`
@@ -139,7 +138,6 @@ export default function Autorizacoes() {
         .eq("status", "pendente")
         .order("created_at", { ascending: false });
 
-      // Solicitações em análise (já pedidas ao plano, aguardando resposta)
       const { data: solsAnalise } = await supabase
         .from("solicitacoes_guia")
         .select(`
@@ -194,58 +192,68 @@ export default function Autorizacoes() {
     }
   }
 
-  async function darAlta(pacoteId: string, nome: string) {
-    if (!confirm(`Marcar alta fisioterapêutica programada para ${nome}?`)) return;
-    const { error } = await supabase.rpc("dar_alta_programada", { pacote_id: pacoteId });
-    if (error) { toast.error("Erro: " + error.message); return; }
-    toast.success(`Alta programada para ${nome}`);
-    carregarDados();
-  }
+  // ============ AÇÕES ============
 
-  async function dispensar(pacoteId: string, nome: string) {
-    if (!confirm(`Remover ${nome} da lista de renovações?`)) return;
-    const { error } = await supabase.rpc("dispensar_renovacao", { pacote_id: pacoteId });
-    if (error) { toast.error("Erro: " + error.message); return; }
-    toast.success(`${nome} removido`);
-    carregarDados();
-  }
-
-  // 🔥 NOVO: pedir guia marca solicitação como em_analise
-  async function pedirGuiaSolicitacao(sol: SolicitacaoGuia) {
-    // Abre portal do plano primeiro
-    const plano = planos.find(p => p.nome.toLowerCase() === sol.plano?.toLowerCase());
+  // Abre portal (só link, sem mudar status)
+  function abrirPortalPlano(nomePlano: string | null | undefined, pacienteId?: string) {
+    const plano = planos.find(p => p.nome.toLowerCase() === nomePlano?.toLowerCase());
     if (plano?.link_portal) {
       window.open(plano.link_portal, "_blank");
       toast.info(`Abrindo portal ${plano.nome}`);
     } else {
-      toast.warning(`Portal do plano ${sol.plano ?? "—"} não cadastrado`);
+      toast.warning(`Portal do plano ${nomePlano ?? "—"} não cadastrado`);
+      if (pacienteId) navigate(`/pacientes/${pacienteId}`);
     }
+  }
 
-    // Marca como em_analise
+  // 🔥 Mover solicitação para Em Análise
+  async function moverSolicitacaoParaAnalise(sol: SolicitacaoGuia) {
     const { error } = await supabase
       .from("solicitacoes_guia")
       .update({ status: "em_analise" })
       .eq("id", sol.id);
-    if (error) {
-      toast.error("Erro ao atualizar status: " + error.message);
-      return;
-    }
+    if (error) { toast.error("Erro: " + error.message); return; }
     toast.success(`${sol.paciente?.nome} movido para Em Análise`);
     carregarDados();
   }
 
-  // Pedir guia para renovação (pacote)
-  function pedirGuiaPacote(pacote: PacoteComDados) {
-    const plano = planos.find(p => p.nome.toLowerCase() === pacote.autorizacao?.plano?.toLowerCase());
-    if (plano?.link_portal) {
-      window.open(plano.link_portal, "_blank");
-      toast.info(`Abrindo portal ${plano.nome}`);
-    } else {
-      toast.warning(`Portal do plano ${pacote.autorizacao?.plano ?? "—"} não cadastrado`);
-      navigate(`/pacientes/${pacote.paciente_id}`);
-    }
+  // 🔥 Mover renovação para Em Análise (cria solicitação espelho)
+  async function moverPacoteParaAnalise(pacote: PacoteComDados) {
+    // 1. Cria solicitação espelho
+    const { error: errSol } = await supabase
+      .from("solicitacoes_guia")
+      .insert({
+        paciente_id: pacote.paciente_id,
+        plano: pacote.autorizacao?.plano || null,
+        numero_carteirinha: pacote.paciente?.numero_carteirinha || null,
+        status: "em_analise",
+        observacoes: `Renovação da guia ${pacote.autorizacao?.numero_guia || "—"}`,
+      });
+    if (errSol) { toast.error("Erro ao criar solicitação: " + errSol.message); return; }
+
+    // 2. Marca pacote antigo como dispensado (some de Pendentes)
+    const { error: errPac } = await supabase
+      .from("paciente_pacotes")
+      .update({ dispensado_renovacao: true, status_renovacao: null })
+      .eq("id", pacote.id);
+    if (errPac) { toast.error("Erro ao atualizar pacote: " + errPac.message); return; }
+
+    toast.success(`${pacote.paciente?.nome} movido para Em Análise`);
+    carregarDados();
   }
 
+  // 🔥 Voltar de Em Análise para Pendentes
+  async function voltarParaPendentes(sol: SolicitacaoGuia) {
+    const { error } = await supabase
+      .from("solicitacoes_guia")
+      .update({ status: "pendente" })
+      .eq("id", sol.id);
+    if (error) { toast.error("Erro: " + error.message); return; }
+    toast.success(`${sol.paciente?.nome} voltou para Pendentes`);
+    carregarDados();
+  }
+
+  // Cancelar solicitação
   async function cancelarSolicitacao(sol: SolicitacaoGuia) {
     if (!confirm(`Cancelar a solicitação de ${sol.paciente?.nome}?`)) return;
     const { error } = await supabase
@@ -257,19 +265,28 @@ export default function Autorizacoes() {
     carregarDados();
   }
 
-  // 🔥 NOVO: reabrir solicitação (volta para Pendentes)
-  async function reabrirSolicitacao(sol: SolicitacaoGuia) {
-    if (!confirm(`Voltar ${sol.paciente?.nome} para Pendentes?`)) return;
-    const { error } = await supabase
-      .from("solicitacoes_guia")
-      .update({ status: "pendente" })
-      .eq("id", sol.id);
+  // Alta programada
+  async function darAlta(pacoteId: string, nome: string) {
+    if (!confirm(`Marcar alta fisioterapêutica programada para ${nome}?`)) return;
+    const { error } = await supabase.rpc("dar_alta_programada", { pacote_id: pacoteId });
     if (error) { toast.error("Erro: " + error.message); return; }
-    toast.success("Solicitação reaberta");
+    toast.success(`Alta programada para ${nome}`);
     carregarDados();
   }
 
-  function abrirModalGuiaRecebida(sol: SolicitacaoGuia) {
+  // Dispensar renovação
+  async function dispensar(pacoteId: string, nome: string) {
+    if (!confirm(`Remover ${nome} da lista de renovações?`)) return;
+    const { error } = await supabase.rpc("dispensar_renovacao", { pacote_id: pacoteId });
+    if (error) { toast.error("Erro: " + error.message); return; }
+    toast.success(`${nome} removido`);
+    carregarDados();
+  }
+
+  // ============ MODAL GUIA RECEBIDA ============
+
+  // 🔥 Abre modal de guia recebida a partir de uma solicitação
+  function abrirModalGuiaRecebidaSolicitacao(sol: SolicitacaoGuia) {
     setGuiaRecebida(sol);
     setFormGuia({
       numero_guia: "",
@@ -277,6 +294,42 @@ export default function Autorizacoes() {
       data_emissao: format(new Date(), "yyyy-MM-dd"),
       data_validade: "",
       observacoes: "",
+    });
+  }
+
+  // 🔥 Abre modal de guia recebida a partir de um pacote (renovação)
+  async function abrirModalGuiaRecebidaPacote(pacote: PacoteComDados) {
+    // Cria solicitação espelho (status guia_recebida só quando confirmar)
+    const { data: novaSol, error } = await supabase
+      .from("solicitacoes_guia")
+      .insert({
+        paciente_id: pacote.paciente_id,
+        plano: pacote.autorizacao?.plano || null,
+        numero_carteirinha: pacote.paciente?.numero_carteirinha || null,
+        status: "em_analise",
+        observacoes: `Renovação da guia ${pacote.autorizacao?.numero_guia || "—"}`,
+      })
+      .select(`
+        id, paciente_id, plano, numero_carteirinha, foto_pedido_url,
+        observacoes, status, created_at,
+        paciente:pacientes(id, nome, profissional_responsavel_id)
+      `)
+      .single();
+    if (error) { toast.error("Erro: " + error.message); return; }
+
+    // Marca pacote antigo como dispensado
+    await supabase
+      .from("paciente_pacotes")
+      .update({ dispensado_renovacao: true, status_renovacao: null })
+      .eq("id", pacote.id);
+
+    setGuiaRecebida(novaSol as any);
+    setFormGuia({
+      numero_guia: "",
+      sessoes_autorizadas: pacote.sessoes_totais || 10,
+      data_emissao: format(new Date(), "yyyy-MM-dd"),
+      data_validade: "",
+      observacoes: `Renovação da guia ${pacote.autorizacao?.numero_guia || "—"}`,
     });
   }
 
@@ -348,7 +401,7 @@ export default function Autorizacoes() {
     }
   }
 
-  // ===== Filtros =====
+  // ============ FILTROS E ORDENAÇÃO ============
   const pacotesFiltrados = useMemo(() => {
     return pacotes.filter(p => {
       if (filtroProfissional && p.profissional?.id !== filtroProfissional) return false;
@@ -370,22 +423,17 @@ export default function Autorizacoes() {
     });
   }, [solicitacoes, filtroProfissional, filtroPlano, filtroUrgencia]);
 
-  // Ordenação: 0 sessões → solicitações → 1 sessão → 2 sessões
   const listaOrdenada = useMemo((): ItemPendente[] => {
     const itens: ItemPendente[] = [];
-
     pacotesFiltrados.forEach(p => {
       let ordem = 4;
       if (p.sessoes_restantes === 0) ordem = 1;
       else if (p.sessoes_restantes === 1) ordem = 3;
-      else if (p.sessoes_restantes === 2) ordem = 4;
       itens.push({ tipo: "renovacao", ordem, data: p });
     });
-
     solicitacoesFiltradas.forEach(s => {
       itens.push({ tipo: "solicitacao", ordem: 2, data: s });
     });
-
     return itens.sort((a, b) => a.ordem - b.ordem);
   }, [pacotesFiltrados, solicitacoesFiltradas]);
 
@@ -412,7 +460,6 @@ export default function Autorizacoes() {
     return Object.values(map).filter(p => p.ativos > 0 || p.pendentes > 0);
   }, [pacotes, pacotesAtivos, planos]);
 
-  // Contagem total de pendentes
   const totalPendentes = pacotesFiltrados.length + solicitacoesFiltradas.length;
 
   if (loading) {
@@ -433,7 +480,6 @@ export default function Autorizacoes() {
         </Button>
       </div>
 
-      {/* FILTROS */}
       <Card className="p-3 border shadow-sm space-y-3">
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 flex-wrap">
           <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600 shrink-0">
@@ -459,7 +505,6 @@ export default function Autorizacoes() {
           </Badge>
         </div>
 
-        {/* BONUS: Filtro por profissional com cores */}
         <div className="flex items-center gap-1.5 flex-wrap border-t pt-2">
           <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-1">Profissional:</span>
           <Button
@@ -501,7 +546,6 @@ export default function Autorizacoes() {
           <TabsTrigger value="historico" className="text-xs">📜 Histórico</TabsTrigger>
         </TabsList>
 
-        {/* ABA: PENDENTES */}
         <TabsContent value="pendentes" className="space-y-3 mt-4">
           {listaOrdenada.length === 0 ? (
             <Card className="p-10 text-center">
@@ -516,8 +560,9 @@ export default function Autorizacoes() {
                     key={item.data.id}
                     sol={item.data}
                     onCancelar={() => cancelarSolicitacao(item.data)}
-                    onPedirGuia={() => pedirGuiaSolicitacao(item.data)}
-                    onGuiaRecebida={() => abrirModalGuiaRecebida(item.data)}
+                    onPedirGuia={() => abrirPortalPlano(item.data.plano, item.data.paciente_id)}
+                    onEmAnalise={() => moverSolicitacaoParaAnalise(item.data)}
+                    onGuiaRecebida={() => abrirModalGuiaRecebidaSolicitacao(item.data)}
                     onAbrirFicha={() => navigate(`/pacientes/${item.data.paciente_id}`)}
                     onBaixarFoto={() => item.data.foto_pedido_url && baixarFoto(item.data.foto_pedido_url, item.data.paciente?.nome ?? "paciente")}
                   />
@@ -529,7 +574,9 @@ export default function Autorizacoes() {
                   pacote={item.data}
                   onAlta={() => darAlta(item.data.id, item.data.paciente?.nome ?? "")}
                   onDispensar={() => dispensar(item.data.id, item.data.paciente?.nome ?? "")}
-                  onPedirGuia={() => pedirGuiaPacote(item.data)}
+                  onPedirGuia={() => abrirPortalPlano(item.data.autorizacao?.plano, item.data.paciente_id)}
+                  onEmAnalise={() => moverPacoteParaAnalise(item.data)}
+                  onGuiaRecebida={() => abrirModalGuiaRecebidaPacote(item.data)}
                   onAbrirFicha={() => navigate(`/pacientes/${item.data.paciente_id}`)}
                 />
               );
@@ -537,7 +584,6 @@ export default function Autorizacoes() {
           )}
         </TabsContent>
 
-        {/* ABA: EM ANÁLISE */}
         <TabsContent value="analise" className="space-y-3 mt-4">
           {emAnalise.length === 0 ? (
             <Card className="p-10 text-center">
@@ -550,9 +596,10 @@ export default function Autorizacoes() {
                 key={s.id}
                 sol={s}
                 modoAnalise
-                onCancelar={() => reabrirSolicitacao(s)}
-                onPedirGuia={() => pedirGuiaSolicitacao(s)}
-                onGuiaRecebida={() => abrirModalGuiaRecebida(s)}
+                onCancelar={() => cancelarSolicitacao(s)}
+                onVoltar={() => voltarParaPendentes(s)}
+                onPedirGuia={() => abrirPortalPlano(s.plano, s.paciente_id)}
+                onGuiaRecebida={() => abrirModalGuiaRecebidaSolicitacao(s)}
                 onAbrirFicha={() => navigate(`/pacientes/${s.paciente_id}`)}
                 onBaixarFoto={() => s.foto_pedido_url && baixarFoto(s.foto_pedido_url, s.paciente?.nome ?? "paciente")}
               />
@@ -560,7 +607,6 @@ export default function Autorizacoes() {
           )}
         </TabsContent>
 
-        {/* ABA: ATIVAS */}
         <TabsContent value="ativas" className="mt-4">
           <Card className="overflow-hidden">
             <div className="overflow-x-auto">
@@ -607,7 +653,6 @@ export default function Autorizacoes() {
           </Card>
         </TabsContent>
 
-        {/* ABA: POR PLANO */}
         <TabsContent value="planos" className="mt-4">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {porPlano.length === 0 ? (
@@ -643,13 +688,11 @@ export default function Autorizacoes() {
           </div>
         </TabsContent>
 
-        {/* ABA: HISTÓRICO */}
         <TabsContent value="historico" className="mt-4">
           <HistoricoTab />
         </TabsContent>
       </Tabs>
 
-      {/* MODAL: Guia Recebida */}
       <Dialog open={!!guiaRecebida} onOpenChange={(o) => !o && setGuiaRecebida(null)}>
         <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -706,15 +749,17 @@ export default function Autorizacoes() {
 }
 
 // =====================================================
-// CARD DO PACIENTE (renovação)
+// CARD DE PACIENTE (renovação)
 // =====================================================
 function CardPaciente({
-  pacote, onAlta, onDispensar, onPedirGuia, onAbrirFicha,
+  pacote, onAlta, onDispensar, onPedirGuia, onEmAnalise, onGuiaRecebida, onAbrirFicha,
 }: {
   pacote: PacoteComDados;
   onAlta: () => void;
   onDispensar: () => void;
   onPedirGuia: () => void;
+  onEmAnalise: () => void;
+  onGuiaRecebida: () => void;
   onAbrirFicha: () => void;
 }) {
   const cor = pacote.profissional?.cor_agenda || "#94a3b8";
@@ -737,15 +782,14 @@ function CardPaciente({
               <div><span className="font-medium">Plano:</span> {pacote.autorizacao?.plano ?? "—"}</div>
               {pacote.paciente?.numero_carteirinha && (<div><span className="font-medium">Carteirinha:</span> {pacote.paciente.numero_carteirinha}</div>)}
               {pacote.autorizacao?.numero_guia && (<div><span className="font-medium">Guia:</span> {pacote.autorizacao.numero_guia}</div>)}
-              {pacote.autorizacao?.data_validade && (<div><span className="font-medium">Validade:</span> {format(new Date(pacote.autorizacao.data_validade), "dd/MM/yyyy")}</div>)}
             </div>
           </div>
-          <div className="flex flex-col items-end gap-2 shrink-0">
+          <div className="flex flex-col items-end gap-1.5 shrink-0">
             <Badge className="bg-slate-100 text-slate-700 border border-slate-300 text-[10px] font-bold">
               🔄 Renovação
             </Badge>
             <Badge className={`${urgencia.bg} ${urgencia.text} border ${urgencia.border} text-[10px] font-bold`}>
-              {pacote.alta_programada ? "🏁 Alta programada" : urgencia.label}
+              {pacote.alta_programada ? "🏁 Alta" : urgencia.label}
             </Badge>
             <span className="text-[10px] font-medium px-2 py-0.5 rounded-full" style={{ backgroundColor: cor + "20", color: cor }}>
               {pacote.profissional?.nome?.split(" ")[0] ?? "—"}
@@ -753,6 +797,7 @@ function CardPaciente({
           </div>
         </div>
 
+        {/* Linha 1: ações secundárias */}
         <div className="flex gap-2 mt-3">
           <Button size="sm" variant="outline" className="h-7 text-[10px] flex-1 border-rose-200 text-rose-700 hover:bg-rose-50" onClick={onDispensar}>
             <XCircle className="w-3 h-3 mr-1" /> Remover
@@ -760,8 +805,18 @@ function CardPaciente({
           <Button size="sm" variant="outline" className="h-7 text-[10px] flex-1 border-purple-200 text-purple-700 hover:bg-purple-50" onClick={onAlta}>
             <Award className="w-3 h-3 mr-1" /> Alta
           </Button>
-          <Button size="sm" className="h-7 text-[10px] flex-1 bg-indigo-600 hover:bg-indigo-700" onClick={onPedirGuia}>
+          <Button size="sm" variant="outline" className="h-7 text-[10px] flex-1 border-amber-200 text-amber-700 hover:bg-amber-50" onClick={onEmAnalise}>
+            <Clock className="w-3 h-3 mr-1" /> Em Análise
+          </Button>
+        </div>
+
+        {/* Linha 2: ações principais */}
+        <div className="flex gap-2 mt-2">
+          <Button size="sm" variant="outline" className="h-7 text-[10px] flex-1 border-indigo-200 text-indigo-700 hover:bg-indigo-50" onClick={onPedirGuia}>
             <ExternalLink className="w-3 h-3 mr-1" /> Pedir Guia
+          </Button>
+          <Button size="sm" className="h-7 text-[10px] flex-1 bg-emerald-600 hover:bg-emerald-700" onClick={onGuiaRecebida}>
+            <CheckCircle className="w-3 h-3 mr-1" /> Guia Recebida
           </Button>
         </div>
       </div>
@@ -770,15 +825,17 @@ function CardPaciente({
 }
 
 // =====================================================
-// CARD DE SOLICITAÇÃO (nova ou em análise)
+// CARD DE SOLICITAÇÃO
 // =====================================================
 function CardSolicitacao({
-  sol, modoAnalise, onCancelar, onPedirGuia, onGuiaRecebida, onAbrirFicha, onBaixarFoto,
+  sol, modoAnalise, onCancelar, onVoltar, onPedirGuia, onEmAnalise, onGuiaRecebida, onAbrirFicha, onBaixarFoto,
 }: {
   sol: SolicitacaoGuia;
   modoAnalise?: boolean;
   onCancelar: () => void;
+  onVoltar?: () => void;
   onPedirGuia: () => void;
+  onEmAnalise?: () => void;
   onGuiaRecebida: () => void;
   onAbrirFicha: () => void;
   onBaixarFoto: () => void;
@@ -801,7 +858,7 @@ function CardSolicitacao({
               {sol.observacoes && (<div className="italic">"{sol.observacoes}"</div>)}
             </div>
           </div>
-          <div className="flex flex-col items-end gap-2 shrink-0">
+          <div className="flex flex-col items-end gap-1.5 shrink-0">
             {modoAnalise ? (
               <Badge className="bg-amber-100 text-amber-700 border border-amber-300 text-[10px] font-bold">
                 ⏳ Em análise
@@ -830,10 +887,25 @@ function CardSolicitacao({
           </div>
         )}
 
+        {/* Linha 1: ações secundárias */}
         <div className="flex gap-2 mt-3">
+          {modoAnalise && onVoltar && (
+            <Button size="sm" variant="outline" className="h-7 text-[10px] flex-1 border-slate-200 text-slate-700 hover:bg-slate-50" onClick={onVoltar}>
+              <Undo2 className="w-3 h-3 mr-1" /> Voltar
+            </Button>
+          )}
           <Button size="sm" variant="outline" className="h-7 text-[10px] flex-1 border-rose-200 text-rose-700 hover:bg-rose-50" onClick={onCancelar}>
-            <XCircle className="w-3 h-3 mr-1" /> {modoAnalise ? "Voltar p/ Pendentes" : "Cancelar"}
+            <XCircle className="w-3 h-3 mr-1" /> Cancelar
           </Button>
+          {!modoAnalise && onEmAnalise && (
+            <Button size="sm" variant="outline" className="h-7 text-[10px] flex-1 border-amber-200 text-amber-700 hover:bg-amber-50" onClick={onEmAnalise}>
+              <Clock className="w-3 h-3 mr-1" /> Em Análise
+            </Button>
+          )}
+        </div>
+
+        {/* Linha 2: ações principais */}
+        <div className="flex gap-2 mt-2">
           <Button size="sm" variant="outline" className="h-7 text-[10px] flex-1 border-indigo-200 text-indigo-700 hover:bg-indigo-50" onClick={onPedirGuia}>
             <ExternalLink className="w-3 h-3 mr-1" /> Pedir Guia
           </Button>
