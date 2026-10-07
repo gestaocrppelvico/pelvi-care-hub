@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Plus, Wallet, Package, Receipt, CalendarCheck, Pencil, Trash2 } from "lucide-react";
+import { ArrowLeft, Plus, Wallet, Package, Receipt, CalendarCheck, Pencil, Trash2, CheckCircle } from "lucide-react";
 import { toast } from "sonner";
 
 const fmt = (v: number) => Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -58,7 +58,11 @@ export default function PacienteFinanceiro() {
     paciente_pacote_id: "none",
     observacoes: ""
   });
-
+  // 🔥 Estados do match automático de pagamento
+  const [modalMatchAberto, setModalMatchAberto] = useState(false);
+  const [candidatos, setCandidatos] = useState<any[]>([]);
+  const [pagamentoPendente, setPagamentoPendente] = useState<any>(null);
+  const [pacoteSelecionado, setPacoteSelecionado] = useState<string>("");
   const carregarDados = async () => {
     if (!pacienteId) return;
     setLoading(true);
@@ -94,27 +98,101 @@ export default function PacienteFinanceiro() {
 
   useEffect(() => { carregarDados(); }, [pacienteId]);
 
-  const registrarPagamento = async () => {
-    if (!pacienteId || !novoPag.valor) { toast.error("Informe o valor do pagamento."); return; }
+    // 🔥 Helper: salva pagamento e opcionalmente marca pacote como pago
+  const salvarPagamentoBase = async (payload: any, marcarPacoteId: string | null) => {
     try {
-      const payload: any = {
-        paciente_id: pacienteId,
-        valor: parseFloat(novoPag.valor),
-        forma: novoPag.forma,
-        data_pagamento: novoPag.data_pagamento,
-        observacoes: novoPag.observacoes || null
-      };
-
-      if (novoPag.paciente_pacote_id !== "none") payload.paciente_pacote_id = novoPag.paciente_pacote_id;
-
       const { error } = await supabase.from("pagamentos").insert(payload);
       if (error) throw error;
 
-      toast.success("Pagamento registrado com sucesso!");
+      if (marcarPacoteId) {
+        await supabase
+          .from("paciente_pacotes")
+          .update({ status_pagamento: "pago" })
+          .eq("id", marcarPacoteId);
+      }
+
+      toast.success(
+        marcarPacoteId
+          ? "Pagamento registrado e serviço marcado como pago!"
+          : "Pagamento registrado com sucesso!"
+      );
       setModoNovoPag(false);
       setNovoPag({ valor: "", forma: "dinheiro", data_pagamento: new Date().toISOString().split("T")[0], paciente_pacote_id: "none", observacoes: "" });
       carregarDados();
-    } catch (err: any) { toast.error("Erro: " + err.message); }
+      return true;
+    } catch (err: any) {
+      toast.error("Erro: " + err.message);
+      return false;
+    }
+  };
+
+  const registrarPagamento = async () => {
+    if (!pacienteId || !novoPag.valor) { toast.error("Informe o valor do pagamento."); return; }
+
+    const valor = parseFloat(novoPag.valor);
+    if (isNaN(valor) || valor <= 0) { toast.error("Valor inválido."); return; }
+
+    const basePayload: any = {
+      paciente_id: pacienteId,
+      valor,
+      forma: novoPag.forma,
+      data_pagamento: novoPag.data_pagamento,
+      observacoes: novoPag.observacoes || null,
+    };
+
+    // Caso 1: usuário já vinculou manualmente no dropdown
+    if (novoPag.paciente_pacote_id !== "none") {
+      await salvarPagamentoBase(
+        { ...basePayload, paciente_pacote_id: novoPag.paciente_pacote_id },
+        novoPag.paciente_pacote_id
+      );
+      return;
+    }
+
+    // Caso 2: buscar pacotes pendentes com o MESMO valor
+    const { data: pendentes } = await supabase
+      .from("paciente_pacotes")
+      .select("*, pacote:pacotes(nome), servico:servicos(nome), autorizacao:autorizacoes(plano, numero_guia)")
+      .eq("paciente_id", pacienteId)
+      .eq("status_pagamento", "pendente")
+      .eq("preco_pago", valor);
+
+    if (pendentes && pendentes.length > 0) {
+      // Acharam matches → abre modal de confirmação
+      setCandidatos(pendentes);
+      setPacoteSelecionado(pendentes[0].id);
+      setPagamentoPendente(basePayload);
+      setModalMatchAberto(true);
+      return;
+    }
+
+    // Caso 3: sem match → salva normalmente
+    await salvarPagamentoBase(basePayload, null);
+  };
+
+  // 🔥 Confirma o match e vincula pagamento ao pacote
+  const confirmarMatch = async () => {
+    if (!pacoteSelecionado || !pagamentoPendente) return;
+    const payloadFinal = { ...pagamentoPendente, paciente_pacote_id: pacoteSelecionado };
+    const ok = await salvarPagamentoBase(payloadFinal, pacoteSelecionado);
+    if (ok) {
+      setModalMatchAberto(false);
+      setCandidatos([]);
+      setPagamentoPendente(null);
+      setPacoteSelecionado("");
+    }
+  };
+
+  // 🔥 Salva só o pagamento, sem vincular
+  const salvarSemVinculo = async () => {
+    if (!pagamentoPendente) return;
+    const ok = await salvarPagamentoBase(pagamentoPendente, null);
+    if (ok) {
+      setModalMatchAberto(false);
+      setCandidatos([]);
+      setPagamentoPendente(null);
+      setPacoteSelecionado("");
+    }
   };
 
   // ========== FUNÇÕES PARA PAGAMENTOS ==========
@@ -502,6 +580,80 @@ export default function PacienteFinanceiro() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setModalPagAberto(false)}>Cancelar</Button>
             <Button onClick={salvarEdicaoPagamento} className="bg-blue-600 hover:bg-blue-700">Salvar Alterações</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* 🔥 MODAL DE MATCH AUTOMÁTICO DE PAGAMENTO */}
+      <Dialog open={modalMatchAberto} onOpenChange={setModalMatchAberto}>
+        <DialogContent className="sm:max-w-[480px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              💰 Encontramos {candidatos.length} serviço{candidatos.length > 1 ? "s" : ""} compatível{candidatos.length > 1 ? "is" : ""}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-slate-600">
+              Registramos um pagamento de <strong>{fmt(parseFloat(novoPag.valor || "0"))}</strong>.
+              {" "}
+              {candidatos.length === 1 
+                ? "Existe um serviço pendente no mesmo valor:"
+                : "Existem serviços pendentes no mesmo valor:"}
+            </p>
+
+            <div className="space-y-2 max-h-[300px] overflow-y-auto">
+              {candidatos.map((c) => {
+                const selecionado = pacoteSelecionado === c.id;
+                const nome = c.autorizacao
+                  ? `Guia ${c.autorizacao.plano}${c.autorizacao.numero_guia ? ` (Nº ${c.autorizacao.numero_guia})` : ""}`
+                  : c.pacote?.nome || c.servico?.nome || "Particular Customizado";
+
+                return (
+                  <label
+                    key={c.id}
+                    className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-all ${
+                      selecionado ? "bg-blue-50 border-blue-300 ring-1 ring-blue-200" : "hover:bg-slate-50"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="pacote-match"
+                      checked={selecionado}
+                      onChange={() => setPacoteSelecionado(c.id)}
+                      className="mt-1 accent-blue-600"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm text-slate-800">{nome}</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        {c.sessoes_realizadas || 0}/{c.sessoes_totais} sessões · criado em {new Date(c.created_at).toLocaleDateString("pt-BR")}
+                      </div>
+                    </div>
+                    <div className="font-bold text-emerald-600 text-sm shrink-0">
+                      {fmt(Number(c.preco_pago))}
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+
+            <p className="text-xs text-muted-foreground bg-amber-50 border border-amber-200 rounded p-2">
+              Ao confirmar, o pagamento será salvo <strong>E</strong> o serviço será marcado como <strong>pago</strong>.
+            </p>
+          </div>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button
+              variant="outline"
+              onClick={salvarSemVinculo}
+              className="w-full sm:w-auto"
+            >
+              Não, salvar só pagamento
+            </Button>
+            <Button
+              onClick={confirmarMatch}
+              disabled={!pacoteSelecionado}
+              className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700"
+            >
+              <CheckCircle className="w-4 h-4 mr-1" /> Sim, marcar como pago
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
