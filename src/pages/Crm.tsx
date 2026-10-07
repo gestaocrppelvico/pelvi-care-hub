@@ -27,7 +27,7 @@ interface AtendAmanha {
   data_inicio: string;
   nome_paciente_livre: string | null;
   telefone_contato: string | null;
-  paciente: { id: string; nome: string; telefone: string | null } | null;
+  paciente: { id: string; nome: string; telefone: string | null; pronome_tratamento?: string | null } | null;
   profissional: { nome: string } | null;
 }
 
@@ -35,6 +35,7 @@ interface PacienteInativo {
   id: string;
   nome: string;
   telefone: string | null;
+  pronome_tratamento: string | null;
   ultima: string | null;
   dias: number;
 }
@@ -43,6 +44,7 @@ interface Aniversariante {
   id: string;
   nome: string;
   telefone: string | null;
+  pronome_tratamento: string | null;
   data_nascimento: string;
 }
 
@@ -101,14 +103,14 @@ export default function Crm() {
             data_inicio, 
             nome_paciente_livre, 
             telefone_contato, 
-            paciente:pacientes(id, nome, telefone), 
+            paciente:pacientes(id, nome, telefone, pronome_tratamento), 
             profissional:profissionais(nome)
           `)
           .gte("data_inicio", startOfDay(tomorrow).toISOString())
           .lte("data_inicio", endOfDay(tomorrow).toISOString())
           .in("status", ["agendado"])
           .order("data_inicio", { ascending: true }), // 🔥 ORDENADO POR HORÁRIO
-        supabase.from("pacientes").select("id, nome, telefone, data_nascimento").eq("ativo", true),
+                supabase.from("pacientes").select("id, nome, telefone, data_nascimento, pronome_tratamento").eq("ativo", true),
         supabase
           .from("atendimentos")
           .select("paciente_id, data_inicio, status")
@@ -133,14 +135,27 @@ export default function Crm() {
 
       const inat: PacienteInativo[] = [];
       const niverList: Aniversariante[] = [];
-      (pacientes.data ?? []).forEach((p) => {
+            (pacientes.data ?? []).forEach((p: any) => {
         const ult = ultPorPac.get(p.id) ?? null;
         const dias = ult ? differenceInDays(hoje, new Date(ult)) : 9999;
         if (dias >= diasInativo) {
-          inat.push({ id: p.id, nome: p.nome, telefone: p.telefone, ultima: ult, dias });
+          inat.push({ 
+            id: p.id, 
+            nome: p.nome, 
+            telefone: p.telefone, 
+            pronome_tratamento: p.pronome_tratamento ?? null,
+            ultima: ult, 
+            dias 
+          });
         }
         if (p.data_nascimento && p.data_nascimento.slice(5) === todayMonthDay) {
-          niverList.push({ id: p.id, nome: p.nome, telefone: p.telefone, data_nascimento: p.data_nascimento });
+          niverList.push({ 
+            id: p.id, 
+            nome: p.nome, 
+            telefone: p.telefone, 
+            pronome_tratamento: p.pronome_tratamento ?? null,
+            data_nascimento: p.data_nascimento 
+          });
         }
       });
       inat.sort((a, b) => b.dias - a.dias);
@@ -191,9 +206,10 @@ export default function Crm() {
       return;
     }
 
-    const tpl = templates["lembrete"]?.conteudo ?? "Olá {paciente}, lembrete da sua sessão amanhã às {hora}.";
+        const tpl = templates["lembrete"]?.conteudo ?? "Olá {paciente}, lembrete da sua sessão amanhã às {hora}.";
     const msg = aplicarTemplate(tpl, {
       paciente: nome.split(" ")[0],
+      paciente_pronome: a.paciente?.pronome_tratamento ?? "",
       data: format(new Date(a.data_inicio), "dd/MM", { locale: ptBR }),
       hora: format(new Date(a.data_inicio), "HH:mm"),
       profissional: a.profissional?.nome ?? "",
@@ -209,10 +225,11 @@ export default function Crm() {
     toast.success("WhatsApp aberto");
   }
 
-  function enviarRetorno(p: PacienteInativo) {
+    function enviarRetorno(p: PacienteInativo) {
     const tpl = templates["retorno"]?.conteudo ?? "Olá {paciente}, sentimos sua falta!";
     const msg = aplicarTemplate(tpl, {
       paciente: p.nome.split(" ")[0],
+      paciente_pronome: p.pronome_tratamento ?? "",
       dias_sem_atendimento: p.dias,
     });
     if (!abrirWhatsapp(p.telefone, msg, preferencia)) { toast.error("Paciente sem telefone"); return; }
@@ -220,9 +237,12 @@ export default function Crm() {
     toast.success("WhatsApp aberto");
   }
 
-  function enviarNiver(p: Aniversariante) {
+    function enviarNiver(p: Aniversariante) {
     const tpl = templates["aniversario"]?.conteudo ?? "Feliz aniversário, {paciente}!";
-    const msg = aplicarTemplate(tpl, { paciente: p.nome.split(" ")[0] });
+    const msg = aplicarTemplate(tpl, { 
+      paciente: p.nome.split(" ")[0],
+      paciente_pronome: p.pronome_tratamento ?? "",
+    });
     if (!abrirWhatsapp(p.telefone, msg, preferencia)) { toast.error("Paciente sem telefone"); return; }
     logEnvio(p.id, "aniversario", msg);
     toast.success("WhatsApp aberto");
