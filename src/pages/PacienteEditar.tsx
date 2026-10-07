@@ -18,7 +18,10 @@ const schema = z.object({
   telefone: z.string().trim().max(30).optional().or(z.literal("")),
   email: z.string().trim().email("E-mail inválido").max(255).optional().or(z.literal("")),
   endereco: z.string().trim().max(300).optional().or(z.literal("")),
-  medico_solicitante_id: z.string().optional().or(z.literal("")),
+    medico_solicitante_id: z.string().optional().or(z.literal("")),
+  pronome_tratamento: z.string().optional().or(z.literal("")),
+  medico_responsavel: z.string().optional().or(z.literal("")),
+  especialidade_medica: z.string().optional().or(z.literal("")),
   plano_saude: z.string().trim().max(80).optional().or(z.literal("")),
   numero_carteirinha: z.string().trim().max(60).optional().or(z.literal("")),
   data_inicio_tratamento: z.string().optional().nullable(),
@@ -51,7 +54,7 @@ export default function PacienteEditar() {
     if (!id) return;
     supabase.from("pacientes").select("*").eq("id", id).maybeSingle().then(({ data }) => {
       if (data) {
-        setForm({
+                setForm({
           nome: data.nome ?? "",
           cpf: data.cpf ?? "",
           data_nascimento: data.data_nascimento ?? "",
@@ -59,6 +62,9 @@ export default function PacienteEditar() {
           email: data.email ?? "",
           endereco: data.endereco ?? "",
           medico_solicitante_id: data.medico_solicitante_id ?? "",
+          pronome_tratamento: data.pronome_tratamento ?? "",
+          medico_responsavel: data.medico_responsavel ?? "",
+          especialidade_medica: data.especialidade_medica ?? "",
           plano_saude: data.plano_saude ?? "",
           numero_carteirinha: data.numero_carteirinha ?? "",
           observacoes: data.observacoes ?? "",
@@ -158,24 +164,57 @@ export default function PacienteEditar() {
             <Field label="Nascimento" value={form.data_nascimento} onChange={(v) => setForm({ ...form, data_nascimento: v })} type="date" />
           </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <Field label="Telefone" value={form.telefone} onChange={(v) => setForm({ ...form, telefone: v })} />
             <Field label="E-mail" value={form.email} onChange={(v) => setForm({ ...form, email: v })} type="email" />
             
             <div className="space-y-2">
-              <Label className="flex items-center gap-1.5"><UserSquare2 className="w-4 h-4 text-slate-500" /> Médico Solicitante</Label>
+              <Label className="flex items-center gap-1.5"><UserSquare2 className="w-4 h-4 text-slate-500" /> Pronome de tratamento</Label>
               <Select 
-                value={form.medico_solicitante_id || "nenhum"} 
-                onValueChange={(v) => setForm({ ...form, medico_solicitante_id: v === "nenhum" ? "" : v })}
+                value={form.pronome_tratamento || "nenhum"} 
+                onValueChange={(v) => setForm({ ...form, pronome_tratamento: v === "nenhum" ? "" : v })}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Selecione o médico..." />
+                  <SelectValue placeholder="Selecione..." />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="nenhum">Nenhum médico</SelectItem>
-                  {listaMedicos.map((m) => (
-                    <SelectItem key={m.id} value={m.id}>{m.nome}</SelectItem>
-                  ))}
+                  <SelectItem value="nenhum">Sem pronome</SelectItem>
+                  <SelectItem value="Sr.">Sr.</SelectItem>
+                  <SelectItem value="Sra.">Sra.</SelectItem>
+                  <SelectItem value="Srta.">Srta.</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Field 
+              label="Médico Responsável" 
+              value={form.medico_responsavel} 
+              onChange={(v) => setForm({ ...form, medico_responsavel: v })} 
+              placeholder="Ex: Dr. João Silva"
+            />
+
+            <div className="space-y-2">
+              <Label>Especialidade Médica</Label>
+              <Select 
+                value={form.especialidade_medica || "nenhuma"} 
+                onValueChange={(v) => setForm({ ...form, especialidade_medica: v === "nenhuma" ? "" : v })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="nenhuma">Sem especialidade</SelectItem>
+                  <SelectItem value="Clínico Geral">Clínico Geral</SelectItem>
+                  <SelectItem value="Gastroenterologista">Gastroenterologista</SelectItem>
+                  <SelectItem value="Geriatra">Geriatra</SelectItem>
+                  <SelectItem value="Ginecologista">Ginecologista</SelectItem>
+                  <SelectItem value="Neurologista">Neurologista</SelectItem>
+                  <SelectItem value="Oncologista">Oncologista</SelectItem>
+                  <SelectItem value="Pediatra">Pediatra</SelectItem>
+                  <SelectItem value="Proctologista">Proctologista</SelectItem>
+                  <SelectItem value="Urologista">Urologista</SelectItem>
                 </SelectContent>
               </Select>
             </div>
