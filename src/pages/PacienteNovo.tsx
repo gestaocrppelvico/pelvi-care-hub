@@ -18,9 +18,11 @@ const schema = z.object({
   telefone: z.string().trim().max(30).optional().or(z.literal("")),
   email: z.string().trim().email("E-mail inválido").max(255).optional().or(z.literal("")),
   endereco: z.string().trim().max(300).optional().or(z.literal("")),
+  pronome_tratamento: z.string().optional().or(z.literal("")),
+  medico_responsavel: z.string().trim().max(120).optional().or(z.literal("")),
+  especialidade_medica: z.string().optional().or(z.literal("")),
   plano_saude: z.string().trim().max(80).optional().or(z.literal("")),
   numero_carteirinha: z.string().trim().max(60).optional().or(z.literal("")),
-  // Aceita null para evitar erro de validação
   data_inicio_tratamento: z.string().optional().nullable(),
   observacoes: z.string().max(2000).optional().or(z.literal("")),
 });
@@ -36,8 +38,10 @@ export default function PacienteNovo() {
   const [nomeBusca, setNomeBusca] = useState(preNome);
   const [sugestoes, setSugestoes] = useState<{ id: string; nome: string; telefone: string | null }[]>([]);
 
-  const [listaPlanos, setListaPlanos] = useState<{id: string, nome: string}[]>([]);
+    const [listaPlanos, setListaPlanos] = useState<{id: string, nome: string}[]>([]);
   const [planoSelecionado, setPlanoSelecionado] = useState<string>("nenhum");
+  const [pronomeSelecionado, setPronomeSelecionado] = useState<string>("nenhum");
+  const [especialidadeSelecionada, setEspecialidadeSelecionada] = useState<string>("nenhuma");
   
   const [dataInicioTratamento, setDataInicioTratamento] = useState("");
 
@@ -73,8 +77,10 @@ export default function PacienteNovo() {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
     
-    const dadosFormulario = Object.fromEntries(fd) as Record<string, string>;
+       const dadosFormulario = Object.fromEntries(fd) as Record<string, string>;
     dadosFormulario.plano_saude = planoSelecionado === "nenhum" ? "" : planoSelecionado;
+    dadosFormulario.pronome_tratamento = pronomeSelecionado === "nenhum" ? "" : pronomeSelecionado;
+    dadosFormulario.especialidade_medica = especialidadeSelecionada === "nenhuma" ? "" : especialidadeSelecionada;
     
     // 🔥 TRATAMENTO DO CAMPO data_inicio_tratamento
     let dataInicio = null;
@@ -173,7 +179,47 @@ export default function PacienteNovo() {
             <Field label="Telefone" name="telefone" defaultValue={preTelefone} />
             <Field label="E-mail" name="email" type="email" />
           </div>
-          <Field label="Endereço" name="endereco" />
+                    <Field label="Endereço" name="endereco" />
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label>Pronome de tratamento</Label>
+              <Select value={pronomeSelecionado} onValueChange={setPronomeSelecionado}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="nenhum">Sem pronome</SelectItem>
+                  <SelectItem value="Sr.">Sr.</SelectItem>
+                  <SelectItem value="Sra.">Sra.</SelectItem>
+                  <SelectItem value="Srta.">Srta.</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <Field label="Médico Responsável" name="medico_responsavel" />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Especialidade Médica</Label>
+            <Select value={especialidadeSelecionada} onValueChange={setEspecialidadeSelecionada}>
+              <SelectTrigger>
+                <SelectValue placeholder="Selecione..." />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="nenhuma">Sem especialidade</SelectItem>
+                <SelectItem value="Clínico Geral">Clínico Geral</SelectItem>
+                <SelectItem value="Gastroenterologista">Gastroenterologista</SelectItem>
+                <SelectItem value="Geriatra">Geriatra</SelectItem>
+                <SelectItem value="Ginecologista">Ginecologista</SelectItem>
+                <SelectItem value="Neurologista">Neurologista</SelectItem>
+                <SelectItem value="Oncologista">Oncologista</SelectItem>
+                <SelectItem value="Pediatra">Pediatra</SelectItem>
+                <SelectItem value="Proctologista">Proctologista</SelectItem>
+                <SelectItem value="Urologista">Urologista</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
