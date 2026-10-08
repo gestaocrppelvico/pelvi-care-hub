@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { startOfMonth, endOfMonth } from "date-fns";
-import { Activity, Users, Wallet, Clock, CheckCircle } from "lucide-react";
+import { Activity, Users, Wallet, Clock, CheckCircle, AlertTriangle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default function DashboardFisio() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [metrics, setMetrics] = useState({
     atendimentos: 0,
@@ -15,6 +17,7 @@ export default function DashboardFisio() {
     repasseConferido: 0,   // Pagos / Conferidos
     totalPrevisibilidade: 0
   });
+    const [sessoesSemEvolucao, setSessoesSemEvolucao] = useState(0);
 
   useEffect(() => {
     async function carregarMetricas() {
@@ -69,6 +72,31 @@ export default function DashboardFisio() {
             conferidos += valor; // status 'pago' ou 'conferido'
           }
         });
+
+               // 🔥 Buscar sessões sem evolução (>48h)
+        const limite48h = new Date();
+        limite48h.setHours(limite48h.getHours() - 48);
+
+        const { data: atends48h } = await supabase
+          .from("atendimentos")
+          .select("id")
+          .eq("profissional_id", meuId)
+          .eq("status", "realizado")
+          .lt("data_inicio", limite48h.toISOString());
+
+        const idsAtend = (atends48h || []).map((a: any) => a.id);
+
+        let pendentesCount = 0;
+        if (idsAtend.length > 0) {
+          const { data: pronts } = await supabase
+            .from("prontuarios")
+            .select("atendimento_id")
+            .eq("tipo", "evolucao")
+            .in("atendimento_id", idsAtend);
+          const comEv = new Set((pronts || []).map((p: any) => p.atendimento_id));
+          pendentesCount = idsAtend.filter((id: string) => !comEv.has(id)).length;
+        }
+        setSessoesSemEvolucao(pendentesCount);
 
         setMetrics({
           atendimentos: (atendimentos || []).length,
@@ -138,7 +166,39 @@ export default function DashboardFisio() {
           </CardContent>
         </Card>
       </div>
-
+      {/* 🔥 Card: Sessões sem Evolução */}
+      <Card 
+        className={`border-l-4 shadow-sm cursor-pointer hover:shadow-md transition-shadow ${
+          sessoesSemEvolucao > 0 ? "border-l-orange-500 bg-orange-50/30" : "border-l-emerald-500"
+        }`}
+        onClick={() => navigate("/evolucoes-pendentes")}
+      >
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className={`text-sm font-medium ${
+            sessoesSemEvolucao > 0 ? "text-orange-800" : "text-emerald-800"
+          }`}>
+            Sessões sem Evolução
+          </CardTitle>
+          <AlertTriangle className={`h-4 w-4 ${
+            sessoesSemEvolucao > 0 ? "text-orange-500" : "text-emerald-500"
+          }`} />
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-baseline gap-2">
+            <div className={`text-2xl font-bold ${
+              sessoesSemEvolucao > 0 ? "text-orange-700" : "text-emerald-700"
+            }`}>
+              {sessoesSemEvolucao}
+            </div>
+            <span className="text-xs text-muted-foreground">
+              {sessoesSemEvolucao > 0 ? "aguardando evolução" : "tudo em dia! 🎉"}
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            Sessões realizadas há mais de 48h
+          </p>
+        </CardContent>
+      </Card>
       <div className="grid gap-4 md:grid-cols-2">
         {/* Card 4: Para Cálculo */}
         <Card className="shadow-sm">
