@@ -6,6 +6,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
+// 🔥 DATA DE CORTE — mesma do EvolucoesPendentes
+const DATA_CORTE = new Date("2026-10-01T00:00:00");
+
 export default function DashboardFisio() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -77,12 +80,13 @@ export default function DashboardFisio() {
         const limite48h = new Date();
         limite48h.setHours(limite48h.getHours() - 48);
 
-        const { data: atends48h } = await supabase
+                const { data: atends48h } = await supabase
           .from("atendimentos")
           .select("id")
           .eq("profissional_id", meuId)
           .eq("status", "realizado")
-          .lt("data_inicio", limite48h.toISOString());
+          .lt("data_inicio", limite48h.toISOString())
+          .gte("data_inicio", DATA_CORTE.toISOString());
 
         const idsAtend = (atends48h || []).map((a: any) => a.id);
 
