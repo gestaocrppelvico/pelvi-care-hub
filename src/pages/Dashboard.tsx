@@ -41,7 +41,9 @@ export default function Dashboard() {
 
   // ===== Estados de Auditoria =====
   const [faltasPendentes, setFaltasPendentes] = useState<any[]>([]);
-  const [evolucoesAtrasadas, setEvolucoesAtrasadas] = useState<any[]>([]);
+    const [evolucoesAtrasadas, setEvolucoesAtrasadas] = useState<any[]>([]);
+  const [evolucoesPorProfissional, setEvolucoesPorProfissional] = useState<{ id: string; nome: string; cor: string | null; count: number }[]>([]);
+  const [totalEvolucoesPendentes, setTotalEvolucoesPendentes] = useState(0);
   const [guiasRenovar, setGuiasRenovar] = useState<any[]>([]);
 
   // ===== Estados de BI =====
@@ -153,7 +155,7 @@ export default function Dashboard() {
           { data: altasData },
         ] = await Promise.all([
           supabase.from("atendimentos").select("id, data_inicio, paciente:pacientes(nome), profissional:profissionais(nome)").eq("status", "faltou"),
-          supabase.from("atendimentos").select("id, data_inicio, paciente:pacientes(nome), profissional:profissionais(nome)").eq("status", "agendado").lt("data_inicio", inicioDia),
+                    supabase.from("atendimentos").select("id, data_inicio, profissional_id, profissional:profissionais(id, nome, cor_agenda)").eq("status", "realizado").lt("data_inicio", new Date(agora.getTime() - 48 * 60 * 60 * 1000).toISOString()),
           supabase.from("paciente_pacotes").select("id, paciente_id, sessoes_restantes, autorizacao:autorizacoes(plano), paciente:pacientes(nome)").not("autorizacao_id", "is", null).eq("status_renovacao", "vai_renovar"),
           supabase.from("atendimentos").select("id, data_inicio, status, profissional_id, servico_id, profissional:profissionais(nome), servico:servicos(nome)").gte("data_inicio", inicioPeriodo).lte("data_inicio", fimPeriodo),
           supabase.from("paciente_pacotes").select("id, autorizacao:autorizacoes(plano)"),
@@ -264,7 +266,38 @@ export default function Dashboard() {
         });
 
         setFaltasPendentes(resFaltas.data || []);
-        setEvolucoesAtrasadas((resEvolucoes.data || []).slice(0, 10));
+                // 🔥 Calcular evoluções pendentes por profissional
+        const atendidos = resEvolucoes.data || [];
+        const idsAtend = atendidos.map((a: any) => a.id);
+        
+        let comEvolucao = new Set<string>();
+        if (idsAtend.length > 0) {
+          const { data: pronts } = await supabase
+            .from("prontuarios")
+            .select("atendimento_id")
+            .eq("tipo", "evolucao")
+            .in("atendimento_id", idsAtend);
+          comEvolucao = new Set((pronts || []).map((p: any) => p.atendimento_id).filter(Boolean));
+        }
+
+        const semEvolucao = atendidos.filter((a: any) => !comEvolucao.has(a.id));
+
+        const porProf = new Map<string, { id: string; nome: string; cor: string | null; count: number }>();
+        semEvolucao.forEach((a: any) => {
+          const profId = a.profissional_id;
+          if (!profId) return;
+          const nome = a.profissional?.nome || "—";
+          const cor = a.profissional?.cor_agenda || null;
+          if (!porProf.has(profId)) {
+            porProf.set(profId, { id: profId, nome, cor, count: 0 });
+          }
+          porProf.get(profId)!.count++;
+        });
+
+        const lista = Array.from(porProf.values()).sort((a, b) => b.count - a.count);
+        setEvolucoesPorProfissional(lista);
+        setTotalEvolucoesPendentes(semEvolucao.length);
+        setEvolucoesAtrasadas(semEvolucao.slice(0, 10));
         setGuiasRenovar(resGuias.data || []);
         setAtendimentosPeriodo(atendPeriodo);
         setDistribuicaoConvenios(Object.entries(contagemPlanos).map(([name, value]) => ({ name, value })).filter(i => i.value > 0));
@@ -422,46 +455,89 @@ export default function Dashboard() {
           </div>
         </Card>
 
-        <Card className="p-0 overflow-hidden shadow-sm border-t-4 border-t-blue-500 flex flex-col h-64">
+                <Card className="p-0 overflow-hidden shadow-sm border-t-4 border-t-blue-500 flex flex-col h-64">
           <div className="bg-blue-50/50 p-3 border-b border-blue-100 flex items-center justify-between">
             <h3 className="font-bold text-xs uppercase tracking-wider text-blue-700 flex items-center gap-1.5"><Stethoscope className="w-4 h-4"/> Renovar Guias</h3>
             <Badge className="bg-blue-100 text-blue-700">{guiasRenovar.length}</Badge>
           </div>
-          <div className="p-3 overflow-y-auto flex-1 space-y-2">
+          <div className="p-4 flex-1 flex flex-col justify-between">
             {guiasRenovar.length === 0 ? (
               <p className="text-xs text-center text-muted-foreground mt-10">Nenhum convênio a expirar.</p>
             ) : (
-              guiasRenovar.map(g => (
-                <div key={g.id} className="text-xs border rounded-lg p-2.5 bg-white shadow-sm flex items-center justify-between hover:border-blue-200 cursor-pointer" onClick={() => navigate(`/pacientes/${g.paciente_id}`)}>
-                  <div className="min-w-0">
-                    <div className="font-bold text-slate-800 truncate">{g.paciente?.nome}</div>
-                    <div className="text-[10px] text-blue-600 font-bold mt-0.5">{g.autorizacao?.plano} ({g.sessoes_restantes} restantes)</div>
-                  </div>
-                  <Button size="sm" className="h-7 text-[10px] bg-blue-600">Pedir Guia</Button>
+              <>
+                <div className="space-y-3">
+                  {(() => {
+                    const criticas = guiasRenovar.filter((g: any) => g.sessoes_restantes === 0).length;
+                    const atencao = guiasRenovar.filter((g: any) => g.sessoes_restantes === 1).length;
+                    const alerta = guiasRenovar.filter((g: any) => g.sessoes_restantes === 2).length;
+                    return (
+                      <>
+                        {criticas > 0 && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-rose-700 font-medium">🔴 Críticas (0 sessões)</span>
+                            <span className="font-bold text-rose-700">{criticas}</span>
+                          </div>
+                        )}
+                        {atencao > 0 && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-orange-700 font-medium">🟠 Atenção (1 sessão)</span>
+                            <span className="font-bold text-orange-700">{atencao}</span>
+                          </div>
+                        )}
+                        {alerta > 0 && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-amber-700 font-medium">🟡 Alerta (2 sessões)</span>
+                            <span className="font-bold text-amber-700">{alerta}</span>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
-              ))
+                <Button
+                  size="sm"
+                  className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-xs h-9"
+                  onClick={() => navigate("/financeiro/autorizacoes")}
+                >
+                  Ver todas as autorizações →
+                </Button>
+              </>
             )}
           </div>
         </Card>
 
-        <Card className="p-0 overflow-hidden shadow-sm border-t-4 border-t-amber-500 flex flex-col h-64">
+                <Card className="p-0 overflow-hidden shadow-sm border-t-4 border-t-amber-500 flex flex-col h-64">
           <div className="bg-amber-50/50 p-3 border-b border-amber-100 flex items-center justify-between">
-            <h3 className="font-bold text-xs uppercase tracking-wider text-amber-700 flex items-center gap-1.5"><Clock className="w-4 h-4"/> Prontuários Atrasados</h3>
-            <Badge className="bg-amber-100 text-amber-700">{evolucoesAtrasadas.length}</Badge>
+            <h3 className="font-bold text-xs uppercase tracking-wider text-amber-700 flex items-center gap-1.5"><Clock className="w-4 h-4"/> Evoluções Pendentes</h3>
+            <Badge className="bg-amber-100 text-amber-700">{totalEvolucoesPendentes}</Badge>
           </div>
-          <div className="p-3 overflow-y-auto flex-1 space-y-2">
-            {evolucoesAtrasadas.length === 0 ? (
-              <p className="text-xs text-center text-muted-foreground mt-10">Evoluções em dia!</p>
+          <div className="p-4 flex-1 flex flex-col justify-between">
+            {evolucoesPorProfissional.length === 0 ? (
+              <p className="text-xs text-center text-muted-foreground mt-10">Evoluções em dia! 🎉</p>
             ) : (
-              evolucoesAtrasadas.map(e => (
-                <div key={e.id} className="text-xs border rounded-lg p-2 bg-amber-50/30 border-amber-100 shadow-sm">
-                  <span className="font-bold text-amber-800 block mb-0.5">{e.profissional?.nome?.split(" ")[0] || "Fisio"}</span>
-                  <div className="flex justify-between items-center text-slate-600">
-                    <span className="truncate max-w-[120px]">{e.paciente?.nome}</span>
-                    <span className="text-[10px] bg-white px-1.5 py-0.5 rounded border">{format(new Date(e.data_inicio), "dd/MM")}</span>
-                  </div>
+              <>
+                <div className="space-y-2">
+                  {evolucoesPorProfissional.slice(0, 4).map(p => (
+                    <div key={p.id} className="flex items-center justify-between">
+                      <span className="flex items-center gap-2 text-xs">
+                        <span
+                          className="inline-block w-2.5 h-2.5 rounded-full"
+                          style={{ backgroundColor: p.cor || "#94a3b8" }}
+                        />
+                        <span className="font-medium text-slate-700">{p.nome.split(" ")[0]}</span>
+                      </span>
+                      <span className="font-bold text-amber-700 text-sm">{p.count}</span>
+                    </div>
+                  ))}
                 </div>
-              ))
+                <Button
+                  size="sm"
+                  className="w-full mt-4 bg-amber-600 hover:bg-amber-700 text-xs h-9"
+                  onClick={() => navigate("/evolucoes-pendentes")}
+                >
+                  Ver todas ({totalEvolucoesPendentes}) →
+                </Button>
+              </>
             )}
           </div>
         </Card>
