@@ -13,6 +13,9 @@ import { toast } from "sonner";
 import { ArrowLeft, Clock, CheckCircle, Filter, Save } from "lucide-react";
 import { format, differenceInDays } from "date-fns";
 
+// 🔥 DATA DE CORTE — altere aqui para mudar quando começar a contar
+const DATA_CORTE = new Date("2026-10-01T00:00:00");
+
 interface AtendimentoPendente {
   id: string;
   data_inicio: string;
@@ -76,8 +79,10 @@ export default function EvolucoesPendentes() {
   async function carregar(meuId: string | null) {
     setLoading(true);
     try {
-      const limite = new Date();
+            const limite = new Date();
       limite.setHours(limite.getHours() - 48);
+
+      const limiteFinal = limite > DATA_CORTE ? limite : DATA_CORTE;
 
       let query = supabase
         .from("atendimentos")
@@ -87,7 +92,8 @@ export default function EvolucoesPendentes() {
           profissional:profissionais(nome, cor_agenda)
         `)
         .eq("status", "realizado")
-        .lt("data_inicio", limite.toISOString())
+        .lt("data_inicio", limiteFinal.toISOString())
+        .gte("data_inicio", DATA_CORTE.toISOString())
         .order("data_inicio", { ascending: true });
 
       if (isFisio && !isAdmin && !isSecretaria && meuId) {
