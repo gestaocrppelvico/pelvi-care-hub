@@ -29,6 +29,9 @@ const CORES_PIZZA = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899'];
 
 type FiltroPeriodo = "dia" | "semana" | "mes" | "personalizado";
 
+// 🔥 DATA DE CORTE — mesma do EvolucoesPendentes
+const DATA_CORTE = new Date("2026-10-01T00:00:00");
+
 export default function Dashboard() {
   const { user, isFisio, isSecretaria, isAdmin } = useAuth();
   const navigate = useNavigate();
@@ -155,7 +158,7 @@ export default function Dashboard() {
           { data: altasData },
         ] = await Promise.all([
           supabase.from("atendimentos").select("id, data_inicio, paciente:pacientes(nome), profissional:profissionais(nome)").eq("status", "faltou"),
-                    supabase.from("atendimentos").select("id, data_inicio, profissional_id, profissional:profissionais(id, nome, cor_agenda)").eq("status", "realizado").lt("data_inicio", new Date(agora.getTime() - 48 * 60 * 60 * 1000).toISOString()),
+                    supabase.from("atendimentos").select("id, data_inicio, profissional_id, profissional:profissionais(id, nome, cor_agenda)").eq("status", "realizado").lt("data_inicio", new Date(agora.getTime() - 48 * 60 * 60 * 1000).toISOString()).gte("data_inicio", DATA_CORTE.toISOString()),
           supabase.from("paciente_pacotes").select("id, paciente_id, sessoes_restantes, autorizacao:autorizacoes(plano), paciente:pacientes(nome)").not("autorizacao_id", "is", null).eq("status_renovacao", "vai_renovar"),
           supabase.from("atendimentos").select("id, data_inicio, status, profissional_id, servico_id, profissional:profissionais(nome), servico:servicos(nome)").gte("data_inicio", inicioPeriodo).lte("data_inicio", fimPeriodo),
           supabase.from("paciente_pacotes").select("id, autorizacao:autorizacoes(plano)"),
