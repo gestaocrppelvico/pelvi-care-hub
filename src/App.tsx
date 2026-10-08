@@ -27,6 +27,7 @@ import CrmTemplates from "@/pages/CrmTemplates";
 import Configuracoes from "@/pages/Configuracoes";
 import PlanosConfig from "@/pages/PlanosConfig";
 import Autorizacoes from "@/pages/Autorizacoes";
+import EvolucoesPendentes from "@/pages/EvolucoesPendentes";
 import VinculoPacientes from "@/pages/VinculoPacientes";
 import RelatorioRepasses from "@/pages/RelatorioRepasses";
 import NotFound from "@/pages/NotFound";
@@ -65,6 +66,7 @@ function App() {
             <Route path="/financeiro/vincular" element={<VinculoPacientes />} />
             <Route path="/financeiro/pagamentos" element={<Pagamentos />} />
             <Route path="/financeiro/autorizacoes" element={<Autorizacoes />} />
+            <Route path="/evolucoes-pendentes" element={<EvolucoesPendentes />} />
             
             {/* ============ OUTRAS ============ */}
             <Route path="/medicos" element={<Medicos />} />
