@@ -48,60 +48,173 @@ type ViewMode = "day" | "week" | "month" | "profissionais";
 type ModoDia = "unica" | "porProfissional";
 
 // ==========================================================
+// ALGORITMO: layout de eventos paralelos (estilo Google Calendar)
+// ==========================================================
+interface EventoPosicionado {
+  at: Atendimento;
+  top: number;
+  height: number;
+  leftPercent: number;
+  widthPercent: number;
+}
+
+function calcularLayout(eventos: Atendimento[]): EventoPosicionado[] {
+  if (eventos.length === 0) return [];
+
+  // 1. Calcular posição vertical (top, height) de cada evento
+  const posicionados = eventos.map((at) => {
+    const inicio = new Date(at.data_inicio);
+    const fim = at.data_fim
+      ? new Date(at.data_fim)
+      : new Date(inicio.getTime() + DURACAO_PADRAO * 60 * 1000);
+
+    const minutosInicio =
+      (inicio.getHours() - HORA_INICIO) * 60 + inicio.getMinutes();
+    const minutosFim = (fim.getHours() - HORA_INICIO) * 60 + fim.getMinutes();
+
+    const top = Math.max(0, (minutosInicio / 60) * ALTURA_HORA);
+    const altura = Math.max(
+      ((minutosFim - minutosInicio) / 60) * ALTURA_HORA,
+      26
+    );
+
+    return {
+      at,
+      top,
+      height: altura,
+      inicioMin: minutosInicio,
+      fimMin: minutosFim,
+      coluna: 0,
+      totalColunas: 1,
+    };
+  });
+
+  // 2. Ordenar por início, depois por duração (mais longo primeiro)
+  posicionados.sort((a, b) => {
+    if (a.inicioMin !== b.inicioMin) return a.inicioMin - b.inicioMin;
+    return b.fimMin - a.fimMin;
+  });
+
+  // 3. Agrupar em "clusters" de eventos que se sobrepõem (direta ou transitivamente)
+  const clusters: (typeof posicionados)[] = [];
+  let clusterAtual: typeof posicionados = [];
+  let clusterFim = -1;
+
+  for (const p of posicionados) {
+    if (clusterAtual.length === 0 || p.inicioMin < clusterFim) {
+      clusterAtual.push(p);
+      clusterFim = Math.max(clusterFim, p.fimMin);
+    } else {
+      clusters.push(clusterAtual);
+      clusterAtual = [p];
+      clusterFim = p.fimMin;
+    }
+  }
+  if (clusterAtual.length > 0) clusters.push(clusterAtual);
+
+  // 4. Para cada cluster, distribuir em colunas paralelas
+  for (const cluster of clusters) {
+    const colunas: (typeof posicionados)[] = []; // última ocupação de cada coluna
+
+    for (const p of cluster) {
+      let colocado = false;
+      for (let c = 0; c < colunas.length; c++) {
+        // Se a coluna já terminou antes de o evento começar, cabe aqui
+        if (colunas[c].fimMin <= p.inicioMin) {
+          colunas[c] = p;
+          p.coluna = c;
+          colocado = true;
+          break;
+        }
+      }
+      if (!colocado) {
+        p.coluna = colunas.length;
+        colunas.push(p);
+      }
+    }
+
+    const total = colunas.length;
+    for (const p of cluster) {
+      p.totalColunas = total;
+    }
+  }
+
+  // 5. Calcular left/width em %
+  return posicionados.map((p) => {
+    const larguraTotal = 100 / p.totalColunas;
+    const gap = 0.5; // % de espaçamento entre colunas
+    return {
+      at: p.at,
+      top: p.top,
+      height: p.height,
+      leftPercent: p.coluna * larguraTotal,
+      widthPercent: larguraTotal - gap,
+    };
+  });
+}
+
+// ==========================================================
 // COMPONENTE: bloco de evento posicionado na timeline
 // ==========================================================
 function BlocoEvento({
   at,
   onClick,
+  top,
+  height,
+  leftPercent,
+  widthPercent,
 }: {
   at: Atendimento;
   onClick: () => void;
+  top: number;
+  height: number;
+  leftPercent: number;
+  widthPercent: number;
 }) {
   const data = new Date(at.data_inicio);
-  const dataFim = at.data_fim ? new Date(at.data_fim) : null;
-
-  const minutos = (data.getHours() - HORA_INICIO) * 60 + data.getMinutes();
-  const top = Math.max(0, (minutos / 60) * ALTURA_HORA);
-
-  let duracao = DURACAO_PADRAO;
-  if (dataFim) {
-    const d = differenceInMinutes(dataFim, data);
-    if (d > 0) duracao = d;
-  }
-  const height = Math.max((duracao / 60) * ALTURA_HORA, 26);
-
   const cor = at.profissional?.cor_agenda || "#3b82f6";
   const cancelado = at.status === "cancelado";
   const faltou = at.status === "faltou";
   const realizado = at.status === "realizado";
+  const compacto = widthPercent < 40; // 🔥 se está em coluna paralela, esconde detalhes
 
   return (
     <button
       onClick={onClick}
-      className={`absolute rounded-md px-2 py-1 text-left cursor-pointer hover:shadow-lg hover:z-20 transition-all overflow-hidden ${
+      className={`absolute rounded-md px-1.5 py-1 text-left cursor-pointer hover:shadow-lg hover:z-20 transition-all overflow-hidden ${
         cancelado ? "opacity-50 line-through" : ""
       } ${faltou ? "opacity-60" : ""}`}
       style={{
         top: `${top}px`,
         height: `${height}px`,
-        left: "4px",
-        right: "4px",
+        left: `calc(${leftPercent}% + 2px)`,
+        width: `calc(${widthPercent}% - 4px)`,
         backgroundColor: realizado ? "#d1fae5" : cor + "22",
         borderLeft: `4px solid ${realizado ? "#10b981" : cor}`,
       }}
     >
-      <div className="text-[11px] font-bold text-slate-800 truncate leading-tight">
-        {format(data, "HH:mm")} · {at.paciente?.nome || at.nome_paciente_livre || "—"}
+      <div className="text-[10px] font-bold text-slate-800 truncate leading-tight">
+        {format(data, "HH:mm")}
+        {!compacto && ` · ${at.paciente?.nome || at.nome_paciente_livre || "—"}`}
       </div>
-      {height > 38 && (
-        <div className="text-[10px] text-slate-600 truncate leading-tight mt-0.5">
-          {at.profissional?.nome || "Sem profissional"}
+      {!compacto && at.paciente?.nome && (
+        <div className="text-[10px] text-slate-700 truncate leading-tight">
+          {at.paciente.nome}
+        </div>
+      )}
+      {compacto && (
+        <div className="text-[9px] text-slate-700 truncate leading-tight mt-0.5">
+          {at.paciente?.nome?.split(" ")[0] || at.nome_paciente_livre?.split(" ")[0] || "—"}
+        </div>
+      )}
+      {height > 48 && !compacto && (
+        <div className="text-[9px] text-slate-500 truncate leading-tight mt-0.5">
+          {at.profissional?.nome?.split(" ")[0] || "Sem profissional"}
         </div>
       )}
     </button>
   );
 }
-
 // ==========================================================
 // COMPONENTE PRINCIPAL
 // ==========================================================
@@ -322,22 +435,26 @@ export default function AgendaNova() {
                 </div>
               ))}
 
-              {/* Events area */}
+                            {/* Events area */}
               <div className="absolute left-14 right-0 top-0 bottom-0">
                 {atendimentosDoDia.length === 0 ? (
                   <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
                     Nenhum atendimento neste dia.
                   </div>
                 ) : (
-                  atendimentosDoDia.map((at) => (
+                  calcularLayout(atendimentosDoDia).map(({ at, top, height, leftPercent, widthPercent }) => (
                     <BlocoEvento
                       key={at.id}
                       at={at}
                       onClick={() => abrirDetalhes(at)}
+                      top={top}
+                      height={height}
+                      leftPercent={leftPercent}
+                      widthPercent={widthPercent}
                     />
                   ))
                 )}
-
+                
                 {/* Now line */}
                 {isToday(currentDate) &&
                   agora.getHours() >= HORA_INICIO &&
@@ -421,12 +538,16 @@ export default function AgendaNova() {
                         />
                       ))}
 
-                      {/* Events */}
-                      {eventosProf.map((at) => (
+                                            {/* Events — com layout paralelo dentro da coluna */}
+                      {calcularLayout(eventosProf).map(({ at, top, height, leftPercent, widthPercent }) => (
                         <BlocoEvento
                           key={at.id}
                           at={at}
                           onClick={() => abrirDetalhes(at)}
+                          top={top}
+                          height={height}
+                          leftPercent={leftPercent}
+                          widthPercent={widthPercent}
                         />
                       ))}
 
