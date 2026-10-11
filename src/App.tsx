@@ -6,6 +6,7 @@ import { Layout } from "@/components/Layout";
 import Auth from "@/pages/Auth";
 import Dashboard from "@/pages/Dashboard";
 import Agenda from "@/pages/Agenda";
+import AgendaNova from "@/pages/AgendaNova";
 import Pacientes from "@/pages/Pacientes";
 import PacienteDetalhe from "@/pages/PacienteDetalhe";
 import PacienteNovo from "@/pages/PacienteNovo";
@@ -43,6 +44,7 @@ function App() {
           <Route element={<Layout />}>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/agenda" element={<Agenda />} />
+            <Route path="/agenda-nova" element={<AgendaNova />} />
             
             {/* ============ PACIENTES ============ */}
             <Route path="/pacientes" element={<Pacientes />} />
