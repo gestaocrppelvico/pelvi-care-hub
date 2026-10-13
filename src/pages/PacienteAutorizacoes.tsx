@@ -193,16 +193,38 @@ export default function PacienteAutorizacoes() {
     };
 
     if (editando) {
-      const { error } = await supabase
-        .from("autorizacoes")
-        .update(payload)
-        .eq("id", editando.id);
-      if (error) {
-        toast.error(error.message);
-        return;
-      }
-      toast.success("Autorização atualizada");
-    } else {
+  // 1. Atualiza a autorização
+  const { error } = await supabase
+    .from("autorizacoes")
+    .update(payload)
+    .eq("id", editando.id);
+  if (error) {
+    toast.error(error.message);
+    return;
+  }
+
+  // 2. 🔥 SINCRONIZA o paciente_pacotes vinculado
+  const { data: pacotesVinculados } = await supabase
+    .from("paciente_pacotes")
+    .select("id, sessoes_totais")
+    .eq("autorizacao_id", editando.id);
+
+  if (pacotesVinculados && pacotesVinculados.length > 0) {
+    for (const pacote of pacotesVinculados) {
+      await supabase
+        .from("paciente_pacotes")
+        .update({
+          sessoes_totais: form.sessoes_autorizadas,
+          sessoes_realizadas: form.sessoes_realizadas,
+          sessoes_restantes: Math.max(form.sessoes_autorizadas - form.sessoes_realizadas, 0),
+        })
+        .eq("id", pacote.id);
+    }
+  }
+
+  toast.success("Autorização e pacote atualizados!");
+    }
+    else {
       const { data: novaAut, error } = await supabase
         .from("autorizacoes")
         .insert(payload)
