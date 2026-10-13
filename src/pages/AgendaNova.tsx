@@ -837,50 +837,50 @@ export default function AgendaNova() {
         </div>
       )}
 
-      {/* VISÃO MÊS */}
-      {view === "month" && (
-        <div className="bg-white rounded-xl border p-3 shadow-sm">
-          <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 pb-2 border-b">
-            {["D", "S", "T", "Q", "Q", "S", "S"].map((d, i) => (
-  <div key={i}>{d}</div>
-))}
-          </div>
-          <div className="grid grid-cols-7 gap-1.5">
-            {eachDayOfInterval({
-              start: startOfMonth(currentDate),
-              end: endOfMonth(currentDate),
-            }).map((dia, i) => {
-              const evts = atendimentos.filter((a) =>
-                isSameDay(new Date(a.data_inicio), dia)
-              );
-              const destacado = isToday(dia);
+     {/* VISÃO MÊS */}
+{view === "month" && (
+  <div className="bg-white rounded-xl border p-3 shadow-sm">
+    <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 pb-2 border-b">
+      {["D", "S", "T", "Q", "Q", "S", "S"].map((d, i) => (
+        <div key={i}>{d}</div>
+      ))}
+    </div>
+    <div className="grid grid-cols-7 gap-1.5">
+      {eachDayOfInterval({
+        start: startOfWeek(startOfMonth(currentDate), { weekStartsOn: 0 }),
+        end: endOfWeek(endOfMonth(currentDate), { weekStartsOn: 0 }),
+      }).map((dia, i) => {
+        const evts = atendimentos.filter((a) =>
+          isSameDay(new Date(a.data_inicio), dia)
+        );
+        const destacado = isToday(dia);
+        const mesmoMes = isSameMonth(dia, currentDate);
 
-              return (
-                <button
-                  key={i}
-                  onClick={() => {
-                    setCurrentDate(dia);
-                    setView("day");
-                  }}
-                  className={`min-h-[80px] p-1.5 rounded-lg border text-left hover:bg-blue-50 transition-all ${
-                    !isSameMonth(dia, currentDate) ? "opacity-30" : ""
-                  } ${destacado ? "ring-2 ring-red-300 bg-red-50/50" : "bg-slate-50/30"}`}
-                >
-                  <div className={`text-xs font-bold ${destacado ? "text-red-600" : "text-slate-600"}`}>
-                    {format(dia, "d")}
-                  </div>
-                  {evts.length > 0 && (
-                    <div className="text-[10px] font-bold text-blue-600 mt-1">
-                      {evts.length} atend.
-                    </div>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
+        return (
+          <button
+            key={i}
+            onClick={() => {
+              setCurrentDate(dia);
+              setView("day");
+            }}
+            className={`min-h-[80px] p-1.5 rounded-lg border text-left hover:bg-blue-50 transition-all ${
+              !mesmoMes ? "opacity-30" : ""
+            } ${destacado ? "ring-2 ring-red-300 bg-red-50/50" : "bg-slate-50/30"}`}
+          >
+            <div className={`text-xs font-bold ${destacado ? "text-red-600" : "text-slate-600"}`}>
+              {format(dia, "d")}
+            </div>
+            {evts.length > 0 && mesmoMes && (
+              <div className="text-[10px] font-bold text-blue-600 mt-1">
+                {evts.length} atend.
+              </div>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  </div>
+)}
       {/* VISÃO PROFISSIONAIS */}
       {view === "profissionais" && (
         <div className="space-y-3">
