@@ -13,8 +13,12 @@ import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { ChevronLeft, ChevronRight, Calendar, Clock, User } from "lucide-react";
-
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ChevronLeft, ChevronRight, Calendar, Clock, User, Plus, Search, X, Package, UserPlus } from "lucide-react";
 // ==========================================================
 // CONFIGURAÇÕES DA TIMELINE
 // ==========================================================
@@ -233,6 +237,25 @@ export default function AgendaNova() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [meuProfId, setMeuProfId] = useState<string | null>(null);
   const [agora, setAgora] = useState(new Date());
+    // 🆕 Estados do modal de criação
+  const [modalCriarOpen, setModalCriarOpen] = useState(false);
+  const [criando, setCriando] = useState(false);
+  const [formCriar, setFormCriar] = useState({
+    paciente_id: "",
+    paciente_nome: "",
+    profissional_id: "",
+    data: format(new Date(), "yyyy-MM-dd"),
+    hora_inicio: "14:00",
+    hora_fim: "14:40",
+    paciente_pacote_id: "",
+    observacoes: "",
+  });
+  const [buscaPaciente, setBuscaPaciente] = useState("");
+  const [sugestoesPacientes, setSugestoesPacientes] = useState<{ id: string; nome: string; telefone: string | null }[]>([]);
+  const [pacoteSugerido, setPacoteSugerido] = useState<{ id: string; label: string } | null>(null);
+  const [criandoPaciente, setCriandoPaciente] = useState(false);
+  const [novoPacienteNome, setNovoPacienteNome] = useState("");
+  const [novoPacienteTelefone, setNovoPacienteTelefone] = useState("");
 
   // 🔥 Atualiza linha "agora" a cada 1 min
   useEffect(() => {
@@ -323,10 +346,191 @@ export default function AgendaNova() {
     else setCurrentDate((d) => addMonths(d, 1));
   };
 
-  const abrirDetalhes = (at: Atendimento) => {
+    const abrirDetalhes = (at: Atendimento) => {
     setSelectedAtend(at);
     setSheetOpen(true);
   };
+
+  // ============ NOVO: abrir modal de criação ============
+  const abrirCriar = (data?: Date, horaInicio?: string, profissionalId?: string) => {
+    const dia = data ? format(data, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
+    const hora = horaInicio || "14:00";
+
+    // Calcula fim = 40 min depois
+    const [h, m] = hora.split(":").map(Number);
+    const fim = new Date();
+    fim.setHours(h, m + DURACAO_PADRAO, 0, 0);
+    const horaFim = format(fim, "HH:mm");
+
+    // Profissional pré-selecionado (se visão Por Profissional)
+    const profId = profissionalId || meuProfId || (isAdmin || isSecretaria
+      ? profissionais[0]?.id || ""
+      : meuProfId || "");
+
+    setFormCriar({
+      paciente_id: "",
+      paciente_nome: "",
+      profissional_id: profId,
+      data: dia,
+      hora_inicio: hora,
+      hora_fim: horaFim,
+      paciente_pacote_id: "",
+      observacoes: "",
+    });
+    setBuscaPaciente("");
+    setSugestoesPacientes([]);
+    setPacoteSugerido(null);
+    setCriandoPaciente(false);
+    setNovoPacienteNome("");
+    setNovoPacienteTelefone("");
+    setModalCriarOpen(true);
+  };
+
+  // ============ NOVO: buscar pacientes ============
+  useEffect(() => {
+    if (buscaPaciente.trim().length < 2) {
+      setSugestoesPacientes([]);
+      return;
+    }
+    const t = setTimeout(async () => {
+      const { data } = await supabase
+        .from("pacientes")
+        .select("id, nome, telefone")
+        .ilike("nome", `%${buscaPaciente.trim()}%`)
+        .eq("ativo", true)
+        .limit(6);
+      setSugestoesPacientes(data || []);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [buscaPaciente]);
+
+  // ============ NOVO: ao selecionar paciente, sugerir pacote ============
+  async function selecionarPaciente(p: { id: string; nome: string; telefone: string | null }) {
+    setFormCriar((prev) => ({
+      ...prev,
+      paciente_id: p.id,
+      paciente_nome: p.nome,
+    }));
+    setBuscaPaciente("");
+    setSugestoesPacientes([]);
+
+    // Buscar pacotes ativos do paciente
+    const { data: pacotes } = await supabase
+      .from("paciente_pacotes")
+      .select(`
+        id, sessoes_restantes,
+        autorizacao:autorizacoes(plano),
+        pacote:pacotes(nome),
+        servico:servicos(nome)
+      `)
+      .eq("paciente_id", p.id)
+      .gt("sessoes_restantes", 0)
+      .order("sessoes_restantes", { ascending: true })
+      .limit(1);
+
+    if (pacotes && pacotes.length > 0) {
+      const pac = pacotes[0] as any;
+      const nome = pac.autorizacao?.plano
+        ? `Plano ${pac.autorizacao.plano}`
+        : pac.pacote?.nome || pac.servico?.nome || "Item";
+      setPacoteSugerido({
+        id: pac.id,
+        label: `${nome} (${pac.sessoes_restantes} rest.)`,
+      });
+      setFormCriar((prev) => ({ ...prev, paciente_pacote_id: pac.id }));
+    } else {
+      setPacoteSugerido(null);
+    }
+  }
+
+  // ============ NOVO: criar paciente rápido ============
+  async function criarPacienteRapido() {
+    if (!novoPacienteNome.trim()) {
+      toast.error("Informe o nome do paciente");
+      return;
+    }
+    setCriandoPaciente(true);
+    try {
+      const { data, error } = await supabase
+        .from("pacientes")
+        .insert({
+          nome: novoPacienteNome.trim(),
+          telefone: novoPacienteTelefone.trim() || null,
+          ativo: true,
+        })
+        .select("id, nome, telefone")
+        .single();
+      if (error) throw error;
+      toast.success("Paciente criado!");
+      await selecionarPaciente(data);
+      setCriandoPaciente(false);
+      setNovoPacienteNome("");
+      setNovoPacienteTelefone("");
+    } catch (err: any) {
+      toast.error("Erro: " + err.message);
+      setCriandoPaciente(false);
+    }
+  }
+
+  // ============ NOVO: salvar atendimento ============
+  async function salvarAtendimento() {
+    if (!formCriar.paciente_id) {
+      toast.error("Selecione o paciente");
+      return;
+    }
+    if (!formCriar.profissional_id) {
+      toast.error("Selecione o profissional");
+      return;
+    }
+    if (!formCriar.data || !formCriar.hora_inicio || !formCriar.hora_fim) {
+      toast.error("Preencha data e horário");
+      return;
+    }
+
+    setCriando(true);
+    try {
+      const dataInicio = new Date(`${formCriar.data}T${formCriar.hora_inicio}:00`);
+      const dataFim = new Date(`${formCriar.data}T${formCriar.hora_fim}:00`);
+
+      if (dataFim <= dataInicio) {
+        toast.error("O horário de fim deve ser depois do início");
+        setCriando(false);
+        return;
+      }
+
+      // Buscar dados do paciente e pacote para preencher tipo
+      const { data: pacData } = formCriar.paciente_pacote_id
+        ? await supabase
+            .from("paciente_pacotes")
+            .select("autorizacao_id")
+            .eq("id", formCriar.paciente_pacote_id)
+            .maybeSingle()
+        : { data: null };
+
+      const tipo = pacData?.autorizacao_id ? "Plano" : "Particular";
+
+      const { error } = await supabase.from("atendimentos").insert({
+        paciente_id: formCriar.paciente_id,
+        profissional_id: formCriar.profissional_id,
+        data_inicio: dataInicio.toISOString(),
+        data_fim: dataFim.toISOString(),
+        status: "agendado",
+        tipo,
+        paciente_pacote_id: formCriar.paciente_pacote_id || null,
+        observacoes: formCriar.observacoes.trim() || null,
+      });
+
+      if (error) throw error;
+
+      toast.success("Atendimento criado!");
+      setModalCriarOpen(false);
+      await carregar();
+    } catch (err: any) {
+      toast.error("Erro: " + err.message);
+    } finally {
+      setCriando(false);
+    }
+  }
 
   // Events of the current day
   const atendimentosDoDia = atendimentos.filter((a) =>
@@ -372,20 +576,30 @@ export default function AgendaNova() {
           </h2>
         </div>
 
-        <div className="flex gap-1 bg-slate-100 p-1 rounded-lg self-stretch sm:self-auto">
-          {(["day", "week", "month", "profissionais"] as const).map((v) => (
-            <Button
-              key={v}
-              variant={view === v ? "default" : "ghost"}
-              size="sm"
-              onClick={() => setView(v)}
-              className="text-xs capitalize flex-1 sm:flex-none font-semibold h-8"
-            >
-              {v === "day" ? "Dia" : v === "week" ? "Semana" : v === "month" ? "Mês" : "Profis."}
-            </Button>
-          ))}
+                <div className="flex gap-2 items-center self-stretch sm:self-auto">
+          <div className="flex gap-1 bg-slate-100 p-1 rounded-lg">
+            {(["day", "week", "month", "profissionais"] as const).map((v) => (
+              <Button
+                key={v}
+                variant={view === v ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setView(v)}
+                className="text-xs capitalize font-semibold h-8"
+              >
+                {v === "day" ? "Dia" : v === "week" ? "Semana" : v === "month" ? "Mês" : "Profis."}
+              </Button>
+            ))}
+          </div>
+
+          {/* 🆕 Botão Novo Atendimento */}
+          <Button
+            size="sm"
+            onClick={() => abrirCriar()}
+            className="bg-emerald-600 hover:bg-emerald-700 h-8 text-xs font-bold"
+          >
+            <Plus className="w-3.5 h-3.5 mr-1" /> Novo
+          </Button>
         </div>
-      </div>
 
       {/* TOGGLE DO MODO DIA */}
       {view === "day" && (
@@ -435,11 +649,24 @@ export default function AgendaNova() {
                 </div>
               ))}
 
-                            {/* Events area */}
-              <div className="absolute left-14 right-0 top-0 bottom-0">
+                                          {/* Events area */}
+              <div
+                className="absolute left-14 right-0 top-0 bottom-0 cursor-pointer"
+                onClick={(e) => {
+                  // Ignora cliques em botões (eventos)
+                  if ((e.target as HTMLElement).closest("button")) return;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const y = e.clientY - rect.top;
+                  const horas = y / ALTURA_HORA;
+                  const horaInt = Math.floor(horas) + HORA_INICIO;
+                  const minInt = Math.floor((horas % 1) * 4) * 15;
+                  const hora = `${String(horaInt).padStart(2, "0")}:${String(minInt).padStart(2, "0")}`;
+                  abrirCriar(currentDate, hora);
+                }}
+              >
                 {atendimentosDoDia.length === 0 ? (
-                  <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-                    Nenhum atendimento neste dia.
+                  <div className="flex items-center justify-center h-full text-sm text-muted-foreground pointer-events-none">
+                    Nenhum atendimento. Clique em um horário para criar.
                   </div>
                 ) : (
                   calcularLayout(atendimentosDoDia).map(({ at, top, height, leftPercent, widthPercent }) => (
@@ -525,9 +752,20 @@ export default function AgendaNova() {
                         <span className="text-[9px] text-slate-500">({eventosProf.length})</span>
                       )}
                     </div>
-                    <div
-                      className="relative"
+                                        <div
+                      className="relative cursor-pointer"
                       style={{ height: `${(HORA_FIM - HORA_INICIO) * ALTURA_HORA}px` }}
+                      onClick={(e) => {
+                        // Ignora cliques em botões (eventos)
+                        if ((e.target as HTMLElement).closest("button")) return;
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const y = e.clientY - rect.top;
+                        const horas = y / ALTURA_HORA;
+                        const horaInt = Math.floor(horas) + HORA_INICIO;
+                        const minInt = Math.floor((horas % 1) * 4) * 15;
+                        const hora = `${String(horaInt).padStart(2, "0")}:${String(minInt).padStart(2, "0")}`;
+                        abrirCriar(currentDate, hora, prof.id);
+                      }}
                     >
                       {/* Hour grid lines */}
                       {Array.from({ length: HORA_FIM - HORA_INICIO + 1 }, (_, i) => (
@@ -537,7 +775,6 @@ export default function AgendaNova() {
                           style={{ top: `${i * ALTURA_HORA}px` }}
                         />
                       ))}
-
                                             {/* Events — com layout paralelo dentro da coluna */}
                       {calcularLayout(eventosProf).map(({ at, top, height, leftPercent, widthPercent }) => (
                         <BlocoEvento
@@ -838,7 +1075,261 @@ export default function AgendaNova() {
             </>
           )}
         </SheetContent>
-      </Sheet>
+            </Sheet>
+
+      {/* ============ MODAL: NOVO ATENDIMENTO ============ */}
+      <Dialog open={modalCriarOpen} onOpenChange={setModalCriarOpen}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus className="w-5 h-5 text-emerald-600" /> Novo Atendimento
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 pt-2">
+            {/* PACIENTE */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold uppercase text-slate-600">
+                Paciente *
+              </Label>
+
+              {formCriar.paciente_id ? (
+                <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                  <div className="flex-1">
+                    <div className="font-bold text-sm text-slate-800">
+                      {formCriar.paciente_nome}
+                    </div>
+                    {pacoteSugerido && (
+                      <div className="text-[11px] text-emerald-700 mt-0.5">
+                        📦 Sugerido: {pacoteSugerido.label}
+                      </div>
+                    )}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 w-7 p-0"
+                    onClick={() => {
+                      setFormCriar((prev) => ({
+                        ...prev,
+                        paciente_id: "",
+                        paciente_nome: "",
+                        paciente_pacote_id: "",
+                      }));
+                      setPacoteSugerido(null);
+                    }}
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              ) : criandoPaciente ? (
+                <div className="border rounded-lg p-3 space-y-2 bg-slate-50">
+                  <div className="text-xs font-bold text-slate-600">Novo paciente</div>
+                  <Input
+                    placeholder="Nome completo"
+                    value={novoPacienteNome}
+                    onChange={(e) => setNovoPacienteNome(e.target.value)}
+                    className="h-9 text-sm"
+                  />
+                  <Input
+                    placeholder="Telefone (opcional)"
+                    value={novoPacienteTelefone}
+                    onChange={(e) => setNovoPacienteTelefone(e.target.value)}
+                    className="h-9 text-sm"
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1 h-8 text-xs"
+                      onClick={() => setCriandoPaciente(false)}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="flex-1 h-8 text-xs bg-emerald-600 hover:bg-emerald-700"
+                      onClick={criarPacienteRapido}
+                    >
+                      <UserPlus className="w-3 h-3 mr-1" /> Criar
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="relative">
+                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <Input
+                      placeholder="Buscar paciente pelo nome..."
+                      value={buscaPaciente}
+                      onChange={(e) => setBuscaPaciente(e.target.value)}
+                      className="h-10 text-sm pl-9"
+                      autoFocus
+                    />
+                  </div>
+
+                  {sugestoesPacientes.length > 0 && (
+                    <div className="border rounded-lg max-h-40 overflow-y-auto bg-white">
+                      {sugestoesPacientes.map((p) => (
+                        <button
+                          key={p.id}
+                          onClick={() => selecionarPaciente(p)}
+                          className="w-full text-left px-3 py-2 hover:bg-blue-50 text-sm border-b last:border-0 flex justify-between"
+                        >
+                          <span className="font-medium">{p.nome}</span>
+                          {p.telefone && (
+                            <span className="text-xs text-muted-foreground">{p.telefone}</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {buscaPaciente.trim().length >= 2 && sugestoesPacientes.length === 0 && (
+                    <button
+                      onClick={() => {
+                        setNovoPacienteNome(buscaPaciente.trim());
+                        setCriandoPaciente(true);
+                      }}
+                      className="w-full text-left px-3 py-2 border rounded-lg text-sm text-emerald-700 hover:bg-emerald-50 border-emerald-200 font-medium"
+                    >
+                      + Criar novo paciente "{buscaPaciente}"
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* PROFISSIONAL */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold uppercase text-slate-600">
+                Profissional *
+              </Label>
+              <Select
+                value={formCriar.profissional_id}
+                onValueChange={(v) => setFormCriar({ ...formCriar, profissional_id: v })}
+              >
+                <SelectTrigger className="h-10 text-sm">
+                  <SelectValue placeholder="Selecione o profissional" />
+                </SelectTrigger>
+                <SelectContent>
+                  {profissionais.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="w-2.5 h-2.5 rounded-full"
+                          style={{ backgroundColor: p.cor_agenda || "#3b82f6" }}
+                        />
+                        <span>{p.nome}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* DATA E HORÁRIO */}
+            <div className="grid grid-cols-3 gap-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold uppercase text-slate-600">Data</Label>
+                <Input
+                  type="date"
+                  value={formCriar.data}
+                  onChange={(e) => setFormCriar({ ...formCriar, data: e.target.value })}
+                  className="h-10 text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold uppercase text-slate-600">Início</Label>
+                <Input
+                  type="time"
+                  value={formCriar.hora_inicio}
+                  onChange={(e) => {
+                    const ini = e.target.value;
+                    const [h, m] = ini.split(":").map(Number);
+                    const fim = new Date();
+                    fim.setHours(h, m + DURACAO_PADRAO, 0, 0);
+                    setFormCriar({
+                      ...formCriar,
+                      hora_inicio: ini,
+                      hora_fim: format(fim, "HH:mm"),
+                    });
+                  }}
+                  className="h-10 text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold uppercase text-slate-600">Fim</Label>
+                <Input
+                  type="time"
+                  value={formCriar.hora_fim}
+                  onChange={(e) => setFormCriar({ ...formCriar, hora_fim: e.target.value })}
+                  className="h-10 text-sm"
+                />
+              </div>
+            </div>
+
+            {/* PACOTE */}
+            {pacoteSugerido && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center gap-3">
+                <Package className="w-5 h-5 text-blue-600 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[10px] uppercase font-bold text-blue-700">
+                    Pacote sugerido
+                  </div>
+                  <div className="text-sm font-medium text-slate-800 truncate">
+                    {pacoteSugerido.label}
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs text-blue-700 hover:bg-blue-100"
+                  onClick={() => {
+                    setPacoteSugerido(null);
+                    setFormCriar({ ...formCriar, paciente_pacote_id: "" });
+                  }}
+                >
+                  Remover
+                </Button>
+              </div>
+            )}
+
+            {/* OBSERVAÇÕES */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold uppercase text-slate-600">
+                Observações
+              </Label>
+              <Textarea
+                value={formCriar.observacoes}
+                onChange={(e) => setFormCriar({ ...formCriar, observacoes: e.target.value })}
+                rows={2}
+                placeholder="Alguma observação sobre este agendamento..."
+                className="text-sm"
+              />
+            </div>
+
+            {/* BOTÕES */}
+            <div className="flex gap-2 pt-2">
+              <Button
+                variant="outline"
+                className="flex-1 h-11"
+                onClick={() => setModalCriarOpen(false)}
+                disabled={criando}
+              >
+                Cancelar
+              </Button>
+              <Button
+                className="flex-1 h-11 bg-emerald-600 hover:bg-emerald-700 font-bold"
+                onClick={salvarAtendimento}
+                disabled={criando || !formCriar.paciente_id || !formCriar.profissional_id}
+              >
+                {criando ? "Salvando..." : "Salvar Atendimento"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
-}
+                }
