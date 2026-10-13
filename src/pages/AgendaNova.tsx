@@ -181,7 +181,7 @@ function BlocoEvento({
       } ${faltou ? "opacity-60" : ""}`}
       style={{
         top: `${top}px`,
-        height: `${height}px`,
+        height: `${Math.max(height - 3, 20)}px`,
         left: `calc(${leftPercent}% + 2px)`,
         width: `calc(${widthPercent}% - 4px)`,
         backgroundColor: realizado ? "#d1fae5" : cor + "22",
@@ -778,11 +778,10 @@ export default function AgendaNova() {
         <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
             <div className="grid grid-cols-7 min-w-[700px]">
-              {eachDayOfInterval({
-                start: startOfWeek(currentDate, { weekStartsOn: 0 }),
-                end: endOfWeek(currentDate, { weekStartsOn: 0 }),
-              }).map((dia) => {
-                const evtsDia = atendimentos.filter((a) =>
+             {eachDayOfInterval({
+  start: startOfWeek(startOfMonth(currentDate), { weekStartsOn: 0 }),
+  end: endOfWeek(endOfMonth(currentDate), { weekStartsOn: 0 }),
+}).map((dia, i) => {                const evtsDia = atendimentos.filter((a) =>
                   isSameDay(new Date(a.data_inicio), dia)
                 );
                 const destacado = isToday(dia);
