@@ -4,7 +4,7 @@ import {
   format, addDays, addWeeks, addMonths,
   startOfDay, endOfDay, startOfWeek, endOfWeek,
   startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth,
-  isToday, isSameDay, differenceInMinutes,
+  isToday, isSameDay,
 } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { toast } from "sonner";
@@ -19,13 +19,14 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ChevronLeft, ChevronRight, Calendar, Clock, User, Plus, Search, X, Package, UserPlus } from "lucide-react";
+
 // ==========================================================
 // CONFIGURAÇÕES DA TIMELINE
 // ==========================================================
 const HORA_INICIO = 7;
 const HORA_FIM = 21;
-const ALTURA_HORA = 60; // px por hora
-const DURACAO_PADRAO = 40; // min
+const ALTURA_HORA = 60;
+const DURACAO_PADRAO = 40;
 
 interface Atendimento {
   id: string;
@@ -52,7 +53,7 @@ type ViewMode = "day" | "week" | "month" | "profissionais";
 type ModoDia = "unica" | "porProfissional";
 
 // ==========================================================
-// ALGORITMO: layout de eventos paralelos (estilo Google Calendar)
+// ALGORITMO: layout de eventos paralelos
 // ==========================================================
 interface EventoPosicionado {
   at: Atendimento;
@@ -65,22 +66,17 @@ interface EventoPosicionado {
 function calcularLayout(eventos: Atendimento[]): EventoPosicionado[] {
   if (eventos.length === 0) return [];
 
-  // 1. Calcular posição vertical (top, height) de cada evento
   const posicionados = eventos.map((at) => {
     const inicio = new Date(at.data_inicio);
     const fim = at.data_fim
       ? new Date(at.data_fim)
       : new Date(inicio.getTime() + DURACAO_PADRAO * 60 * 1000);
 
-    const minutosInicio =
-      (inicio.getHours() - HORA_INICIO) * 60 + inicio.getMinutes();
+    const minutosInicio = (inicio.getHours() - HORA_INICIO) * 60 + inicio.getMinutes();
     const minutosFim = (fim.getHours() - HORA_INICIO) * 60 + fim.getMinutes();
 
     const top = Math.max(0, (minutosInicio / 60) * ALTURA_HORA);
-    const altura = Math.max(
-      ((minutosFim - minutosInicio) / 60) * ALTURA_HORA,
-      26
-    );
+    const altura = Math.max(((minutosFim - minutosInicio) / 60) * ALTURA_HORA, 26);
 
     return {
       at,
@@ -93,13 +89,11 @@ function calcularLayout(eventos: Atendimento[]): EventoPosicionado[] {
     };
   });
 
-  // 2. Ordenar por início, depois por duração (mais longo primeiro)
   posicionados.sort((a, b) => {
     if (a.inicioMin !== b.inicioMin) return a.inicioMin - b.inicioMin;
     return b.fimMin - a.fimMin;
   });
 
-  // 3. Agrupar em "clusters" de eventos que se sobrepõem (direta ou transitivamente)
   const clusters: (typeof posicionados)[] = [];
   let clusterAtual: typeof posicionados = [];
   let clusterFim = -1;
@@ -116,14 +110,12 @@ function calcularLayout(eventos: Atendimento[]): EventoPosicionado[] {
   }
   if (clusterAtual.length > 0) clusters.push(clusterAtual);
 
-  // 4. Para cada cluster, distribuir em colunas paralelas
   for (const cluster of clusters) {
-    const colunas: (typeof posicionados)[] = []; // última ocupação de cada coluna
+    const colunas: (typeof posicionados)[] = [];
 
     for (const p of cluster) {
       let colocado = false;
       for (let c = 0; c < colunas.length; c++) {
-        // Se a coluna já terminou antes de o evento começar, cabe aqui
         if (colunas[c].fimMin <= p.inicioMin) {
           colunas[c] = p;
           p.coluna = c;
@@ -143,10 +135,9 @@ function calcularLayout(eventos: Atendimento[]): EventoPosicionado[] {
     }
   }
 
-  // 5. Calcular left/width em %
   return posicionados.map((p) => {
     const larguraTotal = 100 / p.totalColunas;
-    const gap = 0.5; // % de espaçamento entre colunas
+    const gap = 0.5;
     return {
       at: p.at,
       top: p.top,
@@ -158,7 +149,7 @@ function calcularLayout(eventos: Atendimento[]): EventoPosicionado[] {
 }
 
 // ==========================================================
-// COMPONENTE: bloco de evento posicionado na timeline
+// BLOCO DE EVENTO
 // ==========================================================
 function BlocoEvento({
   at,
@@ -180,7 +171,7 @@ function BlocoEvento({
   const cancelado = at.status === "cancelado";
   const faltou = at.status === "faltou";
   const realizado = at.status === "realizado";
-  const compacto = widthPercent < 40; // 🔥 se está em coluna paralela, esconde detalhes
+  const compacto = widthPercent < 40;
 
   return (
     <button
@@ -201,11 +192,6 @@ function BlocoEvento({
         {format(data, "HH:mm")}
         {!compacto && ` · ${at.paciente?.nome || at.nome_paciente_livre || "—"}`}
       </div>
-      {!compacto && at.paciente?.nome && (
-        <div className="text-[10px] text-slate-700 truncate leading-tight">
-          {at.paciente.nome}
-        </div>
-      )}
       {compacto && (
         <div className="text-[9px] text-slate-700 truncate leading-tight mt-0.5">
           {at.paciente?.nome?.split(" ")[0] || at.nome_paciente_livre?.split(" ")[0] || "—"}
@@ -219,6 +205,7 @@ function BlocoEvento({
     </button>
   );
 }
+
 // ==========================================================
 // COMPONENTE PRINCIPAL
 // ==========================================================
@@ -237,7 +224,8 @@ export default function AgendaNova() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [meuProfId, setMeuProfId] = useState<string | null>(null);
   const [agora, setAgora] = useState(new Date());
-    // 🆕 Estados do modal de criação
+
+  // Estados do modal de criação
   const [modalCriarOpen, setModalCriarOpen] = useState(false);
   const [criando, setCriando] = useState(false);
   const [formCriar, setFormCriar] = useState({
@@ -257,13 +245,11 @@ export default function AgendaNova() {
   const [novoPacienteNome, setNovoPacienteNome] = useState("");
   const [novoPacienteTelefone, setNovoPacienteTelefone] = useState("");
 
-  // 🔥 Atualiza linha "agora" a cada 1 min
   useEffect(() => {
     const t = setInterval(() => setAgora(new Date()), 60 * 1000);
     return () => clearInterval(t);
   }, []);
 
-  // Carrega profissionais
   useEffect(() => {
     supabase
       .from("profissionais")
@@ -273,7 +259,6 @@ export default function AgendaNova() {
       .then(({ data }) => setProfissionais((data as any) || []));
   }, []);
 
-  // Descobre o profissional logado
   useEffect(() => {
     if (!user) return;
     supabase
@@ -284,13 +269,346 @@ export default function AgendaNova() {
       .then(({ data }) => setMeuProfId(data?.id ?? null));
   }, [user]);
 
-  // ============ CARREGAR ATENDIMENTOS ============
   const carregar = useCallback(async () => {
     setLoading(true);
     try {
       let start: Date, end: Date;
 
       if (view === "day" || view === "profissionais") {
+        start = startOfDay(currentDate);
+        end = endOfDay(currentDate);
+      } else if (view === "week") {
+        start = startOfWeek(currentDate, { weekStartsOn: 1 });
+        end = endOfWeek(currentDate, { weekStartsOn: 1 });
+      } else {
+        start = startOfMonth(currentDate);
+        end = endOfMonth(currentDate);
+      }
+
+      let query = supabase
+        .from("atendimentos")
+        .select(`
+          id, data_inicio, data_fim, status, tipo,
+          nome_paciente_livre, telefone_contato,
+          paciente_id, paciente_pacote_id, profissional_id,
+          paciente:pacientes(nome, telefone),
+          profissional:profissionais(id, nome, cor_agenda)
+        `)
+        .gte("data_inicio", start.toISOString())
+        .lte("data_inicio", end.toISOString())
+        .order("data_inicio", { ascending: true });
+
+      if (!isAdmin && !isSecretaria && meuProfId) {
+        query = query.eq("profissional_id", meuProfId);
+      } else if (profFiltroUrl) {
+        query = query.eq("profissional_id", profFiltroUrl);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      setAtendimentos((data as any) || []);
+    } catch (err: any) {
+      toast.error("Erro ao carregar agenda: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [view, currentDate, profFiltroUrl, meuProfId, isAdmin, isSecretaria]);
+
+  useEffect(() => {
+    carregar();
+  }, [carregar]);
+
+  const anterior = () => {
+    if (view === "day" || view === "profissionais") setCurrentDate((d) => addDays(d, -1));
+    else if (view === "week") setCurrentDate((d) => addWeeks(d, -1));
+    else setCurrentDate((d) => addMonths(d, -1));
+  };
+  const proximo = () => {
+    if (view === "day" || view === "profissionais") setCurrentDate((d) => addDays(d, 1));
+    else if (view === "week") setCurrentDate((d) => addWeeks(d, 1));
+    else setCurrentDate((d) => addMonths(d, 1));
+  };
+
+  const abrirDetalhes = (at: Atendimento) => {
+    setSelectedAtend(at);
+    setSheetOpen(true);
+  };
+
+  const abrirCriar = (data?: Date, horaInicio?: string, profissionalId?: string) => {
+    const dia = data ? format(data, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
+    const hora = horaInicio || "14:00";
+
+    const [h, m] = hora.split(":").map(Number);
+    const fim = new Date();
+    fim.setHours(h, m + DURACAO_PADRAO, 0, 0);
+    const horaFim = format(fim, "HH:mm");
+
+    const profId = profissionalId || meuProfId || (isAdmin || isSecretaria
+      ? profissionais[0]?.id || ""
+      : meuProfId || "");
+
+    setFormCriar({
+      paciente_id: "",
+      paciente_nome: "",
+      profissional_id: profId,
+      data: dia,
+      hora_inicio: hora,
+      hora_fim: horaFim,
+      paciente_pacote_id: "",
+      observacoes: "",
+    });
+    setBuscaPaciente("");
+    setSugestoesPacientes([]);
+    setPacoteSugerido(null);
+    setCriandoPaciente(false);
+    setNovoPacienteNome("");
+    setNovoPacienteTelefone("");
+    setModalCriarOpen(true);
+  };
+
+  useEffect(() => {
+    if (buscaPaciente.trim().length < 2) {
+      setSugestoesPacientes([]);
+      return;
+    }
+    const t = setTimeout(async () => {
+      const { data } = await supabase
+        .from("pacientes")
+        .select("id, nome, telefone")
+        .ilike("nome", `%${buscaPaciente.trim()}%`)
+        .eq("ativo", true)
+        .limit(6);
+      setSugestoesPacientes(data || []);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [buscaPaciente]);
+
+  async function selecionarPaciente(p: { id: string; nome: string; telefone: string | null }) {
+    setFormCriar((prev) => ({
+      ...prev,
+      paciente_id: p.id,
+      paciente_nome: p.nome,
+    }));
+    setBuscaPaciente("");
+    setSugestoesPacientes([]);
+
+    const { data: pacotes } = await supabase
+      .from("paciente_pacotes")
+      .select(`
+        id, sessoes_restantes,
+        autorizacao:autorizacoes(plano),
+        pacote:pacotes(nome),
+        servico:servicos(nome)
+      `)
+      .eq("paciente_id", p.id)
+      .gt("sessoes_restantes", 0)
+      .order("sessoes_restantes", { ascending: true })
+      .limit(1);
+
+    if (pacotes && pacotes.length > 0) {
+      const pac = pacotes[0] as any;
+      const nome = pac.autorizacao?.plano
+        ? `Plano ${pac.autorizacao.plano}`
+        : pac.pacote?.nome || pac.servico?.nome || "Item";
+      setPacoteSugerido({
+        id: pac.id,
+        label: `${nome} (${pac.sessoes_restantes} rest.)`,
+      });
+      setFormCriar((prev) => ({ ...prev, paciente_pacote_id: pac.id }));
+    } else {
+      setPacoteSugerido(null);
+    }
+  }
+
+  async function criarPacienteRapido() {
+    if (!novoPacienteNome.trim()) {
+      toast.error("Informe o nome do paciente");
+      return;
+    }
+    setCriandoPaciente(true);
+    try {
+      const { data, error } = await supabase
+        .from("pacientes")
+        .insert({
+          nome: novoPacienteNome.trim(),
+          telefone: novoPacienteTelefone.trim() || null,
+          ativo: true,
+        })
+        .select("id, nome, telefone")
+        .single();
+      if (error) throw error;
+      toast.success("Paciente criado!");
+      await selecionarPaciente(data);
+      setCriandoPaciente(false);
+      setNovoPacienteNome("");
+      setNovoPacienteTelefone("");
+    } catch (err: any) {
+      toast.error("Erro: " + err.message);
+      setCriandoPaciente(false);
+    }
+  }
+
+  async function salvarAtendimento() {
+    if (!formCriar.paciente_id) {
+      toast.error("Selecione o paciente");
+      return;
+    }
+    if (!formCriar.profissional_id) {
+      toast.error("Selecione o profissional");
+      return;
+    }
+    if (!formCriar.data || !formCriar.hora_inicio || !formCriar.hora_fim) {
+      toast.error("Preencha data e horário");
+      return;
+    }
+
+    setCriando(true);
+    try {
+      const dataInicio = new Date(`${formCriar.data}T${formCriar.hora_inicio}:00`);
+      const dataFim = new Date(`${formCriar.data}T${formCriar.hora_fim}:00`);
+
+      if (dataFim <= dataInicio) {
+        toast.error("O horário de fim deve ser depois do início");
+        setCriando(false);
+        return;
+      }
+
+      const { data: pacData } = formCriar.paciente_pacote_id
+        ? await supabase
+            .from("paciente_pacotes")
+            .select("autorizacao_id")
+            .eq("id", formCriar.paciente_pacote_id)
+            .maybeSingle()
+        : { data: null };
+
+      const tipo = pacData?.autorizacao_id ? "Plano" : "Particular";
+
+      const { error } = await supabase.from("atendimentos").insert({
+        paciente_id: formCriar.paciente_id,
+        profissional_id: formCriar.profissional_id,
+        data_inicio: dataInicio.toISOString(),
+        data_fim: dataFim.toISOString(),
+        status: "agendado",
+        tipo,
+        paciente_pacote_id: formCriar.paciente_pacote_id || null,
+        observacoes: formCriar.observacoes.trim() || null,
+      });
+
+      if (error) throw error;
+
+      toast.success("Atendimento criado!");
+      setModalCriarOpen(false);
+      await carregar();
+    } catch (err: any) {
+      toast.error("Erro: " + err.message);
+    } finally {
+      setCriando(false);
+    }
+  }
+
+  const atendimentosDoDia = atendimentos.filter((a) =>
+    isSameDay(new Date(a.data_inicio), currentDate)
+  );
+
+  const profissionaisVisiveis = profissionais.filter((p) => {
+    if (isAdmin || isSecretaria) {
+      if (profFiltroUrl) return p.id === profFiltroUrl;
+      return true;
+    }
+    return p.id === meuProfId;
+  });
+
+  if (loading && atendimentos.length === 0) {
+    return (
+      <div className="p-10 text-center text-muted-foreground animate-pulse">
+        Carregando agenda...
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3 p-2 max-w-7xl mx-auto pb-24">
+      {/* HEADER */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-white p-3 rounded-xl border shadow-sm">
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="icon" onClick={anterior}>
+            <ChevronLeft className="w-4 h-4" />
+          </Button>
+          <Button variant="outline" onClick={() => setCurrentDate(new Date())} className="text-xs font-semibold">
+            Hoje
+          </Button>
+          <Button variant="outline" size="icon" onClick={proximo}>
+            <ChevronRight className="w-4 h-4" />
+          </Button>
+          <h2 className="text-sm font-bold capitalize text-slate-700 ml-1 truncate">
+            {view === "month"
+              ? format(currentDate, "MMMM 'de' yyyy", { locale: ptBR })
+              : format(currentDate, "EEEE, dd 'de' MMMM", { locale: ptBR })}
+          </h2>
+        </div>
+
+        <div className="flex gap-2 items-center self-stretch sm:self-auto">
+          <div className="flex gap-1 bg-slate-100 p-1 rounded-lg">
+            {(["day", "week", "month", "profissionais"] as const).map((v) => (
+              <Button
+                key={v}
+                variant={view === v ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setView(v)}
+                className="text-xs capitalize font-semibold h-8"
+              >
+                {v === "day" ? "Dia" : v === "week" ? "Semana" : v === "month" ? "Mês" : "Profis."}
+              </Button>
+            ))}
+          </div>
+
+          <Button
+            size="sm"
+            onClick={() => abrirCriar()}
+            className="bg-emerald-600 hover:bg-emerald-700 h-8 text-xs font-bold"
+          >
+            <Plus className="w-3.5 h-3.5 mr-1" /> Novo
+          </Button>
+        </div>
+      </div>
+
+      {/* TOGGLE DO MODO DIA */}
+      {view === "day" && (
+        <div className="flex items-center gap-2 bg-white p-2 rounded-xl border shadow-sm">
+          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Modo:</span>
+          <Button
+            size="sm"
+            variant={modoDia === "unica" ? "default" : "ghost"}
+            onClick={() => setModoDia("unica")}
+            className="h-7 text-xs"
+          >
+            1 Coluna
+          </Button>
+          <Button
+            size="sm"
+            variant={modoDia === "porProfissional" ? "default" : "ghost"}
+            onClick={() => setModoDia("porProfissional")}
+            className="h-7 text-xs"
+          >
+            Por Profissional
+          </Button>
+          <Badge variant="outline" className="ml-auto text-[10px] h-6">
+            {atendimentosDoDia.length} atend.
+          </Badge>
+        </div>
+      )}
+
+      {/* VISÃO DIA — 1 COLUNA */}
+      {view === "day" && modoDia === "unica" && (
+        <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
+          <div className="overflow-y-auto" style={{ maxHeight: "calc(100vh - 240px)" }}>
+            <div
+              className="relative"
+              style={{ height: `${(HORA_FIM - HORA_INICIO) * ALTURA_HORA + 40}px` }}
+            >
+              {Array.from({ length: HORA_FIM - HORA_INICIO + 1 }, (_, i) => (
+                <div
+             {
         start = startOfDay(currentDate);
         end = endOfDay(currentDate);
       } else if (view === "week") {
