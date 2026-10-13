@@ -842,9 +842,9 @@ export default function AgendaNova() {
       {view === "month" && (
         <div className="bg-white rounded-xl border p-3 shadow-sm">
           <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 pb-2 border-b">
-            {["Dom","Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map((d) => (
-              <div key={d}>{d}</div>
-            ))}
+            {["D", "S", "T", "Q", "Q", "S", "S"].map((d, i) => (
+  <div key={i}>{d}</div>
+))}
           </div>
           <div className="grid grid-cols-7 gap-1.5">
             {eachDayOfInterval({
