@@ -608,354 +608,6 @@ export default function AgendaNova() {
             >
               {Array.from({ length: HORA_FIM - HORA_INICIO + 1 }, (_, i) => (
                 <div
-             {
-        start = startOfDay(currentDate);
-        end = endOfDay(currentDate);
-      } else if (view === "week") {
-        start = startOfWeek(currentDate, { weekStartsOn: 1 });
-        end = endOfWeek(currentDate, { weekStartsOn: 1 });
-      } else {
-        start = startOfMonth(currentDate);
-        end = endOfMonth(currentDate);
-      }
-
-      let query = supabase
-        .from("atendimentos")
-        .select(`
-          id, data_inicio, data_fim, status, tipo,
-          nome_paciente_livre, telefone_contato,
-          paciente_id, paciente_pacote_id, profissional_id,
-          paciente:pacientes(nome, telefone),
-          profissional:profissionais(id, nome, cor_agenda)
-        `)
-        .gte("data_inicio", start.toISOString())
-        .lte("data_inicio", end.toISOString())
-        .order("data_inicio", { ascending: true });
-
-      if (!isAdmin && !isSecretaria && meuProfId) {
-        query = query.eq("profissional_id", meuProfId);
-      } else if (profFiltroUrl) {
-        query = query.eq("profissional_id", profFiltroUrl);
-      }
-
-      const { data, error } = await query;
-      if (error) throw error;
-      setAtendimentos((data as any) || []);
-    } catch (err: any) {
-      toast.error("Erro ao carregar agenda: " + err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [view, currentDate, profFiltroUrl, meuProfId, isAdmin, isSecretaria]);
-
-  useEffect(() => {
-    carregar();
-  }, [carregar]);
-
-  // Navegação
-  const anterior = () => {
-    if (view === "day" || view === "profissionais") setCurrentDate((d) => addDays(d, -1));
-    else if (view === "week") setCurrentDate((d) => addWeeks(d, -1));
-    else setCurrentDate((d) => addMonths(d, -1));
-  };
-  const proximo = () => {
-    if (view === "day" || view === "profissionais") setCurrentDate((d) => addDays(d, 1));
-    else if (view === "week") setCurrentDate((d) => addWeeks(d, 1));
-    else setCurrentDate((d) => addMonths(d, 1));
-  };
-
-    const abrirDetalhes = (at: Atendimento) => {
-    setSelectedAtend(at);
-    setSheetOpen(true);
-  };
-
-  // ============ NOVO: abrir modal de criação ============
-  const abrirCriar = (data?: Date, horaInicio?: string, profissionalId?: string) => {
-    const dia = data ? format(data, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
-    const hora = horaInicio || "14:00";
-
-    // Calcula fim = 40 min depois
-    const [h, m] = hora.split(":").map(Number);
-    const fim = new Date();
-    fim.setHours(h, m + DURACAO_PADRAO, 0, 0);
-    const horaFim = format(fim, "HH:mm");
-
-    // Profissional pré-selecionado (se visão Por Profissional)
-    const profId = profissionalId || meuProfId || (isAdmin || isSecretaria
-      ? profissionais[0]?.id || ""
-      : meuProfId || "");
-
-    setFormCriar({
-      paciente_id: "",
-      paciente_nome: "",
-      profissional_id: profId,
-      data: dia,
-      hora_inicio: hora,
-      hora_fim: horaFim,
-      paciente_pacote_id: "",
-      observacoes: "",
-    });
-    setBuscaPaciente("");
-    setSugestoesPacientes([]);
-    setPacoteSugerido(null);
-    setCriandoPaciente(false);
-    setNovoPacienteNome("");
-    setNovoPacienteTelefone("");
-    setModalCriarOpen(true);
-  };
-
-  // ============ NOVO: buscar pacientes ============
-  useEffect(() => {
-    if (buscaPaciente.trim().length < 2) {
-      setSugestoesPacientes([]);
-      return;
-    }
-    const t = setTimeout(async () => {
-      const { data } = await supabase
-        .from("pacientes")
-        .select("id, nome, telefone")
-        .ilike("nome", `%${buscaPaciente.trim()}%`)
-        .eq("ativo", true)
-        .limit(6);
-      setSugestoesPacientes(data || []);
-    }, 300);
-    return () => clearTimeout(t);
-  }, [buscaPaciente]);
-
-  // ============ NOVO: ao selecionar paciente, sugerir pacote ============
-  async function selecionarPaciente(p: { id: string; nome: string; telefone: string | null }) {
-    setFormCriar((prev) => ({
-      ...prev,
-      paciente_id: p.id,
-      paciente_nome: p.nome,
-    }));
-    setBuscaPaciente("");
-    setSugestoesPacientes([]);
-
-    // Buscar pacotes ativos do paciente
-    const { data: pacotes } = await supabase
-      .from("paciente_pacotes")
-      .select(`
-        id, sessoes_restantes,
-        autorizacao:autorizacoes(plano),
-        pacote:pacotes(nome),
-        servico:servicos(nome)
-      `)
-      .eq("paciente_id", p.id)
-      .gt("sessoes_restantes", 0)
-      .order("sessoes_restantes", { ascending: true })
-      .limit(1);
-
-    if (pacotes && pacotes.length > 0) {
-      const pac = pacotes[0] as any;
-      const nome = pac.autorizacao?.plano
-        ? `Plano ${pac.autorizacao.plano}`
-        : pac.pacote?.nome || pac.servico?.nome || "Item";
-      setPacoteSugerido({
-        id: pac.id,
-        label: `${nome} (${pac.sessoes_restantes} rest.)`,
-      });
-      setFormCriar((prev) => ({ ...prev, paciente_pacote_id: pac.id }));
-    } else {
-      setPacoteSugerido(null);
-    }
-  }
-
-  // ============ NOVO: criar paciente rápido ============
-  async function criarPacienteRapido() {
-    if (!novoPacienteNome.trim()) {
-      toast.error("Informe o nome do paciente");
-      return;
-    }
-    setCriandoPaciente(true);
-    try {
-      const { data, error } = await supabase
-        .from("pacientes")
-        .insert({
-          nome: novoPacienteNome.trim(),
-          telefone: novoPacienteTelefone.trim() || null,
-          ativo: true,
-        })
-        .select("id, nome, telefone")
-        .single();
-      if (error) throw error;
-      toast.success("Paciente criado!");
-      await selecionarPaciente(data);
-      setCriandoPaciente(false);
-      setNovoPacienteNome("");
-      setNovoPacienteTelefone("");
-    } catch (err: any) {
-      toast.error("Erro: " + err.message);
-      setCriandoPaciente(false);
-    }
-  }
-
-  // ============ NOVO: salvar atendimento ============
-  async function salvarAtendimento() {
-    if (!formCriar.paciente_id) {
-      toast.error("Selecione o paciente");
-      return;
-    }
-    if (!formCriar.profissional_id) {
-      toast.error("Selecione o profissional");
-      return;
-    }
-    if (!formCriar.data || !formCriar.hora_inicio || !formCriar.hora_fim) {
-      toast.error("Preencha data e horário");
-      return;
-    }
-
-    setCriando(true);
-    try {
-      const dataInicio = new Date(`${formCriar.data}T${formCriar.hora_inicio}:00`);
-      const dataFim = new Date(`${formCriar.data}T${formCriar.hora_fim}:00`);
-
-      if (dataFim <= dataInicio) {
-        toast.error("O horário de fim deve ser depois do início");
-        setCriando(false);
-        return;
-      }
-
-      // Buscar dados do paciente e pacote para preencher tipo
-      const { data: pacData } = formCriar.paciente_pacote_id
-        ? await supabase
-            .from("paciente_pacotes")
-            .select("autorizacao_id")
-            .eq("id", formCriar.paciente_pacote_id)
-            .maybeSingle()
-        : { data: null };
-
-      const tipo = pacData?.autorizacao_id ? "Plano" : "Particular";
-
-      const { error } = await supabase.from("atendimentos").insert({
-        paciente_id: formCriar.paciente_id,
-        profissional_id: formCriar.profissional_id,
-        data_inicio: dataInicio.toISOString(),
-        data_fim: dataFim.toISOString(),
-        status: "agendado",
-        tipo,
-        paciente_pacote_id: formCriar.paciente_pacote_id || null,
-        observacoes: formCriar.observacoes.trim() || null,
-      });
-
-      if (error) throw error;
-
-      toast.success("Atendimento criado!");
-      setModalCriarOpen(false);
-      await carregar();
-    } catch (err: any) {
-      toast.error("Erro: " + err.message);
-    } finally {
-      setCriando(false);
-    }
-  }
-
-  // Events of the current day
-  const atendimentosDoDia = atendimentos.filter((a) =>
-    isSameDay(new Date(a.data_inicio), currentDate)
-  );
-
-  // Professionals that appear in current filter
-  const profissionaisVisiveis = profissionais.filter((p) => {
-    if (isAdmin || isSecretaria) {
-      if (profFiltroUrl) return p.id === profFiltroUrl;
-      return true;
-    }
-    return p.id === meuProfId;
-  });
-
-  // ============ RENDER ============
-  if (loading && atendimentos.length === 0) {
-    return (
-      <div className="p-10 text-center text-muted-foreground animate-pulse">
-        Carregando agenda...
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-3 p-2 max-w-7xl mx-auto pb-24">
-      {/* HEADER */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-white p-3 rounded-xl border shadow-sm">
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="icon" onClick={anterior}>
-            <ChevronLeft className="w-4 h-4" />
-          </Button>
-          <Button variant="outline" onClick={() => setCurrentDate(new Date())} className="text-xs font-semibold">
-            Hoje
-          </Button>
-          <Button variant="outline" size="icon" onClick={proximo}>
-            <ChevronRight className="w-4 h-4" />
-          </Button>
-          <h2 className="text-sm font-bold capitalize text-slate-700 ml-1 truncate">
-            {view === "month"
-              ? format(currentDate, "MMMM 'de' yyyy", { locale: ptBR })
-              : format(currentDate, "EEEE, dd 'de' MMMM", { locale: ptBR })}
-          </h2>
-        </div>
-
-                <div className="flex gap-2 items-center self-stretch sm:self-auto">
-          <div className="flex gap-1 bg-slate-100 p-1 rounded-lg">
-            {(["day", "week", "month", "profissionais"] as const).map((v) => (
-              <Button
-                key={v}
-                variant={view === v ? "default" : "ghost"}
-                size="sm"
-                onClick={() => setView(v)}
-                className="text-xs capitalize font-semibold h-8"
-              >
-                {v === "day" ? "Dia" : v === "week" ? "Semana" : v === "month" ? "Mês" : "Profis."}
-              </Button>
-            ))}
-          </div>
-
-          {/* 🆕 Botão Novo Atendimento */}
-          <Button
-            size="sm"
-            onClick={() => abrirCriar()}
-            className="bg-emerald-600 hover:bg-emerald-700 h-8 text-xs font-bold"
-          >
-            <Plus className="w-3.5 h-3.5 mr-1" /> Novo
-          </Button>
-        </div>
-
-      {/* TOGGLE DO MODO DIA */}
-      {view === "day" && (
-        <div className="flex items-center gap-2 bg-white p-2 rounded-xl border shadow-sm">
-          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Modo:</span>
-          <Button
-            size="sm"
-            variant={modoDia === "unica" ? "default" : "ghost"}
-            onClick={() => setModoDia("unica")}
-            className="h-7 text-xs"
-          >
-            1 Coluna
-          </Button>
-          <Button
-            size="sm"
-            variant={modoDia === "porProfissional" ? "default" : "ghost"}
-            onClick={() => setModoDia("porProfissional")}
-            className="h-7 text-xs"
-          >
-            Por Profissional
-          </Button>
-          <Badge variant="outline" className="ml-auto text-[10px] h-6">
-            {atendimentosDoDia.length} atend.
-          </Badge>
-        </div>
-      )}
-
-      {/* ============ VISÃO DIA — 1 COLUNA ============ */}
-      {view === "day" && modoDia === "unica" && (
-        <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
-          <div className="overflow-y-auto" style={{ maxHeight: "calc(100vh - 240px)" }}>
-            <div
-              className="relative"
-              style={{ height: `${(HORA_FIM - HORA_INICIO) * ALTURA_HORA + 40}px` }}
-            >
-              {/* Hour markers */}
-              {Array.from({ length: HORA_FIM - HORA_INICIO + 1 }, (_, i) => (
-                <div
                   key={i}
                   className="absolute left-0 right-0 flex items-start pointer-events-none"
                   style={{ top: `${i * ALTURA_HORA}px` }}
@@ -967,11 +619,9 @@ export default function AgendaNova() {
                 </div>
               ))}
 
-                                          {/* Events area */}
               <div
                 className="absolute left-14 right-0 top-0 bottom-0 cursor-pointer"
                 onClick={(e) => {
-                  // Ignora cliques em botões (eventos)
                   if ((e.target as HTMLElement).closest("button")) return;
                   const rect = e.currentTarget.getBoundingClientRect();
                   const y = e.clientY - rect.top;
@@ -999,8 +649,7 @@ export default function AgendaNova() {
                     />
                   ))
                 )}
-                
-                {/* Now line */}
+
                 {isToday(currentDate) &&
                   agora.getHours() >= HORA_INICIO &&
                   agora.getHours() <= HORA_FIM && (
@@ -1021,12 +670,11 @@ export default function AgendaNova() {
         </div>
       )}
 
-      {/* ============ VISÃO DIA — POR PROFISSIONAL ============ */}
+      {/* VISÃO DIA — POR PROFISSIONAL */}
       {view === "day" && modoDia === "porProfissional" && (
         <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
             <div className="flex min-w-full">
-              {/* Hour column */}
               <div className="w-14 shrink-0 border-r bg-slate-50/50">
                 <div className="h-10 border-b" />
                 <div
@@ -1045,7 +693,6 @@ export default function AgendaNova() {
                 </div>
               </div>
 
-              {/* Columns per professional */}
               {profissionaisVisiveis.map((prof) => {
                 const eventosProf = atendimentosDoDia.filter((a) => a.profissional_id === prof.id);
                 const cor = prof.cor_agenda || "#3b82f6";
@@ -1070,11 +717,10 @@ export default function AgendaNova() {
                         <span className="text-[9px] text-slate-500">({eventosProf.length})</span>
                       )}
                     </div>
-                                        <div
+                    <div
                       className="relative cursor-pointer"
                       style={{ height: `${(HORA_FIM - HORA_INICIO) * ALTURA_HORA}px` }}
                       onClick={(e) => {
-                        // Ignora cliques em botões (eventos)
                         if ((e.target as HTMLElement).closest("button")) return;
                         const rect = e.currentTarget.getBoundingClientRect();
                         const y = e.clientY - rect.top;
@@ -1085,7 +731,6 @@ export default function AgendaNova() {
                         abrirCriar(currentDate, hora, prof.id);
                       }}
                     >
-                      {/* Hour grid lines */}
                       {Array.from({ length: HORA_FIM - HORA_INICIO + 1 }, (_, i) => (
                         <div
                           key={i}
@@ -1093,7 +738,7 @@ export default function AgendaNova() {
                           style={{ top: `${i * ALTURA_HORA}px` }}
                         />
                       ))}
-                                            {/* Events — com layout paralelo dentro da coluna */}
+
                       {calcularLayout(eventosProf).map(({ at, top, height, leftPercent, widthPercent }) => (
                         <BlocoEvento
                           key={at.id}
@@ -1106,7 +751,6 @@ export default function AgendaNova() {
                         />
                       ))}
 
-                      {/* Now line */}
                       {isToday(currentDate) &&
                         agora.getHours() >= HORA_INICIO &&
                         agora.getHours() <= HORA_FIM && (
@@ -1129,7 +773,7 @@ export default function AgendaNova() {
         </div>
       )}
 
-      {/* ============ VISÃO SEMANA ============ */}
+      {/* VISÃO SEMANA */}
       {view === "week" && (
         <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
@@ -1194,7 +838,7 @@ export default function AgendaNova() {
         </div>
       )}
 
-      {/* ============ VISÃO MÊS ============ */}
+      {/* VISÃO MÊS */}
       {view === "month" && (
         <div className="bg-white rounded-xl border p-3 shadow-sm">
           <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 pb-2 border-b">
@@ -1238,7 +882,7 @@ export default function AgendaNova() {
         </div>
       )}
 
-      {/* ============ VISÃO PROFISSIONAIS ============ */}
+      {/* VISÃO PROFISSIONAIS */}
       {view === "profissionais" && (
         <div className="space-y-3">
           {profissionaisVisiveis.map((prof) => {
@@ -1293,7 +937,7 @@ export default function AgendaNova() {
         </div>
       )}
 
-      {/* ============ SHEET DE DETALHES ============ */}
+      {/* SHEET DE DETALHES */}
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
         <SheetContent side="right" className="w-full sm:max-w-md p-5 space-y-4 overflow-y-auto">
           <SheetHeader>
@@ -1377,13 +1021,13 @@ export default function AgendaNova() {
               </div>
 
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800 space-y-1">
-                <p className="font-bold">🎯 Bloco 1 — Visualização apenas</p>
+                <p className="font-bold">🎯 Bloco 2A — Criação ativa</p>
                 <p>
-                  Esta é a primeira versão da nova agenda. Ainda <strong>não é possível editar,
-                  criar ou arrastar</strong> eventos. Essas funções vêm nos próximos blocos.
+                  Você já pode <strong>criar</strong> novos atendimentos clicando em "+ Novo" ou
+                  em um horário vazio. Editar e mover eventos vem no Bloco 2B.
                 </p>
                 <p>
-                  Por enquanto, para editar, use a agenda atual em{" "}
+                  Para editar os existentes, use a agenda atual em{" "}
                   <a href="/agenda" className="underline font-semibold">
                     /agenda
                   </a>
@@ -1393,9 +1037,9 @@ export default function AgendaNova() {
             </>
           )}
         </SheetContent>
-            </Sheet>
+      </Sheet>
 
-      {/* ============ MODAL: NOVO ATENDIMENTO ============ */}
+      {/* MODAL: NOVO ATENDIMENTO */}
       <Dialog open={modalCriarOpen} onOpenChange={setModalCriarOpen}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -1405,7 +1049,6 @@ export default function AgendaNova() {
           </DialogHeader>
 
           <div className="space-y-4 pt-2">
-            {/* PACIENTE */}
             <div className="space-y-1.5">
               <Label className="text-xs font-bold uppercase text-slate-600">
                 Paciente *
@@ -1518,7 +1161,6 @@ export default function AgendaNova() {
               )}
             </div>
 
-            {/* PROFISSIONAL */}
             <div className="space-y-1.5">
               <Label className="text-xs font-bold uppercase text-slate-600">
                 Profissional *
@@ -1546,7 +1188,6 @@ export default function AgendaNova() {
               </Select>
             </div>
 
-            {/* DATA E HORÁRIO */}
             <div className="grid grid-cols-3 gap-2">
               <div className="space-y-1.5">
                 <Label className="text-xs font-bold uppercase text-slate-600">Data</Label>
@@ -1587,7 +1228,6 @@ export default function AgendaNova() {
               </div>
             </div>
 
-            {/* PACOTE */}
             {pacoteSugerido && (
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center gap-3">
                 <Package className="w-5 h-5 text-blue-600 shrink-0" />
@@ -1613,7 +1253,6 @@ export default function AgendaNova() {
               </div>
             )}
 
-            {/* OBSERVAÇÕES */}
             <div className="space-y-1.5">
               <Label className="text-xs font-bold uppercase text-slate-600">
                 Observações
@@ -1627,7 +1266,6 @@ export default function AgendaNova() {
               />
             </div>
 
-            {/* BOTÕES */}
             <div className="flex gap-2 pt-2">
               <Button
                 variant="outline"
@@ -1650,4 +1288,4 @@ export default function AgendaNova() {
       </Dialog>
     </div>
   );
-                }
+}
