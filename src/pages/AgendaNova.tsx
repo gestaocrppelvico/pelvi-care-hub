@@ -278,8 +278,8 @@ export default function AgendaNova() {
         start = startOfDay(currentDate);
         end = endOfDay(currentDate);
       } else if (view === "week") {
-        start = startOfWeek(currentDate, { weekStartsOn: 1 });
-        end = endOfWeek(currentDate, { weekStartsOn: 1 });
+        start = startOfWeek(currentDate, { weekStartsOn: 0 });
+        end = endOfWeek(currentDate, { weekStartsOn: 0 });
       } else {
         start = startOfMonth(currentDate);
         end = endOfMonth(currentDate);
@@ -779,8 +779,8 @@ export default function AgendaNova() {
           <div className="overflow-x-auto">
             <div className="grid grid-cols-7 min-w-[700px]">
               {eachDayOfInterval({
-                start: startOfWeek(currentDate, { weekStartsOn: 1 }),
-                end: endOfWeek(currentDate, { weekStartsOn: 1 }),
+                start: startOfWeek(currentDate, { weekStartsOn: 0 }),
+                end: endOfWeek(currentDate, { weekStartsOn: 0 }),
               }).map((dia) => {
                 const evtsDia = atendimentos.filter((a) =>
                   isSameDay(new Date(a.data_inicio), dia)
