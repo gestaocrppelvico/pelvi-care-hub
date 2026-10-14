@@ -291,11 +291,6 @@ function calcularDatasRecorrencia(
 
   return datas.slice(0, numeroSessoes);
 }
-
-// ==========================================================
-// COMPONENTE PRINCIPAL
-// ==========================================================
-export default function AgendaNova() {
 // ==========================================================
 // COMPONENTE PRINCIPAL
 // ==========================================================
