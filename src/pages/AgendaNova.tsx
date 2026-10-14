@@ -223,7 +223,79 @@ function BlocoEvento({
     </button>
   );
 }
+// ==========================================================
+// HELPER: calcular datas da recorrência
+// ==========================================================
+function calcularDatasRecorrencia(
+  dataBase: Date,
+  frequencia: "semanal" | "quinzenal" | "mensal",
+  diasSemana: number[],
+  numeroSessoes: number,
+  pularFinsDeSemana: boolean
+): Date[] {
+  const datas: Date[] = [];
+  const d = new Date(dataBase);
+  d.setHours(0, 0, 0, 0);
 
+  // Sempre inclui a data base como 1ª sessão
+  datas.push(new Date(d));
+
+  const diasOrdenados = [...diasSemana].sort();
+  let safety = 0;
+
+  if (frequencia === "semanal" && diasOrdenados.length === 1) {
+    // Caso simples: mesmo dia toda semana
+    while (datas.length < numeroSessoes && safety < 500) {
+      safety++;
+      const proxima = addWeeks(dataBase, safety);
+      if (pularFinsDeSemana && (proxima.getDay() === 0 || proxima.getDay() === 6)) continue;
+      datas.push(proxima);
+    }
+  } else if (frequencia === "quinzenal" && diasOrdenados.length === 1) {
+    while (datas.length < numeroSessoes && safety < 500) {
+      safety++;
+      const proxima = addDays(dataBase, safety * 14);
+      if (pularFinsDeSemana && (proxima.getDay() === 0 || proxima.getDay() === 6)) continue;
+      datas.push(proxima);
+    }
+  } else if (frequencia === "mensal" && diasOrdenados.length === 1) {
+    while (datas.length < numeroSessoes && safety < 500) {
+      safety++;
+      const proxima = addMonths(dataBase, safety);
+      if (pularFinsDeSemana && (proxima.getDay() === 0 || proxima.getDay() === 6)) continue;
+      datas.push(proxima);
+    }
+  } else {
+    // Múltiplos dias ou múltiplos dias com frequência: iterar dia a dia
+    let cursor = new Date(d);
+    let semanaAtual = 0;
+    while (datas.length < numeroSessoes && safety < 500) {
+      safety++;
+      cursor = addDays(cursor, 1);
+
+      if (!diasOrdenados.includes(cursor.getDay())) continue;
+      if (pularFinsDeSemana && (cursor.getDay() === 0 || cursor.getDay() === 6)) continue;
+
+      if (frequencia === "semanal") {
+        datas.push(new Date(cursor));
+      } else if (frequencia === "quinzenal") {
+        const diasDiff = Math.floor((cursor.getTime() - d.getTime()) / (1000 * 60 * 60 * 24));
+        const semana = Math.floor(diasDiff / 7);
+        if (semana % 2 === 0) datas.push(new Date(cursor));
+      } else if (frequencia === "mensal") {
+        // Só pega o mesmo dia do mês
+        if (cursor.getDate() === d.getDate()) datas.push(new Date(cursor));
+      }
+    }
+  }
+
+  return datas.slice(0, numeroSessoes);
+}
+
+// ==========================================================
+// COMPONENTE PRINCIPAL
+// ==========================================================
+export default function AgendaNova() {
 // ==========================================================
 // COMPONENTE PRINCIPAL
 // ==========================================================
@@ -288,6 +360,27 @@ export default function AgendaNova() {
   const [templates, setTemplates] = useState<CrmTemplate[]>([]);
   const [templateSelecionadoId, setTemplateSelecionadoId] = useState<string>("");
   const [mensagemPreview, setMensagemPreview] = useState("");
+    // 🔥 States da recorrência
+  const [modalRecorrenciaOpen, setModalRecorrenciaOpen] = useState(false);
+  const [recorrenciaBase, setRecorrenciaBase] = useState<{
+    paciente_id: string;
+    paciente_nome: string;
+    profissional_id: string;
+    data_inicio: Date;
+    hora_inicio: string;
+    hora_fim: string;
+    paciente_pacote_id: string;
+    sessoes_restantes: number;
+    observacoes: string;
+  } | null>(null);
+  const [formRecorrencia, setFormRecorrencia] = useState({
+    frequencia: "semanal" as "semanal" | "quinzenal" | "mensal",
+    numeroSessoes: 10,
+    diasSemana: [4] as number[], // 0=Dom..6=Sáb
+    pularFinsDeSemana: true,
+  });
+  const [previewDatas, setPreviewDatas] = useState<Date[]>([]);
+  const [criandoRecorrencia, setCriandoRecorrencia] = useState(false);
 
   useEffect(() => {
     const t = setInterval(() => setAgora(new Date()), 60 * 1000);
@@ -758,7 +851,69 @@ export default function AgendaNova() {
     toast.success("WhatsApp aberto!");
     setModalWhatsAppOpen(false);
   }
+  // ============ PREVIEW DA RECORRÊNCIA ============
+  useEffect(() => {
+    if (!recorrenciaBase) {
+      setPreviewDatas([]);
+      return;
+    }
+    const datas = calcularDatasRecorrencia(
+      recorrenciaBase.data_inicio,
+      formRecorrencia.frequencia,
+      formRecorrencia.diasSemana,
+      formRecorrencia.numeroSessoes,
+      formRecorrencia.pularFinsDeSemana
+    );
+    setPreviewDatas(datas);
+  }, [recorrenciaBase, formRecorrencia]);
 
+  // ============ CRIAR RECORRÊNCIA (bulk insert) ============
+  async function criarRecorrencia() {
+    if (!recorrenciaBase) return;
+    if (previewDatas.length === 0) {
+      toast.error("Nenhuma data válida para criar");
+      return;
+    }
+
+    setCriandoRecorrencia(true);
+    try {
+      const [hI, mI] = recorrenciaBase.hora_inicio.split(":").map(Number);
+      const [hF, mF] = recorrenciaBase.hora_fim.split(":").map(Number);
+
+      const atendimentosParaCriar = previewDatas.map((d) => {
+        const dtInicio = new Date(d);
+        dtInicio.setHours(hI, mI, 0, 0);
+        const dtFim = new Date(d);
+        dtFim.setHours(hF, mF, 0, 0);
+
+        return {
+          paciente_id: recorrenciaBase.paciente_id,
+          profissional_id: recorrenciaBase.profissional_id,
+          data_inicio: dtInicio.toISOString(),
+          data_fim: dtFim.toISOString(),
+          status: "agendado",
+          tipo: recorrenciaBase.paciente_pacote_id ? "Plano" : "Particular",
+          paciente_pacote_id: recorrenciaBase.paciente_pacote_id || null,
+          observacoes: recorrenciaBase.observacoes || null,
+        };
+      });
+
+      const { error } = await supabase.from("atendimentos").insert(atendimentosParaCriar);
+      if (error) throw error;
+
+      toast.success(`${atendimentosParaCriar.length} atendimentos criados!`);
+      setModalRecorrenciaOpen(false);
+      setRecorrenciaBase(null);
+      await carregar();
+    } catch (err: any) {
+      toast.error("Erro: " + err.message);
+    } finally {
+      setCriandoRecorrencia(false);
+    }
+  }
+
+  // ============ CRIAR ATENDIMENTO ============
+  const abrirCriar = (data?: Date, horaInicio?: string, profissionalId?: string) => {
   // ============ CRIAR ATENDIMENTO ============
   const abrirCriar = (data?: Date, horaInicio?: string, profissionalId?: string) => {
     const dia = data ? format(data, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
@@ -869,7 +1024,7 @@ export default function AgendaNova() {
 
       const tipo = pacData?.autorizacao_id ? "Plano" : "Particular";
 
-      const { error } = await supabase.from("atendimentos").insert({
+            const { error } = await supabase.from("atendimentos").insert({
         paciente_id: formCriar.paciente_id,
         profissional_id: formCriar.profissional_id,
         data_inicio: dataInicio.toISOString(),
@@ -884,6 +1039,39 @@ export default function AgendaNova() {
       toast.success("Atendimento criado!");
       setModalCriarOpen(false);
       await carregar();
+
+      // 🔥 Se tem pacote com mais sessões, oferece recorrência
+      if (formCriar.paciente_pacote_id) {
+        const { data: pacInfo } = await supabase
+          .from("paciente_pacotes")
+          .select("sessoes_restantes")
+          .eq("id", formCriar.paciente_pacote_id)
+          .maybeSingle();
+
+        const restantes = pacInfo?.sessoes_restantes ?? 0;
+
+        if (restantes > 1) {
+          const diaBase = new Date(`${formCriar.data}T${formCriar.hora_inicio}:00`);
+          setRecorrenciaBase({
+            paciente_id: formCriar.paciente_id,
+            paciente_nome: formCriar.paciente_nome,
+            profissional_id: formCriar.profissional_id,
+            data_inicio: diaBase,
+            hora_inicio: formCriar.hora_inicio,
+            hora_fim: formCriar.hora_fim,
+            paciente_pacote_id: formCriar.paciente_pacote_id,
+            sessoes_restantes: restantes,
+            observacoes: formCriar.observacoes.trim(),
+          });
+          setFormRecorrencia({
+            frequencia: "semanal",
+            numeroSessoes: restantes,
+            diasSemana: [diaBase.getDay()],
+            pularFinsDeSemana: true,
+          });
+          setModalRecorrenciaOpen(true);
+        }
+      }
     } catch (err: any) {
       toast.error("Erro: " + err.message);
     } finally {
@@ -1645,7 +1833,172 @@ export default function AgendaNova() {
           </div>
         </DialogContent>
       </Dialog>
+      {/* MODAL RECORRÊNCIA */}
+      <Dialog open={modalRecorrenciaOpen} onOpenChange={(open) => {
+        if (!open) {
+          setModalRecorrenciaOpen(false);
+          setRecorrenciaBase(null);
+        }
+      }}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              🔁 Criar Recorrência
+            </DialogTitle>
+          </DialogHeader>
 
+          {recorrenciaBase && (
+            <div className="space-y-4 pt-2">
+              <div className="text-xs bg-emerald-50 border border-emerald-200 rounded-lg p-3 space-y-1">
+                <div className="font-bold text-emerald-800">Atendimento criado com sucesso!</div>
+                <div><span className="font-medium">Paciente:</span> {recorrenciaBase.paciente_nome}</div>
+                <div><span className="font-medium">Horário base:</span> {format(recorrenciaBase.data_inicio, "EEEE, dd/MM", { locale: ptBR })} às {recorrenciaBase.hora_inicio}</div>
+                <div className="text-emerald-700 mt-1">
+                  📦 Este pacote tem <strong>{recorrenciaBase.sessoes_restantes}</strong> sessões restantes.
+                </div>
+              </div>
+
+              {/* Frequência */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold uppercase text-slate-600">Frequência</Label>
+                <Select
+                  value={formRecorrencia.frequencia}
+                  onValueChange={(v: any) => setFormRecorrencia({ ...formRecorrencia, frequencia: v })}
+                >
+                  <SelectTrigger className="h-10 text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="semanal">Semanal</SelectItem>
+                    <SelectItem value="quinzenal">Quinzenal</SelectItem>
+                    <SelectItem value="mensal">Mensal</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Dias da semana */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold uppercase text-slate-600">Dias da semana</Label>
+                <div className="flex gap-1 flex-wrap">
+                  {[
+                    { v: 0, label: "Dom" },
+                    { v: 1, label: "Seg" },
+                    { v: 2, label: "Ter" },
+                    { v: 3, label: "Qua" },
+                    { v: 4, label: "Qui" },
+                    { v: 5, label: "Sex" },
+                    { v: 6, label: "Sáb" },
+                  ].map((d) => {
+                    const ativo = formRecorrencia.diasSemana.includes(d.v);
+                    return (
+                      <button
+                        key={d.v}
+                        type="button"
+                        onClick={() => {
+                          const novosDias = ativo
+                            ? formRecorrencia.diasSemana.filter((x) => x !== d.v)
+                            : [...formRecorrencia.diasSemana, d.v].sort();
+                          if (novosDias.length === 0) return;
+                          setFormRecorrencia({ ...formRecorrencia, diasSemana: novosDias });
+                        }}
+                        className={`h-9 px-3 rounded-lg text-xs font-medium border-2 transition-all ${
+                          ativo
+                            ? "bg-blue-100 border-blue-400 text-blue-700"
+                            : "border-slate-200 text-slate-500 hover:border-slate-300"
+                        }`}
+                      >
+                        {d.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Nº de sessões */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold uppercase text-slate-600">
+                  Número de sessões
+                </Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={recorrenciaBase.sessoes_restantes}
+                  value={formRecorrencia.numeroSessoes}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value) || 1;
+                    setFormRecorrencia({ ...formRecorrencia, numeroSessoes: Math.min(v, recorrenciaBase.sessoes_restantes) });
+                  }}
+                  className="h-10 text-sm"
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Máximo: {recorrenciaBase.sessoes_restantes} (sessões restantes do pacote)
+                </p>
+              </div>
+
+              {/* Exceções */}
+              <div className="space-y-2">
+                <Label className="text-xs font-bold uppercase text-slate-600">Exceções</Label>
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={formRecorrencia.pularFinsDeSemana}
+                    onChange={(e) => setFormRecorrencia({ ...formRecorrencia, pularFinsDeSemana: e.target.checked })}
+                    className="accent-blue-600"
+                  />
+                  Pular sábados e domingos
+                </label>
+              </div>
+
+              {/* Preview */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold uppercase text-slate-600">
+                  Preview ({previewDatas.length} datas)
+                </Label>
+                <div className="bg-slate-50 border rounded-lg p-3 max-h-40 overflow-y-auto text-xs space-y-0.5">
+                  {previewDatas.length === 0 ? (
+                    <p className="text-muted-foreground italic">Nenhuma data será criada.</p>
+                  ) : (
+                    previewDatas.map((d, i) => (
+                      <div key={i} className="flex justify-between">
+                        <span className="text-slate-500">#{i + 1}</span>
+                        <span className="font-medium">
+                          {format(d, "EEE, dd/MM/yyyy", { locale: ptBR })}
+                        </span>
+                        <span className="text-slate-500">{recorrenciaBase.hora_inicio}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Botões */}
+              <div className="flex gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  className="flex-1 h-11"
+                  onClick={() => {
+                    setModalRecorrenciaOpen(false);
+                    setRecorrenciaBase(null);
+                  }}
+                  disabled={criandoRecorrencia}
+                >
+                  Não criar
+                </Button>
+                <Button
+                  className="flex-1 h-11 bg-emerald-600 hover:bg-emerald-700 font-bold"
+                  onClick={criarRecorrencia}
+                  disabled={criandoRecorrencia || previewDatas.length === 0}
+                >
+                  {criandoRecorrencia ? "Criando..." : `Criar ${previewDatas.length} sessões`}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL WHATSAPP */}
+      <Dialog open={modalWhatsAppOpen} onOpenChange={setModalWhatsAppOpen}>
       {/* MODAL WHATSAPP */}
       <Dialog open={modalWhatsAppOpen} onOpenChange={setModalWhatsAppOpen}>
         <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
