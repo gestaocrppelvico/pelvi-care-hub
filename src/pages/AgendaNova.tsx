@@ -43,11 +43,11 @@ interface Atendimento {
   paciente_id: string | null;
   paciente_pacote_id: string | null;
   observacoes: string | null;
+  tipo_alteracao: string | null;
   paciente: { id: string; nome: string; telefone: string | null; pronome_tratamento: string | null } | null;
   profissional: { id: string; nome: string; cor_agenda: string } | null;
   profissional_id: string | null;
 }
-
 interface Profissional {
   id: string;
   nome: string;
@@ -200,10 +200,16 @@ function BlocoEvento({
         borderLeft: `4px solid ${cor}`,
       }}
     >
-      <div className="text-[10px] font-bold text-slate-800 truncate leading-tight">
+            <div className="text-[10px] font-bold text-slate-800 truncate leading-tight">
+        {realizado && "✅ "}
         {format(data, "HH:mm")}
         {!compacto && ` · ${at.paciente?.nome || at.nome_paciente_livre || "—"}`}
       </div>
+      {realizado && !compacto && (
+        <div className="text-[9px] text-emerald-700 font-semibold truncate leading-tight">
+          Realizado
+        </div>
+      )}
       {compacto && (
         <div className="text-[9px] text-slate-700 truncate leading-tight mt-0.5">
           {at.paciente?.nome?.split(" ")[0] || at.nome_paciente_livre?.split(" ")[0] || "—"}
@@ -238,6 +244,15 @@ export default function AgendaNova() {
   const [meuProfId, setMeuProfId] = useState<string | null>(null);
   const [agora, setAgora] = useState(new Date());
   const [busy, setBusy] = useState(false);
+    // 🔥 States do modo edição
+  const [modoEdicao, setModoEdicao] = useState(false);
+  const [editForm, setEditForm] = useState({
+    data: "",
+    hora_inicio: "",
+    hora_fim: "",
+    profissional_id: "",
+    tipo_alteracao: "remarcacao",
+  });
 
   // 🔥 States do Sheet — vincular
   const [buscaPaciente, setBuscaPaciente] = useState("");
@@ -478,6 +493,87 @@ export default function AgendaNova() {
   };
 
   const [statusFormValue, setStatusFormValue] = useState("agendado");
+    // 🔥 Entrar em modo edição
+  function entrarModoEdicao() {
+    if (!selectedAtend) return;
+    const dtInicio = new Date(selectedAtend.data_inicio);
+    const dtFim = selectedAtend.data_fim ? new Date(selectedAtend.data_fim) : new Date(dtInicio.getTime() + DURACAO_PADRAO * 60 * 1000);
+
+    setEditForm({
+      data: format(dtInicio, "yyyy-MM-dd"),
+      hora_inicio: format(dtInicio, "HH:mm"),
+      hora_fim: format(dtFim, "HH:mm"),
+      profissional_id: selectedAtend.profissional_id || "",
+      tipo_alteracao: "remarcacao",
+    });
+    setModoEdicao(true);
+  }
+
+  // 🔥 Salvar edição
+  async function salvarEdicao() {
+    if (!selectedAtend) return;
+    if (!editForm.data || !editForm.hora_inicio || !editForm.hora_fim) {
+      toast.error("Preencha data e horário");
+      return;
+    }
+
+    const dtInicioOriginal = new Date(selectedAtend.data_inicio);
+    const dtFimOriginal = selectedAtend.data_fim ? new Date(selectedAtend.data_fim) : new Date(dtInicioOriginal.getTime() + DURACAO_PADRAO * 60 * 1000);
+
+    const novaData = new Date(`${editForm.data}T${editForm.hora_inicio}:00`);
+    const novaDataFim = new Date(`${editForm.data}T${editForm.hora_fim}:00`);
+
+    if (novaDataFim <= novaData) {
+      toast.error("O fim deve ser depois do início");
+      return;
+    }
+
+    const mudouDataHora = 
+      novaData.getTime() !== dtInicioOriginal.getTime() ||
+      novaDataFim.getTime() !== dtFimOriginal.getTime();
+
+    const mudouProfissional = editForm.profissional_id !== selectedAtend.profissional_id;
+
+    if (!mudouDataHora && !mudouProfissional) {
+      toast.info("Nada foi alterado.");
+      setModoEdicao(false);
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const updateData: any = {
+        data_inicio: novaData.toISOString(),
+        data_fim: novaDataFim.toISOString(),
+        profissional_id: editForm.profissional_id,
+      };
+
+      // 🔥 Se mudou data/hora, registra tipo de alteração
+      if (mudouDataHora) {
+        updateData.tipo_alteracao = editForm.tipo_alteracao;
+        
+        // Se for cancelamento, também muda o status
+        if (editForm.tipo_alteracao === "cancelamento") {
+          updateData.status = "cancelado";
+        }
+      }
+
+      const { error } = await supabase
+        .from("atendimentos")
+        .update(updateData)
+        .eq("id", selectedAtend.id);
+      if (error) throw error;
+
+      toast.success("Atendimento atualizado!");
+      setModoEdicao(false);
+      setSheetOpen(false);
+      await carregar();
+    } catch (err: any) {
+      toast.error("Erro: " + err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   // ============ SELECIONAR PACIENTE (Sheet) ============
   const selecionarPacienteSheet = async (p: { id: string; nome: string; telefone: string | null }) => {
@@ -1068,30 +1164,198 @@ export default function AgendaNova() {
 
           {selectedAtend && (
             <>
-              {/* Dados do evento */}
-              <div className="bg-slate-50 p-3 rounded-xl border space-y-1 text-xs">
-                {selectedAtend.paciente_id && selectedAtend.paciente?.nome ? (
-                  <a
-                    href={`/pacientes/${selectedAtend.paciente_id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-bold text-sm text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1.5"
-                  >
-                    {selectedAtend.paciente.nome}
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                ) : (
-                  <p className="font-bold text-sm text-slate-700">{selectedAtend.nome_paciente_livre || "Sem identificação"}</p>
-                )}
-                <p className="text-muted-foreground">
-                  <Clock className="w-3 h-3 inline mr-1" />
-                  {format(new Date(selectedAtend.data_inicio), "dd 'de' MMMM 'às' HH:mm", { locale: ptBR })}
-                </p>
-                <p className="text-muted-foreground uppercase font-semibold text-[10px] tracking-wide text-blue-600 mt-1">
-                  Profissional: {selectedAtend.profissional?.nome || "Não definido"}
-                </p>
-              </div>
+                            {/* Dados do evento — MODO VISUALIZAÇÃO */}
+              {!modoEdicao && (
+                <div className="bg-slate-50 p-3 rounded-xl border space-y-1 text-xs">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      {selectedAtend.paciente_id && selectedAtend.paciente?.nome ? (
+                        <a
+                          href={`/pacientes/${selectedAtend.paciente_id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-bold text-sm text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1.5"
+                        >
+                          {selectedAtend.paciente.nome}
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </a>
+                      ) : (
+                        <p className="font-bold text-sm text-slate-700">{selectedAtend.nome_paciente_livre || "Sem identificação"}</p>
+                      )}
+                      <p className="text-muted-foreground mt-1">
+                        <Clock className="w-3 h-3 inline mr-1" />
+                        {format(new Date(selectedAtend.data_inicio), "dd 'de' MMMM 'às' HH:mm", { locale: ptBR })}
+                      </p>
+                      <p className="text-muted-foreground uppercase font-semibold text-[10px] tracking-wide text-blue-600 mt-1">
+                        Profissional: {selectedAtend.profissional?.nome || "Não definido"}
+                      </p>
+                      {selectedAtend.tipo_alteracao && (
+                        <Badge variant="outline" className="text-[9px] mt-1">
+                          🔄 {selectedAtend.tipo_alteracao}
+                        </Badge>
+                      )}
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs border-blue-300 text-blue-700 hover:bg-blue-50 shrink-0"
+                      onClick={entrarModoEdicao}
+                    >
+                      ✏️ Editar
+                    </Button>
+                  </div>
+                </div>
+              )}
 
+              {/* Dados do evento — MODO EDIÇÃO */}
+              {modoEdicao && (
+                <div className="bg-blue-50/40 p-3 rounded-xl border border-blue-200 space-y-3">
+                  <div className="text-xs font-bold text-blue-700 uppercase tracking-wider flex items-center justify-between">
+                    <span>✏️ Editando atendimento</span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 w-6 p-0"
+                      onClick={() => setModoEdicao(false)}
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+
+                  {/* Paciente (read-only no modo edição) */}
+                  <div>
+                    <Label className="text-[10px] uppercase text-slate-500 font-bold">Paciente</Label>
+                    <div className="text-sm font-medium text-slate-800 mt-0.5">
+                      {selectedAtend.paciente?.nome || selectedAtend.nome_paciente_livre || "—"}
+                    </div>
+                    <p className="text-[10px] text-slate-500 italic mt-0.5">
+                      Para trocar o paciente, use a busca na seção abaixo.
+                    </p>
+                  </div>
+
+                  {/* Data */}
+                  <div>
+                    <Label className="text-[10px] uppercase text-slate-500 font-bold">Data</Label>
+                    <Input
+                      type="date"
+                      value={editForm.data}
+                      onChange={(e) => setEditForm({ ...editForm, data: e.target.value })}
+                      className="h-9 text-sm mt-1"
+                    />
+                  </div>
+
+                  {/* Horários */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label className="text-[10px] uppercase text-slate-500 font-bold">Início</Label>
+                      <Input
+                        type="time"
+                        value={editForm.hora_inicio}
+                        onChange={(e) => setEditForm({ ...editForm, hora_inicio: e.target.value })}
+                        className="h-9 text-sm mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-[10px] uppercase text-slate-500 font-bold">Fim</Label>
+                      <Input
+                        type="time"
+                        value={editForm.hora_fim}
+                        onChange={(e) => setEditForm({ ...editForm, hora_fim: e.target.value })}
+                        className="h-9 text-sm mt-1"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Profissional */}
+                  <div>
+                    <Label className="text-[10px] uppercase text-slate-500 font-bold">Profissional</Label>
+                    <Select value={editForm.profissional_id} onValueChange={(v) => setEditForm({ ...editForm, profissional_id: v })}>
+                      <SelectTrigger className="h-9 text-sm mt-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {profissionais.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            <div className="flex items-center gap-2">
+                              <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: p.cor_agenda || "#3b82f6" }} />
+                              <span>{p.nome}</span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Tipo de alteração (só se data ou hora mudou) */}
+                  {(() => {
+                    const dtInicioOriginal = new Date(selectedAtend.data_inicio);
+                    const dtFimOriginal = selectedAtend.data_fim ? new Date(selectedAtend.data_fim) : new Date(dtInicioOriginal.getTime() + DURACAO_PADRAO * 60 * 1000);
+                    const novaData = new Date(`${editForm.data}T${editForm.hora_inicio}:00`);
+                    const novaDataFim = new Date(`${editForm.data}T${editForm.hora_fim}:00`);
+                    const mudouDataHora = 
+                      novaData.getTime() !== dtInicioOriginal.getTime() ||
+                      novaDataFim.getTime() !== dtFimOriginal.getTime();
+
+                    if (!mudouDataHora) return null;
+
+                    return (
+                      <div className="bg-white border rounded-lg p-3 space-y-2">
+                        <Label className="text-[10px] uppercase text-slate-500 font-bold">
+                          Tipo de alteração *
+                        </Label>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setEditForm({ ...editForm, tipo_alteracao: "remarcacao" })}
+                            className={`flex-1 h-9 text-xs rounded-lg border-2 font-medium transition-all ${
+                              editForm.tipo_alteracao === "remarcacao"
+                                ? "border-amber-400 bg-amber-50 text-amber-700"
+                                : "border-slate-200 text-slate-500 hover:border-slate-300"
+                            }`}
+                          >
+                            🔄 Remarcação
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditForm({ ...editForm, tipo_alteracao: "cancelamento" })}
+                            className={`flex-1 h-9 text-xs rounded-lg border-2 font-medium transition-all ${
+                              editForm.tipo_alteracao === "cancelamento"
+                                ? "border-red-400 bg-red-50 text-red-700"
+                                : "border-slate-200 text-slate-500 hover:border-slate-300"
+                            }`}
+                          >
+                            ❌ Cancelamento
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-slate-500 italic">
+                          {editForm.tipo_alteracao === "cancelamento"
+                            ? "⚠️ O status será alterado para Cancelado."
+                            : "A data/hora será atualizada."}
+                        </p>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Botões */}
+                  <div className="flex gap-2 pt-1">
+                    <Button
+                      variant="outline"
+                      className="flex-1 h-10 text-xs"
+                      onClick={() => setModoEdicao(false)}
+                      disabled={busy}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button
+                      className="flex-1 h-10 text-xs bg-blue-600 hover:bg-blue-700 font-bold"
+                      onClick={salvarEdicao}
+                      disabled={busy}
+                    >
+                      {busy ? "Salvando..." : "Salvar Alterações"}
+                    </Button>
+                  </div>
+                </div>
+              )}
               {/* Status de vinculação */}
               <div className="flex flex-col gap-1.5 bg-slate-50 p-3 rounded-xl border text-xs">
                 <div className="flex items-center gap-2">
