@@ -1992,9 +1992,7 @@ export default function AgendaNova() {
         </DialogContent>
       </Dialog>
 
-      {/* MODAL WHATSAPP */}
-      <Dialog open={modalWhatsAppOpen} onOpenChange={setModalWhatsAppOpen}>
-      {/* MODAL WHATSAPP */}
+          {/* MODAL WHATSAPP */}
       <Dialog open={modalWhatsAppOpen} onOpenChange={setModalWhatsAppOpen}>
         <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
