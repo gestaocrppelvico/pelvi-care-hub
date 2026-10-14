@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import {
   format, addDays, addWeeks, addMonths,
   startOfDay, endOfDay, startOfWeek, endOfWeek,
@@ -18,10 +18,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ChevronLeft, ChevronRight, Calendar, Clock, User, Plus, Search, X, Package, UserPlus } from "lucide-react";
+import {
+  ChevronLeft, ChevronRight, Calendar, Clock, User, Plus, Search, X, Package, UserPlus,
+  MessageCircle, Send, FileText, ClipboardEdit, Eye, CheckCircle2, AlertCircle, Trash2, ExternalLink
+} from "lucide-react";
+import { aplicarTemplate, abrirWhatsapp, getPreferenciaWhatsApp } from "@/lib/crm";
 
 // ==========================================================
-// CONFIGURAÇÕES DA TIMELINE
+// CONFIGURAÇÕES
 // ==========================================================
 const HORA_INICIO = 7;
 const HORA_FIM = 21;
@@ -38,7 +42,8 @@ interface Atendimento {
   telefone_contato: string | null;
   paciente_id: string | null;
   paciente_pacote_id: string | null;
-  paciente: { nome: string; telefone: string | null } | null;
+  observacoes: string | null;
+  paciente: { id: string; nome: string; telefone: string | null; pronome_tratamento: string | null } | null;
   profissional: { id: string; nome: string; cor_agenda: string } | null;
   profissional_id: string | null;
 }
@@ -49,11 +54,18 @@ interface Profissional {
   cor_agenda: string | null;
 }
 
+interface CrmTemplate {
+  id: string;
+  tipo: string;
+  nome: string;
+  conteudo: string;
+}
+
 type ViewMode = "day" | "week" | "month" | "profissionais";
 type ModoDia = "unica" | "porProfissional";
 
 // ==========================================================
-// ALGORITMO: layout de eventos paralelos
+// ALGORITMO DE LAYOUT PARALELO
 // ==========================================================
 interface EventoPosicionado {
   at: Atendimento;
@@ -178,14 +190,14 @@ function BlocoEvento({
       onClick={onClick}
       className={`absolute rounded-md px-1.5 py-1 text-left cursor-pointer hover:shadow-lg hover:z-20 transition-all overflow-hidden ${
         cancelado ? "opacity-50 line-through" : ""
-      } ${faltou ? "opacity-60" : ""}`}
+      } ${faltou ? "opacity-60" : ""} ${realizado ? "opacity-80" : ""}`}
       style={{
         top: `${top}px`,
         height: `${Math.max(height - 3, 20)}px`,
         left: `calc(${leftPercent}% + 2px)`,
         width: `calc(${widthPercent}% - 4px)`,
-        backgroundColor: realizado ? "#d1fae5" : cor + "22",
-        borderLeft: `4px solid ${realizado ? "#10b981" : cor}`,
+        backgroundColor: realizado ? cor + "35" : cor + "22",
+        borderLeft: `4px solid ${cor}`,
       }}
     >
       <div className="text-[10px] font-bold text-slate-800 truncate leading-tight">
@@ -212,6 +224,7 @@ function BlocoEvento({
 export default function AgendaNova() {
   const { user, isAdmin, isSecretaria } = useAuth();
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const profFiltroUrl = searchParams.get("profissional");
 
   const [view, setView] = useState<ViewMode>("day");
@@ -224,8 +237,18 @@ export default function AgendaNova() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [meuProfId, setMeuProfId] = useState<string | null>(null);
   const [agora, setAgora] = useState(new Date());
+  const [busy, setBusy] = useState(false);
 
-  // Estados do modal de criação
+  // 🔥 States do Sheet — vincular
+  const [buscaPaciente, setBuscaPaciente] = useState("");
+  const [sugestoesPacientes, setSugestoesPacientes] = useState<{ id: string; nome: string; telefone: string | null }[]>([]);
+  const [pacienteSelecionado, setPacienteSelecionado] = useState<{ id: string; nome: string; telefone: string | null } | null>(null);
+  const [itensPaciente, setItensPaciente] = useState<any[]>([]);
+  const [itemSelecionadoId, setItemSelecionadoId] = useState<string | null>(null);
+  const [temProntuario, setTemProntuario] = useState(false);
+  const [prontuarioId, setProntuarioId] = useState<string | null>(null);
+
+  // 🔥 States do modal de criação
   const [modalCriarOpen, setModalCriarOpen] = useState(false);
   const [criando, setCriando] = useState(false);
   const [formCriar, setFormCriar] = useState({
@@ -238,12 +261,18 @@ export default function AgendaNova() {
     paciente_pacote_id: "",
     observacoes: "",
   });
-  const [buscaPaciente, setBuscaPaciente] = useState("");
-  const [sugestoesPacientes, setSugestoesPacientes] = useState<{ id: string; nome: string; telefone: string | null }[]>([]);
+  const [buscaPacienteCriar, setBuscaPacienteCriar] = useState("");
+  const [sugestoesPacientesCriar, setSugestoesPacientesCriar] = useState<{ id: string; nome: string; telefone: string | null }[]>([]);
   const [pacoteSugerido, setPacoteSugerido] = useState<{ id: string; label: string } | null>(null);
   const [criandoPaciente, setCriandoPaciente] = useState(false);
   const [novoPacienteNome, setNovoPacienteNome] = useState("");
   const [novoPacienteTelefone, setNovoPacienteTelefone] = useState("");
+
+  // 🔥 States do WhatsApp
+  const [modalWhatsAppOpen, setModalWhatsAppOpen] = useState(false);
+  const [templates, setTemplates] = useState<CrmTemplate[]>([]);
+  const [templateSelecionadoId, setTemplateSelecionadoId] = useState<string>("");
+  const [mensagemPreview, setMensagemPreview] = useState("");
 
   useEffect(() => {
     const t = setInterval(() => setAgora(new Date()), 60 * 1000);
@@ -269,6 +298,16 @@ export default function AgendaNova() {
       .then(({ data }) => setMeuProfId(data?.id ?? null));
   }, [user]);
 
+  // Carrega templates do CRM
+  useEffect(() => {
+    supabase
+      .from("crm_templates")
+      .select("id, tipo, nome, conteudo")
+      .eq("ativo", true)
+      .order("tipo")
+      .then(({ data }) => setTemplates((data as any) || []));
+  }, []);
+
   const carregar = useCallback(async () => {
     setLoading(true);
     try {
@@ -288,10 +327,10 @@ export default function AgendaNova() {
       let query = supabase
         .from("atendimentos")
         .select(`
-          id, data_inicio, data_fim, status, tipo,
+          id, data_inicio, data_fim, status, tipo, observacoes,
           nome_paciente_livre, telefone_contato,
           paciente_id, paciente_pacote_id, profissional_id,
-          paciente:pacientes(nome, telefone),
+          paciente:pacientes(id, nome, telefone, pronome_tratamento),
           profissional:profissionais(id, nome, cor_agenda)
         `)
         .gte("data_inicio", start.toISOString())
@@ -329,43 +368,19 @@ export default function AgendaNova() {
     else setCurrentDate((d) => addMonths(d, 1));
   };
 
-  const abrirDetalhes = (at: Atendimento) => {
-    setSelectedAtend(at);
-    setSheetOpen(true);
-  };
+  const atendimentosDoDia = atendimentos.filter((a) =>
+    isSameDay(new Date(a.data_inicio), currentDate)
+  );
 
-  const abrirCriar = (data?: Date, horaInicio?: string, profissionalId?: string) => {
-    const dia = data ? format(data, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
-    const hora = horaInicio || "14:00";
+  const profissionaisVisiveis = profissionais.filter((p) => {
+    if (isAdmin || isSecretaria) {
+      if (profFiltroUrl) return p.id === profFiltroUrl;
+      return true;
+    }
+    return p.id === meuProfId;
+  });
 
-    const [h, m] = hora.split(":").map(Number);
-    const fim = new Date();
-    fim.setHours(h, m + DURACAO_PADRAO, 0, 0);
-    const horaFim = format(fim, "HH:mm");
-
-    const profId = profissionalId || meuProfId || (isAdmin || isSecretaria
-      ? profissionais[0]?.id || ""
-      : meuProfId || "");
-
-    setFormCriar({
-      paciente_id: "",
-      paciente_nome: "",
-      profissional_id: profId,
-      data: dia,
-      hora_inicio: hora,
-      hora_fim: horaFim,
-      paciente_pacote_id: "",
-      observacoes: "",
-    });
-    setBuscaPaciente("");
-    setSugestoesPacientes([]);
-    setPacoteSugerido(null);
-    setCriandoPaciente(false);
-    setNovoPacienteNome("");
-    setNovoPacienteTelefone("");
-    setModalCriarOpen(true);
-  };
-
+  // ============ BUSCA PACIENTES (Sheet) ============
   useEffect(() => {
     if (buscaPaciente.trim().length < 2) {
       setSugestoesPacientes([]);
@@ -383,14 +398,306 @@ export default function AgendaNova() {
     return () => clearTimeout(t);
   }, [buscaPaciente]);
 
-  async function selecionarPaciente(p: { id: string; nome: string; telefone: string | null }) {
-    setFormCriar((prev) => ({
-      ...prev,
-      paciente_id: p.id,
-      paciente_nome: p.nome,
-    }));
+  // ============ BUSCA PACIENTES (Criar) ============
+  useEffect(() => {
+    if (buscaPacienteCriar.trim().length < 2) {
+      setSugestoesPacientesCriar([]);
+      return;
+    }
+    const t = setTimeout(async () => {
+      const { data } = await supabase
+        .from("pacientes")
+        .select("id, nome, telefone")
+        .ilike("nome", `%${buscaPacienteCriar.trim()}%`)
+        .eq("ativo", true)
+        .limit(6);
+      setSugestoesPacientesCriar(data || []);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [buscaPacienteCriar]);
+
+  // ============ CARREGAR ITENS DO PACIENTE ============
+  async function carregarItensPaciente(pacienteId: string, itemPreSelecionado?: string | null) {
+    const { data } = await supabase
+      .from("paciente_pacotes")
+      .select(`
+        id, sessoes_restantes, sessoes_totais,
+        autorizacao:autorizacoes(plano, numero_guia),
+        pacote:pacotes(nome),
+        servico:servicos(nome)
+      `)
+      .eq("paciente_id", pacienteId)
+      .gt("sessoes_restantes", 0)
+      .order("created_at", { ascending: false });
+
+    setItensPaciente(data || []);
+
+    if (data && data.length > 0) {
+      if (itemPreSelecionado && data.some((i) => i.id === itemPreSelecionado)) {
+        setItemSelecionadoId(itemPreSelecionado);
+      } else {
+        setItemSelecionadoId(data[0].id);
+      }
+    } else {
+      setItemSelecionadoId(null);
+    }
+  }
+
+  // ============ ABRIR DETALHES ============
+  const abrirDetalhes = async (at: Atendimento) => {
+    setSelectedAtend(at);
+    setStatusFormValue(at.status);
+    setPacienteSelecionado(null);
+    setItensPaciente([]);
+    setItemSelecionadoId(null);
+    setBuscaPaciente("");
+    setTemProntuario(false);
+    setProntuarioId(null);
+    setSheetOpen(true);
+
+    if (at.paciente_id) {
+      const { data } = await supabase
+        .from("pacientes")
+        .select("id, nome, telefone")
+        .eq("id", at.paciente_id)
+        .maybeSingle();
+      if (data) {
+        setPacienteSelecionado(data);
+        await carregarItensPaciente(data.id, at.paciente_pacote_id);
+        const { data: prData } = await supabase
+          .from("prontuarios")
+          .select("id")
+          .eq("paciente_id", data.id)
+          .limit(1);
+        if (prData && prData.length > 0) {
+          setTemProntuario(true);
+          setProntuarioId(prData[0].id);
+        }
+      }
+    }
+  };
+
+  const [statusFormValue, setStatusFormValue] = useState("agendado");
+
+  // ============ SELECIONAR PACIENTE (Sheet) ============
+  const selecionarPacienteSheet = async (p: { id: string; nome: string; telefone: string | null }) => {
+    setPacienteSelecionado(p);
     setBuscaPaciente("");
     setSugestoesPacientes([]);
+    await carregarItensPaciente(p.id);
+  };
+
+  // ============ VINCULAR (Sheet) ============
+  async function handleSalvarVinculacao() {
+    if (!selectedAtend || !pacienteSelecionado) {
+      toast.error("Paciente não selecionado.");
+      return;
+    }
+    if (itensPaciente.length > 0 && !itemSelecionadoId) {
+      toast.error("Selecione um pacote/serviço para consumir.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const updateData: any = { paciente_id: pacienteSelecionado.id };
+      if (itemSelecionadoId) updateData.paciente_pacote_id = itemSelecionadoId;
+
+      const { error } = await supabase
+        .from("atendimentos")
+        .update(updateData)
+        .eq("id", selectedAtend.id);
+      if (error) throw error;
+
+      // Atualiza o estado local SEM FECHAR o Sheet
+      const atualizado = {
+        ...selectedAtend,
+        paciente_id: pacienteSelecionado.id,
+        paciente_pacote_id: itemSelecionadoId || null,
+        paciente: {
+          id: pacienteSelecionado.id,
+          nome: pacienteSelecionado.nome,
+          telefone: pacienteSelecionado.telefone,
+          pronome_tratamento: null,
+        },
+      };
+      setSelectedAtend(atualizado);
+      toast.success("Vinculado! Pronto para check-in.");
+      await carregar();
+    } catch (err: any) {
+      toast.error("Erro: " + err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ============ CHECK-IN RÁPIDO ============
+  async function handleCheckinRapido() {
+    if (!selectedAtend) return;
+    if (!selectedAtend.paciente_id || !selectedAtend.paciente_pacote_id) {
+      toast.error("Vincule paciente e pacote primeiro.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { error } = await supabase
+        .from("atendimentos")
+        .update({ status: "realizado" })
+        .eq("id", selectedAtend.id);
+      if (error) throw error;
+      toast.success("Check-in realizado! Sessão consumida e repasse gerado.");
+      setSheetOpen(false);
+      await carregar();
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ============ MUDAR STATUS (select) ============
+  async function handleSalvarStatus() {
+    if (!selectedAtend) return;
+    if (statusFormValue === "realizado" && (!selectedAtend.paciente_id || !selectedAtend.paciente_pacote_id)) {
+      toast.error("Vincule o paciente e o pacote antes de realizar.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { error } = await supabase
+        .from("atendimentos")
+        .update({ status: statusFormValue })
+        .eq("id", selectedAtend.id);
+      if (error) throw error;
+      toast.success("Status atualizado!");
+      setSheetOpen(false);
+      await carregar();
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ============ APAGAR ============
+  async function handleApagarAtendimento() {
+    if (!selectedAtend || !isAdmin) return;
+    const nome = selectedAtend.paciente?.nome || selectedAtend.nome_paciente_livre || "Sem nome";
+    if (!confirm(`Apagar o atendimento de ${nome}?\n\nEsta ação não pode ser desfeita.`)) return;
+    try {
+      const { error } = await supabase.from("atendimentos").delete().eq("id", selectedAtend.id);
+      if (error) throw error;
+      toast.success("Atendimento apagado!");
+      setSheetOpen(false);
+      await carregar();
+    } catch (err: any) {
+      toast.error("Erro: " + err.message);
+    }
+  }
+
+  // ============ ABRIR MODAL WHATSAPP ============
+  function abrirModalWhatsApp() {
+    if (!selectedAtend) return;
+    if (templates.length === 0) {
+      toast.error("Nenhum template de mensagem cadastrado no CRM.");
+      return;
+    }
+    setTemplateSelecionadoId(templates[0].id);
+    setModalWhatsAppOpen(true);
+  }
+
+  // ============ PREVIEW MENSAGEM ============
+  useEffect(() => {
+    if (!templateSelecionadoId || !selectedAtend) {
+      setMensagemPreview("");
+      return;
+    }
+    const tpl = templates.find((t) => t.id === templateSelecionadoId);
+    if (!tpl) return;
+
+    const nomeCompleto = selectedAtend.paciente?.nome || selectedAtend.nome_paciente_livre || "";
+    const msg = aplicarTemplate(tpl.conteudo, {
+      paciente: nomeCompleto.split(" ")[0] || "",
+      paciente_pronome: selectedAtend.paciente?.pronome_tratamento || "",
+      data: format(new Date(selectedAtend.data_inicio), "dd/MM/yyyy", { locale: ptBR }),
+      hora: format(new Date(selectedAtend.data_inicio), "HH:mm"),
+      profissional: selectedAtend.profissional?.nome || "",
+    });
+    setMensagemPreview(msg);
+  }, [templateSelecionadoId, selectedAtend, templates]);
+
+  // ============ ENVIAR WHATSAPP ============
+  async function enviarWhatsApp() {
+    if (!selectedAtend || !templateSelecionadoId) return;
+
+    const telefone =
+      selectedAtend.paciente?.telefone ||
+      selectedAtend.telefone_contato ||
+      null;
+
+    if (!telefone) {
+      toast.error("Paciente sem telefone cadastrado.");
+      return;
+    }
+
+    const tpl = templates.find((t) => t.id === templateSelecionadoId);
+    if (!tpl) return;
+
+    const preferencia = getPreferenciaWhatsApp();
+    const ok = abrirWhatsapp(telefone, mensagemPreview, preferencia);
+    if (!ok) {
+      toast.error("Erro ao abrir WhatsApp.");
+      return;
+    }
+
+    // Registrar no histórico do CRM
+    if (selectedAtend.paciente_id) {
+      await supabase.from("crm_envios").insert({
+        paciente_id: selectedAtend.paciente_id,
+        tipo: tpl.tipo,
+        mensagem: mensagemPreview,
+      });
+    }
+
+    toast.success("WhatsApp aberto!");
+    setModalWhatsAppOpen(false);
+  }
+
+  // ============ CRIAR ATENDIMENTO ============
+  const abrirCriar = (data?: Date, horaInicio?: string, profissionalId?: string) => {
+    const dia = data ? format(data, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
+    const hora = horaInicio || "14:00";
+
+    const [h, m] = hora.split(":").map(Number);
+    const fim = new Date();
+    fim.setHours(h, m + DURACAO_PADRAO, 0, 0);
+    const horaFim = format(fim, "HH:mm");
+
+    const profId = profissionalId || meuProfId || (isAdmin || isSecretaria ? profissionais[0]?.id || "" : meuProfId || "");
+
+    setFormCriar({
+      paciente_id: "",
+      paciente_nome: "",
+      profissional_id: profId,
+      data: dia,
+      hora_inicio: hora,
+      hora_fim: horaFim,
+      paciente_pacote_id: "",
+      observacoes: "",
+    });
+    setBuscaPacienteCriar("");
+    setSugestoesPacientesCriar([]);
+    setPacoteSugerido(null);
+    setCriandoPaciente(false);
+    setNovoPacienteNome("");
+    setNovoPacienteTelefone("");
+    setModalCriarOpen(true);
+  };
+
+  async function selecionarPacienteCriar(p: { id: string; nome: string; telefone: string | null }) {
+    setFormCriar((prev) => ({ ...prev, paciente_id: p.id, paciente_nome: p.nome }));
+    setBuscaPacienteCriar("");
+    setSugestoesPacientesCriar([]);
 
     const { data: pacotes } = await supabase
       .from("paciente_pacotes")
@@ -410,10 +717,7 @@ export default function AgendaNova() {
       const nome = pac.autorizacao?.plano
         ? `Plano ${pac.autorizacao.plano}`
         : pac.pacote?.nome || pac.servico?.nome || "Item";
-      setPacoteSugerido({
-        id: pac.id,
-        label: `${nome} (${pac.sessoes_restantes} rest.)`,
-      });
+      setPacoteSugerido({ id: pac.id, label: `${nome} (${pac.sessoes_restantes} rest.)` });
       setFormCriar((prev) => ({ ...prev, paciente_pacote_id: pac.id }));
     } else {
       setPacoteSugerido(null);
@@ -422,7 +726,7 @@ export default function AgendaNova() {
 
   async function criarPacienteRapido() {
     if (!novoPacienteNome.trim()) {
-      toast.error("Informe o nome do paciente");
+      toast.error("Informe o nome");
       return;
     }
     setCriandoPaciente(true);
@@ -438,7 +742,7 @@ export default function AgendaNova() {
         .single();
       if (error) throw error;
       toast.success("Paciente criado!");
-      await selecionarPaciente(data);
+      await selecionarPacienteCriar(data);
       setCriandoPaciente(false);
       setNovoPacienteNome("");
       setNovoPacienteTelefone("");
@@ -449,36 +753,22 @@ export default function AgendaNova() {
   }
 
   async function salvarAtendimento() {
-    if (!formCriar.paciente_id) {
-      toast.error("Selecione o paciente");
-      return;
-    }
-    if (!formCriar.profissional_id) {
-      toast.error("Selecione o profissional");
-      return;
-    }
-    if (!formCriar.data || !formCriar.hora_inicio || !formCriar.hora_fim) {
-      toast.error("Preencha data e horário");
-      return;
-    }
+    if (!formCriar.paciente_id) return toast.error("Selecione o paciente");
+    if (!formCriar.profissional_id) return toast.error("Selecione o profissional");
+    if (!formCriar.data || !formCriar.hora_inicio || !formCriar.hora_fim) return toast.error("Preencha data e horário");
 
     setCriando(true);
     try {
       const dataInicio = new Date(`${formCriar.data}T${formCriar.hora_inicio}:00`);
       const dataFim = new Date(`${formCriar.data}T${formCriar.hora_fim}:00`);
-
       if (dataFim <= dataInicio) {
-        toast.error("O horário de fim deve ser depois do início");
+        toast.error("Fim deve ser depois do início");
         setCriando(false);
         return;
       }
 
       const { data: pacData } = formCriar.paciente_pacote_id
-        ? await supabase
-            .from("paciente_pacotes")
-            .select("autorizacao_id")
-            .eq("id", formCriar.paciente_pacote_id)
-            .maybeSingle()
+        ? await supabase.from("paciente_pacotes").select("autorizacao_id").eq("id", formCriar.paciente_pacote_id).maybeSingle()
         : { data: null };
 
       const tipo = pacData?.autorizacao_id ? "Plano" : "Particular";
@@ -493,7 +783,6 @@ export default function AgendaNova() {
         paciente_pacote_id: formCriar.paciente_pacote_id || null,
         observacoes: formCriar.observacoes.trim() || null,
       });
-
       if (error) throw error;
 
       toast.success("Atendimento criado!");
@@ -506,24 +795,17 @@ export default function AgendaNova() {
     }
   }
 
-  const atendimentosDoDia = atendimentos.filter((a) =>
-    isSameDay(new Date(a.data_inicio), currentDate)
-  );
+  // ============ HELPERS ============
+  const prontoParaCheckin =
+    !!selectedAtend?.paciente_id && !!selectedAtend?.paciente_pacote_id;
 
-  const profissionaisVisiveis = profissionais.filter((p) => {
-    if (isAdmin || isSecretaria) {
-      if (profFiltroUrl) return p.id === profFiltroUrl;
-      return true;
-    }
-    return p.id === meuProfId;
-  });
+  const podeEnviarWhats =
+    !!selectedAtend &&
+    selectedAtend.status === "agendado" &&
+    (selectedAtend.paciente?.telefone || selectedAtend.telefone_contato);
 
   if (loading && atendimentos.length === 0) {
-    return (
-      <div className="p-10 text-center text-muted-foreground animate-pulse">
-        Carregando agenda...
-      </div>
-    );
+    return <div className="p-10 text-center text-muted-foreground animate-pulse">Carregando agenda...</div>;
   }
 
   return (
@@ -534,9 +816,7 @@ export default function AgendaNova() {
           <Button variant="outline" size="icon" onClick={anterior}>
             <ChevronLeft className="w-4 h-4" />
           </Button>
-          <Button variant="outline" onClick={() => setCurrentDate(new Date())} className="text-xs font-semibold">
-            Hoje
-          </Button>
+          <Button variant="outline" onClick={() => setCurrentDate(new Date())} className="text-xs font-semibold">Hoje</Button>
           <Button variant="outline" size="icon" onClick={proximo}>
             <ChevronRight className="w-4 h-4" />
           </Button>
@@ -550,51 +830,24 @@ export default function AgendaNova() {
         <div className="flex gap-2 items-center self-stretch sm:self-auto">
           <div className="flex gap-1 bg-slate-100 p-1 rounded-lg">
             {(["day", "week", "month", "profissionais"] as const).map((v) => (
-              <Button
-                key={v}
-                variant={view === v ? "default" : "ghost"}
-                size="sm"
-                onClick={() => setView(v)}
-                className="text-xs capitalize font-semibold h-8"
-              >
+              <Button key={v} variant={view === v ? "default" : "ghost"} size="sm" onClick={() => setView(v)} className="text-xs capitalize font-semibold h-8">
                 {v === "day" ? "Dia" : v === "week" ? "Semana" : v === "month" ? "Mês" : "Profis."}
               </Button>
             ))}
           </div>
-
-          <Button
-            size="sm"
-            onClick={() => abrirCriar()}
-            className="bg-emerald-600 hover:bg-emerald-700 h-8 text-xs font-bold"
-          >
+          <Button size="sm" onClick={() => abrirCriar()} className="bg-emerald-600 hover:bg-emerald-700 h-8 text-xs font-bold">
             <Plus className="w-3.5 h-3.5 mr-1" /> Novo
           </Button>
         </div>
       </div>
 
-      {/* TOGGLE DO MODO DIA */}
+      {/* TOGGLE */}
       {view === "day" && (
         <div className="flex items-center gap-2 bg-white p-2 rounded-xl border shadow-sm">
           <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Modo:</span>
-          <Button
-            size="sm"
-            variant={modoDia === "unica" ? "default" : "ghost"}
-            onClick={() => setModoDia("unica")}
-            className="h-7 text-xs"
-          >
-            1 Coluna
-          </Button>
-          <Button
-            size="sm"
-            variant={modoDia === "porProfissional" ? "default" : "ghost"}
-            onClick={() => setModoDia("porProfissional")}
-            className="h-7 text-xs"
-          >
-            Por Profissional
-          </Button>
-          <Badge variant="outline" className="ml-auto text-[10px] h-6">
-            {atendimentosDoDia.length} atend.
-          </Badge>
+          <Button size="sm" variant={modoDia === "unica" ? "default" : "ghost"} onClick={() => setModoDia("unica")} className="h-7 text-xs">1 Coluna</Button>
+          <Button size="sm" variant={modoDia === "porProfissional" ? "default" : "ghost"} onClick={() => setModoDia("porProfissional")} className="h-7 text-xs">Por Profissional</Button>
+          <Badge variant="outline" className="ml-auto text-[10px] h-6">{atendimentosDoDia.length} atend.</Badge>
         </div>
       )}
 
@@ -602,16 +855,9 @@ export default function AgendaNova() {
       {view === "day" && modoDia === "unica" && (
         <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
           <div className="overflow-y-auto" style={{ maxHeight: "calc(100vh - 240px)" }}>
-            <div
-              className="relative"
-              style={{ height: `${(HORA_FIM - HORA_INICIO) * ALTURA_HORA + 40}px` }}
-            >
+            <div className="relative" style={{ height: `${(HORA_FIM - HORA_INICIO) * ALTURA_HORA + 40}px` }}>
               {Array.from({ length: HORA_FIM - HORA_INICIO + 1 }, (_, i) => (
-                <div
-                  key={i}
-                  className="absolute left-0 right-0 flex items-start pointer-events-none"
-                  style={{ top: `${i * ALTURA_HORA}px` }}
-                >
+                <div key={i} className="absolute left-0 right-0 flex items-start pointer-events-none" style={{ top: `${i * ALTURA_HORA}px` }}>
                   <div className="w-14 text-[10px] text-muted-foreground text-right pr-2 -mt-2 font-medium">
                     {String(HORA_INICIO + i).padStart(2, "0")}:00
                   </div>
@@ -638,32 +884,15 @@ export default function AgendaNova() {
                   </div>
                 ) : (
                   calcularLayout(atendimentosDoDia).map(({ at, top, height, leftPercent, widthPercent }) => (
-                    <BlocoEvento
-                      key={at.id}
-                      at={at}
-                      onClick={() => abrirDetalhes(at)}
-                      top={top}
-                      height={height}
-                      leftPercent={leftPercent}
-                      widthPercent={widthPercent}
-                    />
+                    <BlocoEvento key={at.id} at={at} onClick={() => abrirDetalhes(at)} top={top} height={height} leftPercent={leftPercent} widthPercent={widthPercent} />
                   ))
                 )}
 
-                {isToday(currentDate) &&
-                  agora.getHours() >= HORA_INICIO &&
-                  agora.getHours() <= HORA_FIM && (
-                    <div
-                      className="absolute left-0 right-0 border-t-2 border-red-500 z-10 pointer-events-none"
-                      style={{
-                        top: `${
-                          ((agora.getHours() - HORA_INICIO) * 60 + agora.getMinutes()) / 60 * ALTURA_HORA
-                        }px`,
-                      }}
-                    >
-                      <div className="absolute -left-1.5 -top-1.5 w-3 h-3 bg-red-500 rounded-full" />
-                    </div>
-                  )}
+                {isToday(currentDate) && agora.getHours() >= HORA_INICIO && agora.getHours() <= HORA_FIM && (
+                  <div className="absolute left-0 right-0 border-t-2 border-red-500 z-10 pointer-events-none" style={{ top: `${((agora.getHours() - HORA_INICIO) * 60 + agora.getMinutes()) / 60 * ALTURA_HORA}px` }}>
+                    <div className="absolute -left-1.5 -top-1.5 w-3 h-3 bg-red-500 rounded-full" />
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -677,16 +906,9 @@ export default function AgendaNova() {
             <div className="flex min-w-full">
               <div className="w-14 shrink-0 border-r bg-slate-50/50">
                 <div className="h-10 border-b" />
-                <div
-                  className="relative"
-                  style={{ height: `${(HORA_FIM - HORA_INICIO) * ALTURA_HORA}px` }}
-                >
+                <div className="relative" style={{ height: `${(HORA_FIM - HORA_INICIO) * ALTURA_HORA}px` }}>
                   {Array.from({ length: HORA_FIM - HORA_INICIO }, (_, i) => (
-                    <div
-                      key={i}
-                      className="absolute left-0 right-0 text-[10px] text-muted-foreground text-right pr-2 font-medium"
-                      style={{ top: `${i * ALTURA_HORA - 6}px` }}
-                    >
+                    <div key={i} className="absolute left-0 right-0 text-[10px] text-muted-foreground text-right pr-2 font-medium" style={{ top: `${i * ALTURA_HORA - 6}px` }}>
                       {String(HORA_INICIO + i).padStart(2, "0")}:00
                     </div>
                   ))}
@@ -698,24 +920,11 @@ export default function AgendaNova() {
                 const cor = prof.cor_agenda || "#3b82f6";
 
                 return (
-                  <div
-                    key={prof.id}
-                    className="flex-1 min-w-[180px] border-r last:border-r-0"
-                  >
-                    <div
-                      className="h-10 border-b flex items-center justify-center gap-1.5"
-                      style={{ backgroundColor: cor + "15" }}
-                    >
-                      <span
-                        className="w-2 h-2 rounded-full"
-                        style={{ backgroundColor: cor }}
-                      />
-                      <span className="text-xs font-bold" style={{ color: cor }}>
-                        {prof.nome.split(" ")[0]}
-                      </span>
-                      {eventosProf.length > 0 && (
-                        <span className="text-[9px] text-slate-500">({eventosProf.length})</span>
-                      )}
+                  <div key={prof.id} className="flex-1 min-w-[180px] border-r last:border-r-0">
+                    <div className="h-10 border-b flex items-center justify-center gap-1.5" style={{ backgroundColor: cor + "15" }}>
+                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: cor }} />
+                      <span className="text-xs font-bold" style={{ color: cor }}>{prof.nome.split(" ")[0]}</span>
+                      {eventosProf.length > 0 && <span className="text-[9px] text-slate-500">({eventosProf.length})</span>}
                     </div>
                     <div
                       className="relative cursor-pointer"
@@ -732,38 +941,16 @@ export default function AgendaNova() {
                       }}
                     >
                       {Array.from({ length: HORA_FIM - HORA_INICIO + 1 }, (_, i) => (
-                        <div
-                          key={i}
-                          className="absolute left-0 right-0 border-t border-slate-100 pointer-events-none"
-                          style={{ top: `${i * ALTURA_HORA}px` }}
-                        />
+                        <div key={i} className="absolute left-0 right-0 border-t border-slate-100 pointer-events-none" style={{ top: `${i * ALTURA_HORA}px` }} />
                       ))}
 
                       {calcularLayout(eventosProf).map(({ at, top, height, leftPercent, widthPercent }) => (
-                        <BlocoEvento
-                          key={at.id}
-                          at={at}
-                          onClick={() => abrirDetalhes(at)}
-                          top={top}
-                          height={height}
-                          leftPercent={leftPercent}
-                          widthPercent={widthPercent}
-                        />
+                        <BlocoEvento key={at.id} at={at} onClick={() => abrirDetalhes(at)} top={top} height={height} leftPercent={leftPercent} widthPercent={widthPercent} />
                       ))}
 
-                      {isToday(currentDate) &&
-                        agora.getHours() >= HORA_INICIO &&
-                        agora.getHours() <= HORA_FIM && (
-                          <div
-                            className="absolute left-0 right-0 border-t-2 border-red-500 z-10 pointer-events-none"
-                            style={{
-                              top: `${
-                                ((agora.getHours() - HORA_INICIO) * 60 + agora.getMinutes()) / 60 *
-                                ALTURA_HORA
-                              }px`,
-                            }}
-                          />
-                        )}
+                      {isToday(currentDate) && agora.getHours() >= HORA_INICIO && agora.getHours() <= HORA_FIM && (
+                        <div className="absolute left-0 right-0 border-t-2 border-red-500 z-10 pointer-events-none" style={{ top: `${((agora.getHours() - HORA_INICIO) * 60 + agora.getMinutes()) / 60 * ALTURA_HORA}px` }} />
+                      )}
                     </div>
                   </div>
                 );
@@ -778,27 +965,17 @@ export default function AgendaNova() {
         <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
             <div className="grid grid-cols-7 min-w-[700px]">
-             {eachDayOfInterval({
-  start: startOfWeek(startOfMonth(currentDate), { weekStartsOn: 0 }),
-  end: endOfWeek(endOfMonth(currentDate), { weekStartsOn: 0 }),
-}).map((dia, i) => {                const evtsDia = atendimentos.filter((a) =>
-                  isSameDay(new Date(a.data_inicio), dia)
-                );
+              {eachDayOfInterval({
+                start: startOfWeek(currentDate, { weekStartsOn: 0 }),
+                end: endOfWeek(currentDate, { weekStartsOn: 0 }),
+              }).map((dia) => {
+                const evtsDia = atendimentos.filter((a) => isSameDay(new Date(a.data_inicio), dia));
                 const destacado = isToday(dia);
-
                 return (
                   <div key={dia.toISOString()} className="border-r last:border-r-0">
-                    <div
-                      className={`h-12 border-b p-2 text-center ${
-                        destacado ? "bg-red-50" : "bg-slate-50"
-                      }`}
-                    >
-                      <div className="text-[10px] uppercase text-muted-foreground font-semibold">
-                        {format(dia, "EEE", { locale: ptBR })}
-                      </div>
-                      <div className={`text-sm font-bold ${destacado ? "text-red-600" : "text-slate-700"}`}>
-                        {format(dia, "dd")}
-                      </div>
+                    <div className={`h-12 border-b p-2 text-center ${destacado ? "bg-red-50" : "bg-slate-50"}`}>
+                      <div className="text-[10px] uppercase text-muted-foreground font-semibold">{format(dia, "EEE", { locale: ptBR })}</div>
+                      <div className={`text-sm font-bold ${destacado ? "text-red-600" : "text-slate-700"}`}>{format(dia, "dd")}</div>
                     </div>
                     <div className="p-1.5 space-y-1 min-h-[400px] bg-white">
                       {evtsDia.length === 0 ? (
@@ -807,23 +984,9 @@ export default function AgendaNova() {
                         evtsDia.map((at) => {
                           const cor = at.profissional?.cor_agenda || "#3b82f6";
                           return (
-                            <button
-                              key={at.id}
-                              onClick={() => abrirDetalhes(at)}
-                              className="w-full text-left rounded px-1.5 py-1 hover:shadow-sm transition-all truncate"
-                              style={{
-                                backgroundColor: cor + "20",
-                                borderLeft: `3px solid ${cor}`,
-                              }}
-                            >
-                              <div className="text-[10px] font-bold text-slate-800 truncate">
-                                {format(new Date(at.data_inicio), "HH:mm")}
-                              </div>
-                              <div className="text-[10px] text-slate-600 truncate">
-                                {at.paciente?.nome?.split(" ")[0] ||
-                                  at.nome_paciente_livre?.split(" ")[0] ||
-                                  "—"}
-                              </div>
+                            <button key={at.id} onClick={() => abrirDetalhes(at)} className="w-full text-left rounded px-1.5 py-1 hover:shadow-sm transition-all truncate" style={{ backgroundColor: cor + "20", borderLeft: `3px solid ${cor}` }}>
+                              <div className="text-[10px] font-bold text-slate-800 truncate">{format(new Date(at.data_inicio), "HH:mm")}</div>
+                              <div className="text-[10px] text-slate-600 truncate">{at.paciente?.nome?.split(" ")[0] || at.nome_paciente_livre?.split(" ")[0] || "—"}</div>
                             </button>
                           );
                         })
@@ -837,94 +1000,54 @@ export default function AgendaNova() {
         </div>
       )}
 
-     {/* VISÃO MÊS */}
-{view === "month" && (
-  <div className="bg-white rounded-xl border p-3 shadow-sm">
-    <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 pb-2 border-b">
-      {["D", "S", "T", "Q", "Q", "S", "S"].map((d, i) => (
-        <div key={i}>{d}</div>
-      ))}
-    </div>
-    <div className="grid grid-cols-7 gap-1.5">
-      {eachDayOfInterval({
-        start: startOfWeek(startOfMonth(currentDate), { weekStartsOn: 0 }),
-        end: endOfWeek(endOfMonth(currentDate), { weekStartsOn: 0 }),
-      }).map((dia, i) => {
-        const evts = atendimentos.filter((a) =>
-          isSameDay(new Date(a.data_inicio), dia)
-        );
-        const destacado = isToday(dia);
-        const mesmoMes = isSameMonth(dia, currentDate);
+      {/* VISÃO MÊS */}
+      {view === "month" && (
+        <div className="bg-white rounded-xl border p-3 shadow-sm">
+          <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 pb-2 border-b">
+            {["D", "S", "T", "Q", "Q", "S", "S"].map((d, i) => (<div key={i}>{d}</div>))}
+          </div>
+          <div className="grid grid-cols-7 gap-1.5">
+            {eachDayOfInterval({
+              start: startOfWeek(startOfMonth(currentDate), { weekStartsOn: 0 }),
+              end: endOfWeek(endOfMonth(currentDate), { weekStartsOn: 0 }),
+            }).map((dia, i) => {
+              const evts = atendimentos.filter((a) => isSameDay(new Date(a.data_inicio), dia));
+              const destacado = isToday(dia);
+              const mesmoMes = isSameMonth(dia, currentDate);
+              return (
+                <button key={i} onClick={() => { setCurrentDate(dia); setView("day"); }} className={`min-h-[80px] p-1.5 rounded-lg border text-left hover:bg-blue-50 transition-all ${!mesmoMes ? "opacity-30" : ""} ${destacado ? "ring-2 ring-red-300 bg-red-50/50" : "bg-slate-50/30"}`}>
+                  <div className={`text-xs font-bold ${destacado ? "text-red-600" : "text-slate-600"}`}>{format(dia, "d")}</div>
+                  {evts.length > 0 && mesmoMes && (<div className="text-[10px] font-bold text-blue-600 mt-1">{evts.length} atend.</div>)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
-        return (
-          <button
-            key={i}
-            onClick={() => {
-              setCurrentDate(dia);
-              setView("day");
-            }}
-            className={`min-h-[80px] p-1.5 rounded-lg border text-left hover:bg-blue-50 transition-all ${
-              !mesmoMes ? "opacity-30" : ""
-            } ${destacado ? "ring-2 ring-red-300 bg-red-50/50" : "bg-slate-50/30"}`}
-          >
-            <div className={`text-xs font-bold ${destacado ? "text-red-600" : "text-slate-600"}`}>
-              {format(dia, "d")}
-            </div>
-            {evts.length > 0 && mesmoMes && (
-              <div className="text-[10px] font-bold text-blue-600 mt-1">
-                {evts.length} atend.
-              </div>
-            )}
-          </button>
-        );
-      })}
-    </div>
-  </div>
-)}
       {/* VISÃO PROFISSIONAIS */}
       {view === "profissionais" && (
         <div className="space-y-3">
           {profissionaisVisiveis.map((prof) => {
             const cor = prof.cor_agenda || "#3b82f6";
             const evtsProf = atendimentosDoDia.filter((a) => a.profissional_id === prof.id);
-
             return (
               <div key={prof.id} className="bg-white rounded-xl border shadow-sm overflow-hidden">
-                <div
-                  className="px-3 py-2 border-b flex items-center gap-2"
-                  style={{ backgroundColor: cor + "15" }}
-                >
+                <div className="px-3 py-2 border-b flex items-center gap-2" style={{ backgroundColor: cor + "15" }}>
                   <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: cor }} />
-                  <span className="font-bold text-sm" style={{ color: cor }}>
-                    {prof.nome}
-                  </span>
-                  <Badge variant="outline" className="ml-auto text-[10px] h-5">
-                    {evtsProf.length} atend.
-                  </Badge>
+                  <span className="font-bold text-sm" style={{ color: cor }}>{prof.nome}</span>
+                  <Badge variant="outline" className="ml-auto text-[10px] h-5">{evtsProf.length} atend.</Badge>
                 </div>
                 <div className="p-3">
                   {evtsProf.length === 0 ? (
-                    <p className="text-xs text-muted-foreground italic text-center py-3">
-                      Sem atendimentos neste dia.
-                    </p>
+                    <p className="text-xs text-muted-foreground italic text-center py-3">Sem atendimentos neste dia.</p>
                   ) : (
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                       {evtsProf.map((at) => (
-                        <button
-                          key={at.id}
-                          onClick={() => abrirDetalhes(at)}
-                          className="text-left p-2 rounded-lg border hover:shadow-md transition-all"
-                          style={{ borderLeft: `3px solid ${cor}` }}
-                        >
-                          <div className="text-[11px] font-bold text-slate-800">
-                            {format(new Date(at.data_inicio), "HH:mm")}
-                          </div>
-                          <div className="text-[11px] text-slate-600 truncate">
-                            {at.paciente?.nome || at.nome_paciente_livre || "—"}
-                          </div>
-                          <div className="text-[9px] text-muted-foreground mt-0.5 uppercase">
-                            {at.status}
-                          </div>
+                        <button key={at.id} onClick={() => abrirDetalhes(at)} className="text-left p-2 rounded-lg border hover:shadow-md transition-all" style={{ borderLeft: `3px solid ${cor}` }}>
+                          <div className="text-[11px] font-bold text-slate-800">{format(new Date(at.data_inicio), "HH:mm")}</div>
+                          <div className="text-[11px] text-slate-600 truncate">{at.paciente?.nome || at.nome_paciente_livre || "—"}</div>
+                          <div className="text-[9px] text-muted-foreground mt-0.5 uppercase">{at.status}</div>
                         </button>
                       ))}
                     </div>
@@ -940,105 +1063,201 @@ export default function AgendaNova() {
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
         <SheetContent side="right" className="w-full sm:max-w-md p-5 space-y-4 overflow-y-auto">
           <SheetHeader>
-            <SheetTitle className="text-lg font-bold text-slate-800">
-              Detalhes do Atendimento
-            </SheetTitle>
+            <SheetTitle className="text-lg font-bold text-slate-800">Gerenciar Atendimento</SheetTitle>
           </SheetHeader>
 
           {selectedAtend && (
             <>
-              <div className="bg-slate-50 p-3 rounded-xl border space-y-2">
-                <div className="flex items-start gap-2">
-                  <User className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[10px] uppercase text-muted-foreground font-bold">Paciente</div>
-                    <div className="font-bold text-sm text-slate-800 truncate">
-                      {selectedAtend.paciente?.nome ||
-                        selectedAtend.nome_paciente_livre ||
-                        "Sem identificação"}
-                    </div>
-                    {selectedAtend.telefone_contato && (
-                      <div className="text-[11px] text-muted-foreground mt-0.5">
-                        {selectedAtend.telefone_contato}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-2">
-                  <Clock className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
-                  <div>
-                    <div className="text-[10px] uppercase text-muted-foreground font-bold">Horário</div>
-                    <div className="font-medium text-sm text-slate-700">
-                      {format(new Date(selectedAtend.data_inicio), "dd/MM/yyyy 'às' HH:mm", {
-                        locale: ptBR,
-                      })}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-2">
-                  <Calendar className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
-                  <div className="flex-1">
-                    <div className="text-[10px] uppercase text-muted-foreground font-bold">
-                      Profissional
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <span
-                        className="w-2 h-2 rounded-full"
-                        style={{
-                          backgroundColor: selectedAtend.profissional?.cor_agenda || "#3b82f6",
-                        }}
-                      />
-                      <span className="font-medium text-sm text-slate-700">
-                        {selectedAtend.profissional?.nome || "—"}
-                      </span>
-                    </div>
-                  </div>
-                </div>
+              {/* Dados do evento */}
+              <div className="bg-slate-50 p-3 rounded-xl border space-y-1 text-xs">
+                {selectedAtend.paciente_id && selectedAtend.paciente?.nome ? (
+                  <a
+                    href={`/pacientes/${selectedAtend.paciente_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-bold text-sm text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1.5"
+                  >
+                    {selectedAtend.paciente.nome}
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                ) : (
+                  <p className="font-bold text-sm text-slate-700">{selectedAtend.nome_paciente_livre || "Sem identificação"}</p>
+                )}
+                <p className="text-muted-foreground">
+                  <Clock className="w-3 h-3 inline mr-1" />
+                  {format(new Date(selectedAtend.data_inicio), "dd 'de' MMMM 'às' HH:mm", { locale: ptBR })}
+                </p>
+                <p className="text-muted-foreground uppercase font-semibold text-[10px] tracking-wide text-blue-600 mt-1">
+                  Profissional: {selectedAtend.profissional?.nome || "Não definido"}
+                </p>
               </div>
 
-              <div className="flex items-center gap-2">
-                <Badge
-                  className={`text-xs uppercase font-bold ${
-                    selectedAtend.status === "realizado"
-                      ? "bg-emerald-600"
-                      : selectedAtend.status === "cancelado"
-                      ? "bg-red-500"
-                      : selectedAtend.status === "faltou"
-                      ? "bg-slate-400"
-                      : "bg-blue-600"
-                  }`}
-                >
-                  {selectedAtend.status}
-                </Badge>
-                {selectedAtend.tipo && (
-                  <Badge variant="outline" className="text-xs uppercase font-bold">
-                    {selectedAtend.tipo}
-                  </Badge>
+              {/* Status de vinculação */}
+              <div className="flex flex-col gap-1.5 bg-slate-50 p-3 rounded-xl border text-xs">
+                <div className="flex items-center gap-2">
+                  {selectedAtend.paciente_id ? <CheckCircle2 className="w-4 h-4 text-emerald-500" /> : <AlertCircle className="w-4 h-4 text-amber-500" />}
+                  <span className={selectedAtend.paciente_id ? "text-emerald-700 font-medium" : "text-amber-700 font-medium"}>
+                    {selectedAtend.paciente_id ? "Paciente vinculado" : "Paciente não vinculado"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {selectedAtend.paciente_pacote_id ? <CheckCircle2 className="w-4 h-4 text-emerald-500" /> : <AlertCircle className="w-4 h-4 text-amber-500" />}
+                  <span className={selectedAtend.paciente_pacote_id ? "text-emerald-700 font-medium" : "text-amber-700 font-medium"}>
+                    {selectedAtend.paciente_pacote_id ? "Pacote vinculado" : "Pacote não vinculado"}
+                  </span>
+                </div>
+                {prontoParaCheckin && (
+                  <div className="mt-1 text-emerald-600 font-semibold text-[11px] flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Pronto para check-in
+                  </div>
                 )}
               </div>
 
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800 space-y-1">
-                <p className="font-bold">🎯 Bloco 2A — Criação ativa</p>
-                <p>
-                  Você já pode <strong>criar</strong> novos atendimentos clicando em "+ Novo" ou
-                  em um horário vazio. Editar e mover eventos vem no Bloco 2B.
-                </p>
-                <p>
-                  Para editar os existentes, use a agenda atual em{" "}
-                  <a href="/agenda" className="underline font-semibold">
-                    /agenda
-                  </a>
-                  .
-                </p>
+              {/* BOTÃO CHECK-IN RÁPIDO */}
+              {prontoParaCheckin && selectedAtend.status !== "realizado" && (
+                <Button
+                  onClick={handleCheckinRapido}
+                  disabled={busy}
+                  className="w-full h-12 text-sm font-bold bg-emerald-600 hover:bg-emerald-700 shadow-md"
+                >
+                  <CheckCircle2 className="w-5 h-5 mr-2" />
+                  {busy ? "Processando..." : "✅ Realizar Check-in"}
+                </Button>
+              )}
+
+              {selectedAtend.status === "realizado" && (
+                <div className="w-full h-12 flex items-center justify-center gap-2 bg-emerald-50 border-2 border-emerald-300 rounded-lg text-emerald-700 font-bold text-sm">
+                  <CheckCircle2 className="w-5 h-5" />
+                  ✅ Sessão já realizada
+                </div>
+              )}
+
+              {/* BOTÃO WHATSAPP */}
+              {podeEnviarWhats && (
+                <Button
+                  onClick={abrirModalWhatsApp}
+                  className="w-full h-11 bg-green-600 hover:bg-green-700 font-bold"
+                >
+                  <MessageCircle className="w-5 h-5 mr-2" />
+                  Enviar WhatsApp
+                </Button>
+              )}
+
+              {/* PRONTUÁRIO */}
+              {selectedAtend.paciente_id && (
+                <div className="flex flex-col gap-2 bg-blue-50/30 p-3 rounded-xl border border-blue-100">
+                  <div className="text-xs font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5" /> Prontuário
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" className="flex-1 text-xs border-blue-300 text-blue-700 hover:bg-blue-50" onClick={() => navigate(`/pacientes/${selectedAtend.paciente_id}/anamnese/nova`)}>
+                      <Plus className="w-3.5 h-3.5 mr-1" /> Anamnese
+                    </Button>
+                    <Button size="sm" variant="outline" className="flex-1 text-xs border-blue-300 text-blue-700 hover:bg-blue-50" onClick={() => navigate(`/pacientes/${selectedAtend.paciente_id}/evolucao/nova?atendimento=${selectedAtend.id}`)}>
+                      <ClipboardEdit className="w-3.5 h-3.5 mr-1" /> Evolução
+                    </Button>
+                    {temProntuario && prontuarioId && (
+                      <Button size="sm" variant="outline" className="flex-1 text-xs border-emerald-300 text-emerald-700 hover:bg-emerald-50" onClick={() => navigate(`/pacientes/${selectedAtend.paciente_id}/prontuario/${prontuarioId}`)}>
+                        <Eye className="w-3.5 h-3.5 mr-1" /> Ver
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Vincular paciente */}
+              <div className="space-y-2 border-b pb-3">
+                <Label className="text-xs font-bold">Paciente</Label>
+                <div className="relative">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <Input
+                    placeholder="Buscar por nome..."
+                    value={buscaPaciente}
+                    onChange={(e) => setBuscaPaciente(e.target.value)}
+                    className="h-10 text-sm pl-9"
+                  />
+                </div>
+                {sugestoesPacientes.length > 0 && (
+                  <div className="border rounded-lg max-h-40 overflow-y-auto bg-white">
+                    {sugestoesPacientes.map((p) => (
+                      <button key={p.id} onClick={() => selecionarPacienteSheet(p)} className="w-full text-left px-3 py-2 hover:bg-blue-50 text-sm border-b last:border-0">
+                        {p.nome} {p.telefone && `(${p.telefone})`}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {pacienteSelecionado && (
+                  <div className="bg-green-50 p-2 rounded text-sm font-medium text-green-800">
+                    ✅ {pacienteSelecionado.nome} selecionado
+                  </div>
+                )}
               </div>
+
+              {/* Pacote */}
+              {pacienteSelecionado && (
+                <div className="space-y-2">
+                  <Label className="text-xs font-bold">Pacote/Serviço a consumir</Label>
+                  {itensPaciente.length > 0 ? (
+                    <Select value={itemSelecionadoId || ""} onValueChange={setItemSelecionadoId}>
+                      <SelectTrigger className="h-10 text-sm">
+                        <SelectValue placeholder="Selecione um item" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {itensPaciente.map((item) => {
+                          const nome = item.pacote?.nome || item.servico?.nome || "Item";
+                          const info = item.autorizacao ? `${item.autorizacao.plano} (Guia: ${item.autorizacao.numero_guia})` : "Particular";
+                          return (
+                            <SelectItem key={item.id} value={item.id}>
+                              {nome} – {item.sessoes_restantes} restantes – {info}
+                            </SelectItem>
+                          );
+                        })}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <p className="text-xs text-amber-600">Este paciente não possui itens com saldo.</p>
+                  )}
+
+                  <Button onClick={handleSalvarVinculacao} className="w-full" disabled={busy || !pacienteSelecionado}>
+                    <CheckCircle2 className="w-4 h-4 mr-2" />
+                    {busy ? "Vinculando..." : "Vincular e Preparar Check-in"}
+                  </Button>
+                </div>
+              )}
+
+              {/* Status */}
+              <div className="space-y-2 pt-2 border-t">
+                <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Alterar Status</Label>
+                <Select value={statusFormValue} onValueChange={setStatusFormValue}>
+                  <SelectTrigger className="h-11 text-sm font-semibold">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="agendado" className="font-medium text-blue-600">Agendado</SelectItem>
+                    <SelectItem value="realizado" className="font-medium text-emerald-600">Realizado</SelectItem>
+                    <SelectItem value="faltou" className="font-medium text-slate-500">Faltou</SelectItem>
+                    <SelectItem value="cancelado" className="font-medium text-red-500">Cancelado</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button onClick={handleSalvarStatus} className="w-full h-11 bg-blue-600 hover:bg-blue-700 font-bold" disabled={busy}>
+                  {busy ? "Salvando..." : "Confirmar Alteração"}
+                </Button>
+              </div>
+
+              {/* Apagar */}
+              {isAdmin && (
+                <div className="pt-4 border-t border-red-200">
+                  <Button type="button" variant="destructive" onClick={handleApagarAtendimento} className="w-full h-11 text-sm font-bold">
+                    <Trash2 className="w-4 h-4 mr-2" /> Apagar do app
+                  </Button>
+                </div>
+              )}
             </>
           )}
         </SheetContent>
       </Sheet>
 
-      {/* MODAL: NOVO ATENDIMENTO */}
+      {/* MODAL DE CRIAR */}
       <Dialog open={modalCriarOpen} onOpenChange={setModalCriarOpen}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -1049,68 +1268,25 @@ export default function AgendaNova() {
 
           <div className="space-y-4 pt-2">
             <div className="space-y-1.5">
-              <Label className="text-xs font-bold uppercase text-slate-600">
-                Paciente *
-              </Label>
-
+              <Label className="text-xs font-bold uppercase text-slate-600">Paciente *</Label>
               {formCriar.paciente_id ? (
                 <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-lg p-3">
                   <div className="flex-1">
-                    <div className="font-bold text-sm text-slate-800">
-                      {formCriar.paciente_nome}
-                    </div>
-                    {pacoteSugerido && (
-                      <div className="text-[11px] text-emerald-700 mt-0.5">
-                        📦 Sugerido: {pacoteSugerido.label}
-                      </div>
-                    )}
+                    <div className="font-bold text-sm text-slate-800">{formCriar.paciente_nome}</div>
+                    {pacoteSugerido && (<div className="text-[11px] text-emerald-700 mt-0.5">📦 Sugerido: {pacoteSugerido.label}</div>)}
                   </div>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 w-7 p-0"
-                    onClick={() => {
-                      setFormCriar((prev) => ({
-                        ...prev,
-                        paciente_id: "",
-                        paciente_nome: "",
-                        paciente_pacote_id: "",
-                      }));
-                      setPacoteSugerido(null);
-                    }}
-                  >
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => { setFormCriar((p) => ({ ...p, paciente_id: "", paciente_nome: "", paciente_pacote_id: "" })); setPacoteSugerido(null); }}>
                     <X className="w-4 h-4" />
                   </Button>
                 </div>
               ) : criandoPaciente ? (
                 <div className="border rounded-lg p-3 space-y-2 bg-slate-50">
                   <div className="text-xs font-bold text-slate-600">Novo paciente</div>
-                  <Input
-                    placeholder="Nome completo"
-                    value={novoPacienteNome}
-                    onChange={(e) => setNovoPacienteNome(e.target.value)}
-                    className="h-9 text-sm"
-                  />
-                  <Input
-                    placeholder="Telefone (opcional)"
-                    value={novoPacienteTelefone}
-                    onChange={(e) => setNovoPacienteTelefone(e.target.value)}
-                    className="h-9 text-sm"
-                  />
+                  <Input placeholder="Nome completo" value={novoPacienteNome} onChange={(e) => setNovoPacienteNome(e.target.value)} className="h-9 text-sm" />
+                  <Input placeholder="Telefone (opcional)" value={novoPacienteTelefone} onChange={(e) => setNovoPacienteTelefone(e.target.value)} className="h-9 text-sm" />
                   <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="flex-1 h-8 text-xs"
-                      onClick={() => setCriandoPaciente(false)}
-                    >
-                      Cancelar
-                    </Button>
-                    <Button
-                      size="sm"
-                      className="flex-1 h-8 text-xs bg-emerald-600 hover:bg-emerald-700"
-                      onClick={criarPacienteRapido}
-                    >
+                    <Button size="sm" variant="outline" className="flex-1 h-8 text-xs" onClick={() => setCriandoPaciente(false)}>Cancelar</Button>
+                    <Button size="sm" className="flex-1 h-8 text-xs bg-emerald-600 hover:bg-emerald-700" onClick={criarPacienteRapido}>
                       <UserPlus className="w-3 h-3 mr-1" /> Criar
                     </Button>
                   </div>
@@ -1119,41 +1295,21 @@ export default function AgendaNova() {
                 <>
                   <div className="relative">
                     <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <Input
-                      placeholder="Buscar paciente pelo nome..."
-                      value={buscaPaciente}
-                      onChange={(e) => setBuscaPaciente(e.target.value)}
-                      className="h-10 text-sm pl-9"
-                      autoFocus
-                    />
+                    <Input placeholder="Buscar paciente..." value={buscaPacienteCriar} onChange={(e) => setBuscaPacienteCriar(e.target.value)} className="h-10 text-sm pl-9" autoFocus />
                   </div>
-
-                  {sugestoesPacientes.length > 0 && (
+                  {sugestoesPacientesCriar.length > 0 && (
                     <div className="border rounded-lg max-h-40 overflow-y-auto bg-white">
-                      {sugestoesPacientes.map((p) => (
-                        <button
-                          key={p.id}
-                          onClick={() => selecionarPaciente(p)}
-                          className="w-full text-left px-3 py-2 hover:bg-blue-50 text-sm border-b last:border-0 flex justify-between"
-                        >
+                      {sugestoesPacientesCriar.map((p) => (
+                        <button key={p.id} onClick={() => selecionarPacienteCriar(p)} className="w-full text-left px-3 py-2 hover:bg-blue-50 text-sm border-b last:border-0 flex justify-between">
                           <span className="font-medium">{p.nome}</span>
-                          {p.telefone && (
-                            <span className="text-xs text-muted-foreground">{p.telefone}</span>
-                          )}
+                          {p.telefone && <span className="text-xs text-muted-foreground">{p.telefone}</span>}
                         </button>
                       ))}
                     </div>
                   )}
-
-                  {buscaPaciente.trim().length >= 2 && sugestoesPacientes.length === 0 && (
-                    <button
-                      onClick={() => {
-                        setNovoPacienteNome(buscaPaciente.trim());
-                        setCriandoPaciente(true);
-                      }}
-                      className="w-full text-left px-3 py-2 border rounded-lg text-sm text-emerald-700 hover:bg-emerald-50 border-emerald-200 font-medium"
-                    >
-                      + Criar novo paciente "{buscaPaciente}"
+                  {buscaPacienteCriar.trim().length >= 2 && sugestoesPacientesCriar.length === 0 && (
+                    <button onClick={() => { setNovoPacienteNome(buscaPacienteCriar.trim()); setCriandoPaciente(true); }} className="w-full text-left px-3 py-2 border rounded-lg text-sm text-emerald-700 hover:bg-emerald-50 border-emerald-200 font-medium">
+                      + Criar novo paciente "{buscaPacienteCriar}"
                     </button>
                   )}
                 </>
@@ -1161,24 +1317,14 @@ export default function AgendaNova() {
             </div>
 
             <div className="space-y-1.5">
-              <Label className="text-xs font-bold uppercase text-slate-600">
-                Profissional *
-              </Label>
-              <Select
-                value={formCriar.profissional_id}
-                onValueChange={(v) => setFormCriar({ ...formCriar, profissional_id: v })}
-              >
-                <SelectTrigger className="h-10 text-sm">
-                  <SelectValue placeholder="Selecione o profissional" />
-                </SelectTrigger>
+              <Label className="text-xs font-bold uppercase text-slate-600">Profissional *</Label>
+              <Select value={formCriar.profissional_id} onValueChange={(v) => setFormCriar({ ...formCriar, profissional_id: v })}>
+                <SelectTrigger className="h-10 text-sm"><SelectValue placeholder="Selecione..." /></SelectTrigger>
                 <SelectContent>
                   {profissionais.map((p) => (
                     <SelectItem key={p.id} value={p.id}>
                       <div className="flex items-center gap-2">
-                        <span
-                          className="w-2.5 h-2.5 rounded-full"
-                          style={{ backgroundColor: p.cor_agenda || "#3b82f6" }}
-                        />
+                        <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: p.cor_agenda || "#3b82f6" }} />
                         <span>{p.nome}</span>
                       </div>
                     </SelectItem>
@@ -1190,40 +1336,21 @@ export default function AgendaNova() {
             <div className="grid grid-cols-3 gap-2">
               <div className="space-y-1.5">
                 <Label className="text-xs font-bold uppercase text-slate-600">Data</Label>
-                <Input
-                  type="date"
-                  value={formCriar.data}
-                  onChange={(e) => setFormCriar({ ...formCriar, data: e.target.value })}
-                  className="h-10 text-sm"
-                />
+                <Input type="date" value={formCriar.data} onChange={(e) => setFormCriar({ ...formCriar, data: e.target.value })} className="h-10 text-sm" />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs font-bold uppercase text-slate-600">Início</Label>
-                <Input
-                  type="time"
-                  value={formCriar.hora_inicio}
-                  onChange={(e) => {
-                    const ini = e.target.value;
-                    const [h, m] = ini.split(":").map(Number);
-                    const fim = new Date();
-                    fim.setHours(h, m + DURACAO_PADRAO, 0, 0);
-                    setFormCriar({
-                      ...formCriar,
-                      hora_inicio: ini,
-                      hora_fim: format(fim, "HH:mm"),
-                    });
-                  }}
-                  className="h-10 text-sm"
-                />
+                <Input type="time" value={formCriar.hora_inicio} onChange={(e) => {
+                  const ini = e.target.value;
+                  const [h, m] = ini.split(":").map(Number);
+                  const fim = new Date();
+                  fim.setHours(h, m + DURACAO_PADRAO, 0, 0);
+                  setFormCriar({ ...formCriar, hora_inicio: ini, hora_fim: format(fim, "HH:mm") });
+                }} className="h-10 text-sm" />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs font-bold uppercase text-slate-600">Fim</Label>
-                <Input
-                  type="time"
-                  value={formCriar.hora_fim}
-                  onChange={(e) => setFormCriar({ ...formCriar, hora_fim: e.target.value })}
-                  className="h-10 text-sm"
-                />
+                <Input type="time" value={formCriar.hora_fim} onChange={(e) => setFormCriar({ ...formCriar, hora_fim: e.target.value })} className="h-10 text-sm" />
               </div>
             </div>
 
@@ -1231,58 +1358,77 @@ export default function AgendaNova() {
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center gap-3">
                 <Package className="w-5 h-5 text-blue-600 shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <div className="text-[10px] uppercase font-bold text-blue-700">
-                    Pacote sugerido
-                  </div>
-                  <div className="text-sm font-medium text-slate-800 truncate">
-                    {pacoteSugerido.label}
-                  </div>
+                  <div className="text-[10px] uppercase font-bold text-blue-700">Pacote sugerido</div>
+                  <div className="text-sm font-medium text-slate-800 truncate">{pacoteSugerido.label}</div>
                 </div>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 text-xs text-blue-700 hover:bg-blue-100"
-                  onClick={() => {
-                    setPacoteSugerido(null);
-                    setFormCriar({ ...formCriar, paciente_pacote_id: "" });
-                  }}
-                >
+                <Button size="sm" variant="ghost" className="h-7 text-xs text-blue-700 hover:bg-blue-100" onClick={() => { setPacoteSugerido(null); setFormCriar({ ...formCriar, paciente_pacote_id: "" }); }}>
                   Remover
                 </Button>
               </div>
             )}
 
             <div className="space-y-1.5">
-              <Label className="text-xs font-bold uppercase text-slate-600">
-                Observações
-              </Label>
-              <Textarea
-                value={formCriar.observacoes}
-                onChange={(e) => setFormCriar({ ...formCriar, observacoes: e.target.value })}
-                rows={2}
-                placeholder="Alguma observação sobre este agendamento..."
-                className="text-sm"
-              />
+              <Label className="text-xs font-bold uppercase text-slate-600">Observações</Label>
+              <Textarea value={formCriar.observacoes} onChange={(e) => setFormCriar({ ...formCriar, observacoes: e.target.value })} rows={2} placeholder="Alguma observação..." className="text-sm" />
             </div>
 
             <div className="flex gap-2 pt-2">
-              <Button
-                variant="outline"
-                className="flex-1 h-11"
-                onClick={() => setModalCriarOpen(false)}
-                disabled={criando}
-              >
-                Cancelar
-              </Button>
-              <Button
-                className="flex-1 h-11 bg-emerald-600 hover:bg-emerald-700 font-bold"
-                onClick={salvarAtendimento}
-                disabled={criando || !formCriar.paciente_id || !formCriar.profissional_id}
-              >
+              <Button variant="outline" className="flex-1 h-11" onClick={() => setModalCriarOpen(false)} disabled={criando}>Cancelar</Button>
+              <Button className="flex-1 h-11 bg-emerald-600 hover:bg-emerald-700 font-bold" onClick={salvarAtendimento} disabled={criando || !formCriar.paciente_id || !formCriar.profissional_id}>
                 {criando ? "Salvando..." : "Salvar Atendimento"}
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL WHATSAPP */}
+      <Dialog open={modalWhatsAppOpen} onOpenChange={setModalWhatsAppOpen}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MessageCircle className="w-5 h-5 text-green-600" /> Enviar Mensagem
+            </DialogTitle>
+          </DialogHeader>
+
+          {selectedAtend && (
+            <div className="space-y-4 pt-2">
+              <div className="text-xs bg-slate-50 border rounded p-3 space-y-1">
+                <div><span className="font-medium">Para:</span> {selectedAtend.paciente?.nome || selectedAtend.nome_paciente_livre}</div>
+                <div><span className="font-medium">Telefone:</span> {selectedAtend.paciente?.telefone || selectedAtend.telefone_contato || "—"}</div>
+                <div><span className="font-medium">Data:</span> {format(new Date(selectedAtend.data_inicio), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}</div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold uppercase text-slate-600">Escolha o template</Label>
+                <Select value={templateSelecionadoId} onValueChange={setTemplateSelecionadoId}>
+                  <SelectTrigger className="h-10 text-sm"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                  <SelectContent>
+                    {templates.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        <span className="font-medium">{t.nome}</span>
+                        <span className="text-xs text-muted-foreground ml-2">({t.tipo})</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold uppercase text-slate-600">Pré-visualização</Label>
+                <div className="bg-slate-50 border rounded-lg p-3 text-sm whitespace-pre-wrap max-h-52 overflow-y-auto">
+                  {mensagemPreview || "Selecione um template..."}
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <Button variant="outline" className="flex-1 h-11" onClick={() => setModalWhatsAppOpen(false)}>Cancelar</Button>
+                <Button className="flex-1 h-11 bg-green-600 hover:bg-green-700 font-bold" onClick={enviarWhatsApp} disabled={!templateSelecionadoId || !mensagemPreview}>
+                  <Send className="w-4 h-4 mr-1" /> Abrir WhatsApp
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>
