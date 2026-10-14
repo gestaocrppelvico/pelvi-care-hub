@@ -267,7 +267,6 @@ function calcularDatasRecorrencia(
       datas.push(proxima);
     }
   } else {
-    // Personalizado ou múltiplos dias: iterar dia a dia
     let cursor = new Date(d);
     while (datas.length < numeroSessoes && safety < 1000) {
       safety++;
@@ -280,64 +279,7 @@ function calcularDatasRecorrencia(
 
   return datas.slice(0, numeroSessoes);
 }
-  const datas: Date[] = [];
-  const d = new Date(dataBase);
-  d.setHours(0, 0, 0, 0);
 
-  // Sempre inclui a data base como 1ª sessão
-  datas.push(new Date(d));
-
-  const diasOrdenados = [...diasSemana].sort();
-  let safety = 0;
-
-  if (frequencia === "semanal" && diasOrdenados.length === 1) {
-    // Caso simples: mesmo dia toda semana
-    while (datas.length < numeroSessoes && safety < 500) {
-      safety++;
-      const proxima = addWeeks(dataBase, safety);
-      if (pularFinsDeSemana && (proxima.getDay() === 0 || proxima.getDay() === 6)) continue;
-      datas.push(proxima);
-    }
-  } else if (frequencia === "quinzenal" && diasOrdenados.length === 1) {
-    while (datas.length < numeroSessoes && safety < 500) {
-      safety++;
-      const proxima = addDays(dataBase, safety * 14);
-      if (pularFinsDeSemana && (proxima.getDay() === 0 || proxima.getDay() === 6)) continue;
-      datas.push(proxima);
-    }
-  } else if (frequencia === "mensal" && diasOrdenados.length === 1) {
-    while (datas.length < numeroSessoes && safety < 500) {
-      safety++;
-      const proxima = addMonths(dataBase, safety);
-      if (pularFinsDeSemana && (proxima.getDay() === 0 || proxima.getDay() === 6)) continue;
-      datas.push(proxima);
-    }
-  } else {
-    // Múltiplos dias ou múltiplos dias com frequência: iterar dia a dia
-    let cursor = new Date(d);
-    let semanaAtual = 0;
-    while (datas.length < numeroSessoes && safety < 500) {
-      safety++;
-      cursor = addDays(cursor, 1);
-
-      if (!diasOrdenados.includes(cursor.getDay())) continue;
-      if (pularFinsDeSemana && (cursor.getDay() === 0 || cursor.getDay() === 6)) continue;
-
-      if (frequencia === "semanal") {
-        datas.push(new Date(cursor));
-      } else if (frequencia === "quinzenal") {
-        const diasDiff = Math.floor((cursor.getTime() - d.getTime()) / (1000 * 60 * 60 * 24));
-        const semana = Math.floor(diasDiff / 7);
-        if (semana % 2 === 0) datas.push(new Date(cursor));
-      } else if (frequencia === "mensal") {
-        // Só pega o mesmo dia do mês
-        if (cursor.getDate() === d.getDate()) datas.push(new Date(cursor));
-      }
-    }
-  }
-
-  return datas.slice(0, numeroSessoes);
-}
 // ==========================================================
 // COMPONENTE PRINCIPAL
 // ==========================================================
