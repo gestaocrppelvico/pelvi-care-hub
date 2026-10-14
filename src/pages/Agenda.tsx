@@ -379,13 +379,36 @@ export default function Agenda() {
         .eq("id", selectedAtend.id);
       if (error) throw error;
 
-      setSelectedAtend(prev => prev ? { ...prev, ...updateData } : null);
+            setSelectedAtend(prev => prev ? { ...prev, ...updateData } : null);
 
-      toast.success("Atendimento vinculado ao paciente e ao pacote!");
-      setSheetOpen(false);
+      toast.success("Atendimento vinculado! Agora você pode fazer o check-in.");
+      // 🔥 NÃO FECHA O SHEET — o usuário pode dar check-in direto
       carregarAtendimentos();
     } catch (err: any) {
       toast.error("Erro ao vincular: " + err.message);
+    }
+  };
+  // 🔥 NOVO: check-in rápido (sem precisar mudar o select)
+  const handleCheckinRapido = async () => {
+    if (!selectedAtend) return;
+    if (!prontoParaCheckin) {
+      toast.error("Vincule o paciente e o pacote primeiro.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { error } = await supabase
+        .from("atendimentos")
+        .update({ status: "realizado" })
+        .eq("id", selectedAtend.id);
+      if (error) throw error;
+      toast.success("Check-in realizado! Sessão consumida e repasse gerado.");
+      setSheetOpen(false);
+      carregarAtendimentos();
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -455,10 +478,11 @@ export default function Agenda() {
     else setCurrentDate(prev => addMonths(prev, 1));
   };
 
-  const obterEstiloCard = (status: string, corProfissional?: string) => {
+    const obterEstiloCard = (status: string, corProfissional?: string) => {
     if (status === "faltou") return "border-l-4 border-slate-400 bg-slate-100/80 text-slate-400 shadow-none opacity-70";
-    if (status === "realizado") return "border-l-4 border-emerald-500 bg-emerald-50/40 text-emerald-900";
     if (status === "cancelado") return "border-l-4 border-red-300 bg-red-50/30 text-red-400 line-through";
+    // Realizado: mantém cor do profissional (aplicada via style inline)
+    if (status === "realizado") return "border-l-4 text-slate-800 shadow-sm opacity-80";
     return `border-l-4 bg-white text-slate-800 shadow-sm`;
   };
 
@@ -550,28 +574,43 @@ export default function Agenda() {
             <div className="text-center py-16 border-2 border-dashed rounded-xl bg-white text-muted-foreground text-sm">Nenhum atendimento agendado para este dia.</div>
           ) : (
             atendimentos.map((at) => (
-              <div
+                            <div
                 key={at.id}
                 onClick={() => abrirEdicao(at)}
                 className={`p-3 rounded-xl border transition-all cursor-pointer flex justify-between items-center ${obterEstiloCard(at.status)}`}
-                style={at.status !== 'faltou' && at.status !== 'realizado' && at.status !== 'cancelado' && at.profissional?.cor_agenda ? { borderLeftColor: at.profissional.cor_agenda } : {}}
+                style={
+                  at.profissional?.cor_agenda && at.status !== 'faltou' && at.status !== 'cancelado'
+                    ? {
+                        borderLeftColor: at.profissional.cor_agenda,
+                        backgroundColor: at.status === 'realizado'
+                          ? at.profissional.cor_agenda + "30"  // 🔥 30 = opacidade baixa (checado)
+                          : undefined,
+                      }
+                    : {}
+                }
               >
                 <div className="min-w-0 flex-1">
                   <div className={`font-bold text-sm truncate ${at.status === "faltou" ? "line-through text-slate-400" : ""}`}>
                     {at.paciente?.nome || at.nome_paciente_livre || "Sem Identificação"}
                   </div>
-                  <div className="text-xs font-medium text-muted-foreground mt-0.5 flex items-center gap-2">
+                                    <div className="text-xs font-medium text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
                     <span className="font-bold text-slate-600">{format(new Date(at.data_inicio), "HH:mm")}</span>
                     <span>•</span>
                     <span className="uppercase tracking-wider text-[10px]">{at.profissional?.nome || "Clínica"}</span>
-                    <span>•</span>
+                    {at.status === "realizado" && (
+                      <>
+                        <span>•</span>
+                        <span className="text-emerald-600 font-bold text-[10px] flex items-center gap-0.5">
+                          <CheckCircle2 className="w-3 h-3" /> Realizado
+                        </span>
+                      </>
+                    )}
                     {at.paciente_id && at.tipo && (
                       <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4 font-bold uppercase">
                         {at.tipo}
                       </Badge>
                     )}
-                  </div>
-                </div>
+                  </div>                </div>
                 <Badge className={`text-[10px] font-bold uppercase h-5 px-2 ${at.status === "realizado" ? "bg-emerald-600" : at.status === "faltou" ? "bg-slate-400" : at.status === "cancelado" ? "bg-red-400" : at.status === "remarcado" ? "bg-orange-500" : "bg-blue-600"}`}>
                   {at.status}
                 </Badge>
@@ -658,13 +697,31 @@ export default function Agenda() {
                     {pacoteVinculado ? "Pacote vinculado" : "Pacote não vinculado"}
                   </span>
                 </div>
-                {prontoParaCheckin && (
+                                {prontoParaCheckin && (
                   <div className="mt-1 text-emerald-600 font-semibold text-[11px] flex items-center gap-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5" /> Pronto para check-in
                   </div>
                 )}
               </div>
 
+              {/* 🔥 BOTÃO CHECK-IN RÁPIDO */}
+              {prontoParaCheckin && selectedAtend.status !== "realizado" && (
+                <Button
+                  onClick={handleCheckinRapido}
+                  disabled={busy}
+                  className="w-full h-12 text-sm font-bold bg-emerald-600 hover:bg-emerald-700 shadow-md"
+                >
+                  <CheckCircle2 className="w-5 h-5 mr-2" />
+                  {busy ? "Processando..." : "✅ Realizar Check-in"}
+                </Button>
+              )}
+
+              {selectedAtend.status === "realizado" && (
+                <div className="w-full h-12 flex items-center justify-center gap-2 bg-emerald-50 border-2 border-emerald-300 rounded-lg text-emerald-700 font-bold text-sm">
+                  <CheckCircle2 className="w-5 h-5" />
+                  ✅ Sessão já realizada
+                </div>
+              )}
               {pacienteVinculado && selectedAtend.paciente_id && (
                 <div className="flex flex-col gap-2 bg-blue-50/30 p-3 rounded-xl border border-blue-100">
                   <div className="text-xs font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1.5">
