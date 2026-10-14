@@ -907,8 +907,7 @@ export default function AgendaNova() {
     }
   }
 
-  // ============ CRIAR ATENDIMENTO ============
-  const abrirCriar = (data?: Date, horaInicio?: string, profissionalId?: string) => {
+  
   // ============ CRIAR ATENDIMENTO ============
   const abrirCriar = (data?: Date, horaInicio?: string, profissionalId?: string) => {
     const dia = data ? format(data, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
