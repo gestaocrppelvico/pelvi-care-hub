@@ -228,11 +228,58 @@ function BlocoEvento({
 // ==========================================================
 function calcularDatasRecorrencia(
   dataBase: Date,
-  frequencia: "semanal" | "quinzenal" | "mensal",
+  frequencia: "diaria" | "semanal" | "mensal" | "personalizado",
   diasSemana: number[],
   numeroSessoes: number,
   pularFinsDeSemana: boolean
 ): Date[] {
+  const datas: Date[] = [];
+  const d = new Date(dataBase);
+  d.setHours(0, 0, 0, 0);
+
+  datas.push(new Date(d));
+
+  if (numeroSessoes <= 1) return datas;
+
+  const diasOrdenados = [...diasSemana].sort();
+  let safety = 0;
+
+  if (frequencia === "diaria") {
+    let cursor = new Date(d);
+    while (datas.length < numeroSessoes && safety < 1000) {
+      safety++;
+      cursor = addDays(cursor, 1);
+      if (pularFinsDeSemana && (cursor.getDay() === 0 || cursor.getDay() === 6)) continue;
+      datas.push(new Date(cursor));
+    }
+  } else if (frequencia === "semanal" && diasOrdenados.length === 1) {
+    while (datas.length < numeroSessoes && safety < 500) {
+      safety++;
+      const proxima = addWeeks(dataBase, safety);
+      if (pularFinsDeSemana && (proxima.getDay() === 0 || proxima.getDay() === 6)) continue;
+      datas.push(proxima);
+    }
+  } else if (frequencia === "mensal" && diasOrdenados.length === 1) {
+    while (datas.length < numeroSessoes && safety < 500) {
+      safety++;
+      const proxima = addMonths(dataBase, safety);
+      if (pularFinsDeSemana && (proxima.getDay() === 0 || proxima.getDay() === 6)) continue;
+      datas.push(proxima);
+    }
+  } else {
+    // Personalizado ou múltiplos dias: iterar dia a dia
+    let cursor = new Date(d);
+    while (datas.length < numeroSessoes && safety < 1000) {
+      safety++;
+      cursor = addDays(cursor, 1);
+      if (!diasOrdenados.includes(cursor.getDay())) continue;
+      if (pularFinsDeSemana && (cursor.getDay() === 0 || cursor.getDay() === 6)) continue;
+      datas.push(new Date(cursor));
+    }
+  }
+
+  return datas.slice(0, numeroSessoes);
+}
   const datas: Date[] = [];
   const d = new Date(dataBase);
   d.setHours(0, 0, 0, 0);
@@ -349,6 +396,18 @@ export default function AgendaNova() {
   const [criandoPaciente, setCriandoPaciente] = useState(false);
   const [novoPacienteNome, setNovoPacienteNome] = useState("");
   const [novoPacienteTelefone, setNovoPacienteTelefone] = useState("");
+    // 🔥 States para criar pacote no modal
+  const [mostrarCriarPacote, setMostrarCriarPacote] = useState(false);
+  const [listaPlanos, setListaPlanos] = useState<any[]>([]);
+  const [listaPacotesServicos, setListaPacotesServicos] = useState<any[]>([]);
+  const [novoPacoteForm, setNovoPacoteForm] = useState({
+    tipo: "particular" as "plano" | "particular",
+    plano_id: "",
+    numero_guia: "",
+    pacote_servico_id: "",
+    preco: "",
+  });
+  const [criandoPacote, setCriandoPacote] = useState(false);
 
   // 🔥 States do WhatsApp
   const [modalWhatsAppOpen, setModalWhatsAppOpen] = useState(false);
@@ -368,10 +427,10 @@ export default function AgendaNova() {
     sessoes_restantes: number;
     observacoes: string;
   } | null>(null);
-  const [formRecorrencia, setFormRecorrencia] = useState({
-    frequencia: "semanal" as "semanal" | "quinzenal" | "mensal",
+    const [formRecorrencia, setFormRecorrencia] = useState({
+    frequencia: "semanal" as "diaria" | "semanal" | "mensal" | "personalizado",
     numeroSessoes: 10,
-    diasSemana: [4] as number[], // 0=Dom..6=Sáb
+    diasSemana: [4] as number[],
     pularFinsDeSemana: true,
   });
   const [previewDatas, setPreviewDatas] = useState<Date[]>([]);
@@ -938,7 +997,18 @@ export default function AgendaNova() {
     setNovoPacienteTelefone("");
     setModalCriarOpen(true);
   };
-
+    // 🔥 Carregar planos e pacotes/serviços
+    supabase.from("planos_saude").select("id, nome").eq("ativo", true).then(({ data }) => setListaPlanos(data || []));
+    Promise.all([
+      supabase.from("pacotes").select("id, nome, numero_sessoes, preco_total").eq("ativo", true),
+      supabase.from("servicos").select("id, nome, preco").eq("ativo", true),
+    ]).then(([{ data: pacotes }, { data: servicos }]) => {
+      const combined = [
+        ...(pacotes || []).map((p) => ({ ...p, tipo_item: "pacote" })),
+        ...(servicos || []).map((s) => ({ ...s, tipo_item: "servico" })),
+      ];
+      setListaPacotesServicos(combined);
+    });
   async function selecionarPacienteCriar(p: { id: string; nome: string; telefone: string | null }) {
     setFormCriar((prev) => ({ ...prev, paciente_id: p.id, paciente_nome: p.nome }));
     setBuscaPacienteCriar("");
@@ -966,6 +1036,80 @@ export default function AgendaNova() {
       setFormCriar((prev) => ({ ...prev, paciente_pacote_id: pac.id }));
     } else {
       setPacoteSugerido(null);
+    }
+  }
+  // 🔥 Criar pacote rápido para o paciente selecionado
+  async function criarPacoteRapido() {
+    if (!formCriar.paciente_id) {
+      toast.error("Selecione um paciente primeiro");
+      return;
+    }
+    if (!novoPacoteForm.pacote_servico_id) {
+      toast.error("Selecione um pacote ou serviço");
+      return;
+    }
+    if (novoPacoteForm.tipo === "plano") {
+      if (!novoPacoteForm.plano_id) return toast.error("Selecione o plano");
+      if (!novoPacoteForm.numero_guia.trim()) return toast.error("Informe o número da guia");
+    }
+
+    setCriandoPacote(true);
+    try {
+      const item = listaPacotesServicos.find((x) => x.id === novoPacoteForm.pacote_servico_id);
+      if (!item) throw new Error("Item não encontrado");
+
+      const sessoesTotais = item.tipo_item === "pacote" ? item.numero_sessoes : 1;
+      const preco = novoPacoteForm.preco ? parseFloat(novoPacoteForm.preco) : (item.tipo_item === "pacote" ? item.preco_total : item.preco || 0);
+
+      let autorizacaoId: string | null = null;
+
+      if (novoPacoteForm.tipo === "plano") {
+        const planoNome = listaPlanos.find((p) => p.id === novoPacoteForm.plano_id)?.nome;
+        const { data: aut, error: errAut } = await supabase
+          .from("autorizacoes")
+          .insert({
+            paciente_id: formCriar.paciente_id,
+            plano: planoNome,
+            numero_guia: novoPacoteForm.numero_guia.trim(),
+            sessoes_autorizadas: sessoesTotais,
+            sessoes_realizadas: 0,
+            status: "ativa",
+          })
+          .select("id")
+          .single();
+        if (errAut) throw errAut;
+        autorizacaoId = aut.id;
+      }
+
+      const { data: novoPacote, error: errPac } = await supabase
+        .from("paciente_pacotes")
+        .insert({
+          paciente_id: formCriar.paciente_id,
+          autorizacao_id: autorizacaoId,
+          pacote_id: item.tipo_item === "pacote" ? item.id : null,
+          servico_id: item.tipo_item === "servico" ? item.id : null,
+          sessoes_totais: sessoesTotais,
+          sessoes_restantes: sessoesTotais,
+          sessoes_realizadas: 0,
+          preco_pago: preco,
+          status_pagamento: "pendente",
+        })
+        .select("id")
+        .single();
+      if (errPac) throw errPac;
+
+      toast.success("Pacote criado e vinculado!");
+      setFormCriar((prev) => ({ ...prev, paciente_pacote_id: novoPacote.id }));
+      setPacoteSugerido({
+        id: novoPacote.id,
+        label: `${item.tipo_item === "pacote" ? item.nome : item.nome} (${sessoesTotais} rest.)`,
+      });
+      setMostrarCriarPacote(false);
+      setNovoPacoteForm({ tipo: "particular", plano_id: "", numero_guia: "", pacote_servico_id: "", preco: "" });
+    } catch (err: any) {
+      toast.error("Erro: " + err.message);
+    } finally {
+      setCriandoPacote(false);
     }
   }
 
@@ -1800,19 +1944,119 @@ export default function AgendaNova() {
               </div>
             </div>
 
-            {pacoteSugerido && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center gap-3">
-                <Package className="w-5 h-5 text-blue-600 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-[10px] uppercase font-bold text-blue-700">Pacote sugerido</div>
-                  <div className="text-sm font-medium text-slate-800 truncate">{pacoteSugerido.label}</div>
-                </div>
-                <Button size="sm" variant="ghost" className="h-7 text-xs text-blue-700 hover:bg-blue-100" onClick={() => { setPacoteSugerido(null); setFormCriar({ ...formCriar, paciente_pacote_id: "" }); }}>
-                  Remover
-                </Button>
+                        {/* Pacote vinculado OU opção de criar */}
+            {formCriar.paciente_id && (
+              <div className="space-y-2">
+                <Label className="text-xs font-bold uppercase text-slate-600">Pacote/Serviço *</Label>
+
+                {pacoteSugerido ? (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center gap-3">
+                    <Package className="w-5 h-5 text-blue-600 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-slate-800 truncate">{pacoteSugerido.label}</div>
+                    </div>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs text-blue-700 hover:bg-blue-100" onClick={() => { setPacoteSugerido(null); setFormCriar({ ...formCriar, paciente_pacote_id: "" }); }}>
+                      Remover
+                    </Button>
+                  </div>
+                ) : !mostrarCriarPacote ? (
+                  <button
+                    type="button"
+                    onClick={() => setMostrarCriarPacote(true)}
+                    className="w-full text-left p-3 border-2 border-dashed border-emerald-300 rounded-lg text-sm text-emerald-700 hover:bg-emerald-50 font-medium flex items-center gap-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Adicionar pacote/serviço
+                  </button>
+                ) : (
+                  <div className="border rounded-lg p-3 space-y-2 bg-slate-50">
+                    <div className="text-xs font-bold text-slate-600 flex justify-between items-center">
+                      <span>Novo pacote/serviço</span>
+                      <Button type="button" size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => setMostrarCriarPacote(false)}>
+                        <X className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+
+                    {/* Tipo */}
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setNovoPacoteForm({ ...novoPacoteForm, tipo: "particular" })}
+                        className={`flex-1 h-9 text-xs rounded-lg border-2 font-medium ${
+                          novoPacoteForm.tipo === "particular" ? "border-blue-400 bg-blue-50 text-blue-700" : "border-slate-200 text-slate-500"
+                        }`}
+                      >
+                        💰 Particular
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNovoPacoteForm({ ...novoPacoteForm, tipo: "plano" })}
+                        className={`flex-1 h-9 text-xs rounded-lg border-2 font-medium ${
+                          novoPacoteForm.tipo === "plano" ? "border-purple-400 bg-purple-50 text-purple-700" : "border-slate-200 text-slate-500"
+                        }`}
+                      >
+                        📋 Plano
+                      </button>
+                    </div>
+
+                    {/* Plano + Guia */}
+                    {novoPacoteForm.tipo === "plano" && (
+                      <>
+                        <Select value={novoPacoteForm.plano_id} onValueChange={(v) => setNovoPacoteForm({ ...novoPacoteForm, plano_id: v })}>
+                          <SelectTrigger className="h-9 text-sm bg-background">
+                            <SelectValue placeholder="Selecione o plano" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {listaPlanos.map((p) => (
+                              <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          placeholder="Número da guia"
+                          value={novoPacoteForm.numero_guia}
+                          onChange={(e) => setNovoPacoteForm({ ...novoPacoteForm, numero_guia: e.target.value })}
+                          className="h-9 text-sm bg-background"
+                        />
+                      </>
+                    )}
+
+                    {/* Pacote/Serviço */}
+                    <Select value={novoPacoteForm.pacote_servico_id} onValueChange={(v) => setNovoPacoteForm({ ...novoPacoteForm, pacote_servico_id: v })}>
+                      <SelectTrigger className="h-9 text-sm bg-background">
+                        <SelectValue placeholder="Selecione pacote ou serviço" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {listaPacotesServicos.map((item) => (
+                          <SelectItem key={item.id} value={item.id}>
+                            {item.tipo_item === "pacote" ? `📦 ${item.nome} (${item.numero_sessoes} sessões)` : `📄 ${item.nome}`}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+
+                    {/* Preço */}
+                    <Input
+                      type="number"
+                      step="0.01"
+                      placeholder="Valor (R$) — opcional"
+                      value={novoPacoteForm.preco}
+                      onChange={(e) => setNovoPacoteForm({ ...novoPacoteForm, preco: e.target.value })}
+                      className="h-9 text-sm bg-background"
+                    />
+
+                    <Button
+                      type="button"
+                      onClick={criarPacoteRapido}
+                      disabled={criandoPacote}
+                      className="w-full h-9 text-xs bg-emerald-600 hover:bg-emerald-700"
+                    >
+                      {criandoPacote ? "Criando..." : "Criar e vincular"}
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
-
             <div className="space-y-1.5">
               <Label className="text-xs font-bold uppercase text-slate-600">Observações</Label>
               <Textarea value={formCriar.observacoes} onChange={(e) => setFormCriar({ ...formCriar, observacoes: e.target.value })} rows={2} placeholder="Alguma observação..." className="text-sm" />
@@ -1852,61 +2096,71 @@ export default function AgendaNova() {
                 </div>
               </div>
 
-              {/* Frequência */}
+                            {/* Frequência */}
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold uppercase text-slate-600">Frequência</Label>
-                <Select
-                  value={formRecorrencia.frequencia}
-                  onValueChange={(v: any) => setFormRecorrencia({ ...formRecorrencia, frequencia: v })}
-                >
-                  <SelectTrigger className="h-10 text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="semanal">Semanal</SelectItem>
-                    <SelectItem value="quinzenal">Quinzenal</SelectItem>
-                    <SelectItem value="mensal">Mensal</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Dias da semana */}
-              <div className="space-y-1.5">
-                <Label className="text-xs font-bold uppercase text-slate-600">Dias da semana</Label>
-                <div className="flex gap-1 flex-wrap">
+                <Label className="text-xs font-bold uppercase text-slate-600">Repetir</Label>
+                <div className="grid grid-cols-2 gap-2">
                   {[
-                    { v: 0, label: "Dom" },
-                    { v: 1, label: "Seg" },
-                    { v: 2, label: "Ter" },
-                    { v: 3, label: "Qua" },
-                    { v: 4, label: "Qui" },
-                    { v: 5, label: "Sex" },
-                    { v: 6, label: "Sáb" },
-                  ].map((d) => {
-                    const ativo = formRecorrencia.diasSemana.includes(d.v);
-                    return (
-                      <button
-                        key={d.v}
-                        type="button"
-                        onClick={() => {
-                          const novosDias = ativo
-                            ? formRecorrencia.diasSemana.filter((x) => x !== d.v)
-                            : [...formRecorrencia.diasSemana, d.v].sort();
-                          if (novosDias.length === 0) return;
-                          setFormRecorrencia({ ...formRecorrencia, diasSemana: novosDias });
-                        }}
-                        className={`h-9 px-3 rounded-lg text-xs font-medium border-2 transition-all ${
-                          ativo
-                            ? "bg-blue-100 border-blue-400 text-blue-700"
-                            : "border-slate-200 text-slate-500 hover:border-slate-300"
-                        }`}
-                      >
-                        {d.label}
-                      </button>
-                    );
-                  })}
+                    { v: "diaria", label: "📅 Diariamente" },
+                    { v: "semanal", label: "📆 Semanalmente" },
+                    { v: "mensal", label: "🗓️ Mensalmente" },
+                    { v: "personalizado", label: "⚙️ Personalizado" },
+                  ].map((f) => (
+                    <button
+                      key={f.v}
+                      type="button"
+                      onClick={() => setFormRecorrencia({ ...formRecorrencia, frequencia: f.v as any })}
+                      className={`h-10 text-xs rounded-lg border-2 font-medium transition-all ${
+                        formRecorrencia.frequencia === f.v
+                          ? "bg-blue-100 border-blue-400 text-blue-700"
+                          : "border-slate-200 text-slate-500 hover:border-slate-300"
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
                 </div>
               </div>
+
+              {/* Dias da semana — só aparece no Personalizado */}
+              {formRecorrencia.frequencia === "personalizado" && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold uppercase text-slate-600">Dias da semana</Label>
+                  <div className="flex gap-1 flex-wrap">
+                    {[
+                      { v: 0, label: "Dom" },
+                      { v: 1, label: "Seg" },
+                      { v: 2, label: "Ter" },
+                      { v: 3, label: "Qua" },
+                      { v: 4, label: "Qui" },
+                      { v: 5, label: "Sex" },
+                      { v: 6, label: "Sáb" },
+                    ].map((d) => {
+                      const ativo = formRecorrencia.diasSemana.includes(d.v);
+                      return (
+                        <button
+                          key={d.v}
+                          type="button"
+                          onClick={() => {
+                            const novosDias = ativo
+                              ? formRecorrencia.diasSemana.filter((x) => x !== d.v)
+                              : [...formRecorrencia.diasSemana, d.v].sort();
+                            if (novosDias.length === 0) return;
+                            setFormRecorrencia({ ...formRecorrencia, diasSemana: novosDias });
+                          }}
+                          className={`h-9 px-3 rounded-lg text-xs font-medium border-2 transition-all ${
+                            ativo
+                              ? "bg-blue-100 border-blue-400 text-blue-700"
+                              : "border-slate-200 text-slate-500 hover:border-slate-300"
+                          }`}
+                        >
+                          {d.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Nº de sessões */}
               <div className="space-y-1.5">
