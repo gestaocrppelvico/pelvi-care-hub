@@ -20,7 +20,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   ChevronLeft, ChevronRight, Calendar, Clock, User, Plus, Search, X, Package, UserPlus,
-  MessageCircle, Send, FileText, ClipboardEdit, Eye, CheckCircle2, AlertCircle, Trash2, ExternalLink
+  MessageCircle, Send, FileText, ClipboardEdit, Eye, CheckCircle2, AlertCircle, Trash2, ExternalLink, Lock
 } from "lucide-react";
 import { aplicarTemplate, abrirWhatsapp, getPreferenciaWhatsApp } from "@/lib/crm";
 
@@ -31,6 +31,27 @@ const HORA_INICIO = 7;
 const HORA_FIM = 21;
 const ALTURA_HORA = 60;
 const DURACAO_PADRAO = 40;
+// ==========================================================
+// BLOQUEIOS DE AGENDA
+// ==========================================================
+const TIPOS_BLOQUEIO = [
+  { v: "almoco", label: "☕ Almoço", cor: "#e2e8f0" },
+  { v: "folga", label: "🏖️ Folga", cor: "#cbd5e1" },
+  { v: "ferias", label: "✈️ Férias", cor: "#dbeafe" },
+  { v: "reuniao", label: "📞 Reunião", cor: "#ede9fe" },
+  { v: "congresso", label: "🩺 Congresso", cor: "#dcfce7" },
+  { v: "outro", label: "⚙️ Outro", cor: "#f1f5f9" },
+];
+
+interface Bloqueio {
+  id: string;
+  profissional_id: string | null;
+  tipo: string;
+  data_inicio: string;
+  data_fim: string;
+  observacoes: string | null;
+  profissional?: { id: string; nome: string; cor_agenda: string | null } | null;
+}
 
 interface Atendimento {
   id: string;
@@ -224,6 +245,60 @@ function BlocoEvento({
   );
 }
 // ==========================================================
+// COMPONENTE: bloco de bloqueio
+// ==========================================================
+function BlocoBloqueio({
+  bloqueio,
+  top,
+  height,
+  leftPercent,
+  widthPercent,
+  onClick,
+}: {
+  bloqueio: Bloqueio;
+  top: number;
+  height: number;
+  leftPercent: number;
+  widthPercent: number;
+  onClick: () => void;
+}) {
+  const tipoInfo = TIPOS_BLOQUEIO.find((t) => t.v === bloqueio.tipo) || TIPOS_BLOQUEIO[5];
+  const inicio = new Date(bloqueio.data_inicio);
+  const fim = new Date(bloqueio.data_fim);
+
+  return (
+    <button
+      onClick={onClick}
+      className="absolute rounded-md px-1.5 py-1 text-left cursor-pointer hover:shadow-md z-0 overflow-hidden"
+      style={{
+        top: `${top}px`,
+        height: `${height}px`,
+        left: `calc(${leftPercent}% + 2px)`,
+        width: `calc(${widthPercent}% - 4px)`,
+        backgroundColor: tipoInfo.cor,
+        borderLeft: "3px solid #64748b",
+        backgroundImage:
+          "repeating-linear-gradient(45deg, transparent, transparent 6px, rgba(0,0,0,0.06) 6px, rgba(0,0,0,0.06) 12px)",
+      }}
+    >
+      <div className="text-[10px] font-bold text-slate-700 truncate leading-tight">
+        {tipoInfo.label}
+      </div>
+      {height > 40 && (
+        <div className="text-[9px] text-slate-600 truncate leading-tight">
+          {format(inicio, "HH:mm")} – {format(fim, "HH:mm")}
+        </div>
+      )}
+      {height > 60 && bloqueio.observacoes && (
+        <div className="text-[9px] text-slate-500 truncate leading-tight italic mt-0.5">
+          {bloqueio.observacoes}
+        </div>
+      )}
+    </button>
+  );
+}
+
+// ==========================================================
 // HELPER: calcular datas da recorrência
 // ==========================================================
 function calcularDatasRecorrencia(
@@ -377,6 +452,21 @@ export default function AgendaNova() {
   });
   const [previewDatas, setPreviewDatas] = useState<Date[]>([]);
   const [criandoRecorrencia, setCriandoRecorrencia] = useState(false);
+    // 🔥 States de bloqueios
+  const [bloqueios, setBloqueios] = useState<Bloqueio[]>([]);
+  const [modalBloqueioOpen, setModalBloqueioOpen] = useState(false);
+  const [criandoBloqueio, setCriandoBloqueio] = useState(false);
+  const [formBloqueio, setFormBloqueio] = useState({
+    tipo: "almoco",
+    profissional_id: "",
+    data_inicio: format(new Date(), "yyyy-MM-dd"),
+    hora_inicio: "12:00",
+    data_fim: format(new Date(), "yyyy-MM-dd"),
+    hora_fim: "13:00",
+    repetir: "nunca" as "nunca" | "diariamente" | "semanalmente" | "dias_uteis",
+    repetir_ate: "",
+    observacoes: "",
+  });
 
   useEffect(() => {
     const t = setInterval(() => setAgora(new Date()), 60 * 1000);
@@ -447,9 +537,26 @@ export default function AgendaNova() {
         query = query.eq("profissional_id", profFiltroUrl);
       }
 
-      const { data, error } = await query;
+           const { data, error } = await query;
       if (error) throw error;
       setAtendimentos((data as any) || []);
+
+      // 🔥 Carregar bloqueios no período
+      let queryBloq = supabase
+        .from("bloqueios_agenda")
+        .select(`
+          id, profissional_id, tipo, data_inicio, data_fim, observacoes,
+          profissional:profissionais(id, nome, cor_agenda)
+        `)
+        .gte("data_fim", start.toISOString())
+        .lte("data_inicio", end.toISOString());
+
+      if (!isAdmin && !isSecretaria && meuProfId) {
+        queryBloq = queryBloq.or(`profissional_id.eq.${meuProfId},profissional_id.is.null`);
+      }
+
+      const { data: bloqs } = await queryBloq;
+      setBloqueios((bloqs as any) || []);
     } catch (err: any) {
       toast.error("Erro ao carregar agenda: " + err.message);
     } finally {
@@ -908,7 +1015,112 @@ export default function AgendaNova() {
     }
   }
 
-  
+    // ============ BLOQUEIOS ============
+  function abrirModalBloqueio(data?: Date, profissionalId?: string) {
+    const hoje = data ? format(data, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
+    setFormBloqueio({
+      tipo: "almoco",
+      profissional_id: profissionalId || "",
+      data_inicio: hoje,
+      hora_inicio: "12:00",
+      data_fim: hoje,
+      hora_fim: "13:00",
+      repetir: "nunca",
+      repetir_ate: "",
+      observacoes: "",
+    });
+    setModalBloqueioOpen(true);
+  }
+
+  async function criarBloqueios() {
+    if (!formBloqueio.data_inicio || !formBloqueio.data_fim) {
+      toast.error("Preencha as datas");
+      return;
+    }
+
+    const dtInicio = new Date(`${formBloqueio.data_inicio}T${formBloqueio.hora_inicio}:00`);
+    const dtFim = new Date(`${formBloqueio.data_fim}T${formBloqueio.hora_fim}:00`);
+
+    if (dtFim <= dtInicio) {
+      toast.error("Fim deve ser depois do início");
+      return;
+    }
+
+    setCriandoBloqueio(true);
+    try {
+      const bloqueiosParaCriar: any[] = [];
+
+      if (formBloqueio.repetir === "nunca") {
+        bloqueiosParaCriar.push({
+          profissional_id: formBloqueio.profissional_id || null,
+          tipo: formBloqueio.tipo,
+          data_inicio: dtInicio.toISOString(),
+          data_fim: dtFim.toISOString(),
+          observacoes: formBloqueio.observacoes.trim() || null,
+        });
+      } else {
+        const limiteRecorrencia = formBloqueio.repetir_ate
+          ? new Date(`${formBloqueio.repetir_ate}T23:59:59`)
+          : new Date(dtInicio.getTime() + 90 * 24 * 60 * 60 * 1000);
+
+        const duracaoMs = dtFim.getTime() - dtInicio.getTime();
+        let cursor = new Date(dtInicio);
+        let safety = 0;
+
+        while (cursor <= limiteRecorrencia && safety < 200) {
+          safety++;
+
+          let adicionar = false;
+          if (formBloqueio.repetir === "diariamente") adicionar = true;
+          if (formBloqueio.repetir === "semanalmente" && cursor.getDay() === dtInicio.getDay()) adicionar = true;
+          if (formBloqueio.repetir === "dias_uteis" && cursor.getDay() >= 1 && cursor.getDay() <= 5) adicionar = true;
+
+          if (adicionar) {
+            bloqueiosParaCriar.push({
+              profissional_id: formBloqueio.profissional_id || null,
+              tipo: formBloqueio.tipo,
+              data_inicio: cursor.toISOString(),
+              data_fim: new Date(cursor.getTime() + duracaoMs).toISOString(),
+              observacoes: formBloqueio.observacoes.trim() || null,
+            });
+          }
+
+          cursor = addDays(cursor, 1);
+        }
+      }
+
+      if (bloqueiosParaCriar.length === 0) {
+        toast.error("Nenhum bloqueio gerado");
+        setCriandoBloqueio(false);
+        return;
+      }
+
+      const { error } = await supabase.from("bloqueios_agenda").insert(bloqueiosParaCriar);
+      if (error) throw error;
+
+      toast.success(`${bloqueiosParaCriar.length} bloqueio(s) criado(s)!`);
+      setModalBloqueioOpen(false);
+      await carregar();
+    } catch (err: any) {
+      toast.error("Erro: " + err.message);
+    } finally {
+      setCriandoBloqueio(false);
+    }
+  }
+
+  async function handleApagarBloqueio(b: Bloqueio) {
+    const tipoInfo = TIPOS_BLOQUEIO.find((t) => t.v === b.tipo);
+    if (!confirm(`Apagar bloqueio "${tipoInfo?.label || b.tipo}"?`)) return;
+    try {
+      const { error } = await supabase.from("bloqueios_agenda").delete().eq("id", b.id);
+      if (error) throw error;
+      toast.success("Bloqueio apagado");
+      await carregar();
+    } catch (err: any) {
+      toast.error("Erro: " + err.message);
+    }
+  }
+
   // ============ CRIAR ATENDIMENTO ============
   const abrirCriar = (data?: Date, horaInicio?: string, profissionalId?: string) => {
     const dia = data ? format(data, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
@@ -1199,8 +1411,11 @@ export default function AgendaNova() {
               </Button>
             ))}
           </div>
-          <Button size="sm" onClick={() => abrirCriar()} className="bg-emerald-600 hover:bg-emerald-700 h-8 text-xs font-bold">
+                    <Button size="sm" onClick={() => abrirCriar()} className="bg-emerald-600 hover:bg-emerald-700 h-8 text-xs font-bold">
             <Plus className="w-3.5 h-3.5 mr-1" /> Novo
+          </Button>
+          <Button size="sm" onClick={() => abrirModalBloqueio()} className="bg-slate-600 hover:bg-slate-700 h-8 text-xs font-bold">
+            <Lock className="w-3.5 h-3.5 mr-1" /> Bloquear
           </Button>
         </div>
       </div>
@@ -1242,6 +1457,29 @@ export default function AgendaNova() {
                   abrirCriar(currentDate, hora);
                 }}
               >
+                                {/* 🔥 Bloqueios — renderizam atrás dos eventos */}
+                {bloqueios
+                  .filter((b) => isSameDay(new Date(b.data_inicio), currentDate))
+                  .map((b) => {
+                    const ini = new Date(b.data_inicio);
+                    const fim = new Date(b.data_fim);
+                    const minIni = (ini.getHours() - HORA_INICIO) * 60 + ini.getMinutes();
+                    const minFim = (fim.getHours() - HORA_INICIO) * 60 + fim.getMinutes();
+                    const top = Math.max(0, (minIni / 60) * ALTURA_HORA);
+                    const height = Math.max(((minFim - minIni) / 60) * ALTURA_HORA, 26);
+                    return (
+                      <BlocoBloqueio
+                        key={b.id}
+                        bloqueio={b}
+                        top={top}
+                        height={height}
+                        leftPercent={0}
+                        widthPercent={100}
+                        onClick={() => handleApagarBloqueio(b)}
+                      />
+                    );
+                  })}
+
                 {atendimentosDoDia.length === 0 ? (
                   <div className="flex items-center justify-center h-full text-sm text-muted-foreground pointer-events-none">
                     Nenhum atendimento. Clique em um horário para criar.
@@ -2184,6 +2422,169 @@ export default function AgendaNova() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+            {/* MODAL BLOQUEIO */}
+      <Dialog open={modalBloqueioOpen} onOpenChange={setModalBloqueioOpen}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Lock className="w-5 h-5 text-slate-600" /> Novo Bloqueio
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 pt-2">
+            {/* Tipo */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold uppercase text-slate-600">Tipo</Label>
+              <Select value={formBloqueio.tipo} onValueChange={(v) => setFormBloqueio({ ...formBloqueio, tipo: v })}>
+                <SelectTrigger className="h-10 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TIPOS_BLOQUEIO.map((t) => (
+                    <SelectItem key={t.v} value={t.v}>{t.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Profissional */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold uppercase text-slate-600">Profissional</Label>
+              <Select
+                value={formBloqueio.profissional_id || "__todas__"}
+                onValueChange={(v) => setFormBloqueio({ ...formBloqueio, profissional_id: v === "__todas__" ? "" : v })}
+              >
+                <SelectTrigger className="h-10 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__todas__">🏥 Clínica toda (todos os profissionais)</SelectItem>
+                  {profissionais.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: p.cor_agenda || "#3b82f6" }} />
+                        <span>{p.nome}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Data/hora início */}
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold uppercase text-slate-600">Data início</Label>
+                <Input
+                  type="date"
+                  value={formBloqueio.data_inicio}
+                  onChange={(e) => {
+                    const novaData = e.target.value;
+                    setFormBloqueio({
+                      ...formBloqueio,
+                      data_inicio: novaData,
+                      data_fim: formBloqueio.data_fim === formBloqueio.data_inicio ? novaData : formBloqueio.data_fim,
+                    });
+                  }}
+                  className="h-10 text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold uppercase text-slate-600">Hora início</Label>
+                <Input
+                  type="time"
+                  value={formBloqueio.hora_inicio}
+                  onChange={(e) => setFormBloqueio({ ...formBloqueio, hora_inicio: e.target.value })}
+                  className="h-10 text-sm"
+                />
+              </div>
+            </div>
+
+            {/* Data/hora fim */}
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold uppercase text-slate-600">Data fim</Label>
+                <Input
+                  type="date"
+                  value={formBloqueio.data_fim}
+                  onChange={(e) => setFormBloqueio({ ...formBloqueio, data_fim: e.target.value })}
+                  className="h-10 text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold uppercase text-slate-600">Hora fim</Label>
+                <Input
+                  type="time"
+                  value={formBloqueio.hora_fim}
+                  onChange={(e) => setFormBloqueio({ ...formBloqueio, hora_fim: e.target.value })}
+                  className="h-10 text-sm"
+                />
+              </div>
+            </div>
+
+            {/* Repetir */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold uppercase text-slate-600">Repetir</Label>
+              <Select
+                value={formBloqueio.repetir}
+                onValueChange={(v: any) => setFormBloqueio({ ...formBloqueio, repetir: v })}
+              >
+                <SelectTrigger className="h-10 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="nunca">Nunca (só este dia)</SelectItem>
+                  <SelectItem value="diariamente">Diariamente</SelectItem>
+                  <SelectItem value="semanalmente">Semanalmente (mesmo dia da semana)</SelectItem>
+                  <SelectItem value="dias_uteis">Apenas dias úteis (Seg-Sex)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Repetir até */}
+            {formBloqueio.repetir !== "nunca" && (
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold uppercase text-slate-600">
+                  Repetir até (opcional)
+                </Label>
+                <Input
+                  type="date"
+                  value={formBloqueio.repetir_ate}
+                  onChange={(e) => setFormBloqueio({ ...formBloqueio, repetir_ate: e.target.value })}
+                  className="h-10 text-sm"
+                  min={formBloqueio.data_inicio}
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Se vazio, repete até 90 dias.
+                </p>
+              </div>
+            )}
+
+            {/* Observações */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold uppercase text-slate-600">Observações</Label>
+              <Textarea
+                value={formBloqueio.observacoes}
+                onChange={(e) => setFormBloqueio({ ...formBloqueio, observacoes: e.target.value })}
+                rows={2}
+                placeholder="Opcional"
+                className="text-sm"
+              />
+            </div>
+
+            {/* Botões */}
+            <div className="flex gap-2 pt-2">
+              <Button variant="outline" className="flex-1 h-11" onClick={() => setModalBloqueioOpen(false)} disabled={criandoBloqueio}>
+                Cancelar
+              </Button>
+              <Button className="flex-1 h-11 bg-slate-700 hover:bg-slate-800 font-bold" onClick={criarBloqueios} disabled={criandoBloqueio}>
+                {criandoBloqueio ? "Criando..." : "🔒 Criar Bloqueio"}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
