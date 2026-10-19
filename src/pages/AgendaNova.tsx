@@ -467,7 +467,12 @@ export default function AgendaNova() {
     repetir_ate: "",
     observacoes: "",
   });
+  // 🔥 States de conflito de bloqueio
+  const [modalConflitoOpen, setModalConflitoOpen] = useState(false);
+  const [conflitoInfo, setConflitoInfo] = useState<Bloqueio | null>(null);
 
+  const [modalConflitoRecOpen, setModalConflitoRecOpen] = useState(false);
+  const [datasConflitoRec, setDatasConflitoRec] = useState<Date[]>([]);
   useEffect(() => {
     const t = setInterval(() => setAgora(new Date()), 60 * 1000);
     return () => clearInterval(t);
@@ -971,11 +976,48 @@ export default function AgendaNova() {
   }, [recorrenciaBase, formRecorrencia]);
 
   // ============ CRIAR RECORRÊNCIA (bulk insert) ============
-  async function criarRecorrencia() {
+    async function criarRecorrencia(pularBloqueadas = false, ignorarConflito = false) {
     if (!recorrenciaBase) return;
     if (previewDatas.length === 0) {
       toast.error("Nenhuma data válida para criar");
       return;
+    }
+
+    const [hI, mI] = recorrenciaBase.hora_inicio.split(":").map(Number);
+    const [hF, mF] = recorrenciaBase.hora_fim.split(":").map(Number);
+
+    // 🔥 Verifica conflitos
+    let datasFinais = [...previewDatas];
+
+    if (!ignorarConflito) {
+      const conflitos = previewDatas.filter((d) => {
+        const dtInicio = new Date(d);
+        dtInicio.setHours(hI, mI, 0, 0);
+        const dtFim = new Date(d);
+        dtFim.setHours(hF, mF, 0, 0);
+        return checarConflito(dtInicio, dtFim, recorrenciaBase.profissional_id) !== null;
+      });
+
+      if (conflitos.length > 0) {
+        setDatasConflitoRec(conflitos);
+        setModalConflitoRecOpen(true);
+        return; // Pausa a criação para o usuário decidir
+      }
+    }
+
+    if (pularBloqueadas) {
+      datasFinais = previewDatas.filter((d) => {
+        const dtInicio = new Date(d);
+        dtInicio.setHours(hI, mI, 0, 0);
+        const dtFim = new Date(d);
+        dtFim.setHours(hF, mF, 0, 0);
+        return checarConflito(dtInicio, dtFim, recorrenciaBase.profissional_id) === null;
+      });
+      if (datasFinais.length === 0) {
+        toast.error("Todas as datas caem em bloqueios.");
+        setModalConflitoRecOpen(false);
+        return;
+      }
     }
 
     setCriandoRecorrencia(true);
@@ -983,7 +1025,7 @@ export default function AgendaNova() {
       const [hI, mI] = recorrenciaBase.hora_inicio.split(":").map(Number);
       const [hF, mF] = recorrenciaBase.hora_fim.split(":").map(Number);
 
-      const atendimentosParaCriar = previewDatas.map((d) => {
+            const atendimentosParaCriar = datasFinais.map((d) => {
         const dtInicio = new Date(d);
         dtInicio.setHours(hI, mI, 0, 0);
         const dtFim = new Date(d);
@@ -1013,6 +1055,19 @@ export default function AgendaNova() {
     } finally {
       setCriandoRecorrencia(false);
     }
+  }
+  // ============ VERIFICAR CONFLITO ============
+  function checarConflito(inicio: Date, fim: Date, profId: string | null): Bloqueio | null {
+    return bloqueios.find((b) => {
+      // Se o bloqueio é de um profissional específico e não é o mesmo do atendimento, ignora
+      if (b.profissional_id !== null && b.profissional_id !== profId) return false;
+      
+      const bInicio = new Date(b.data_inicio);
+      const bFim = new Date(b.data_fim);
+      
+      // Verifica se há sobreposição de horários
+      return inicio < bFim && fim > bInicio;
+    }) || null;
   }
 
     // ============ BLOQUEIOS ============
@@ -1295,21 +1350,29 @@ export default function AgendaNova() {
     }
   }
 
-  async function salvarAtendimento() {
+    async function salvarAtendimento(ignorarConflito = false) {
     if (!formCriar.paciente_id) return toast.error("Selecione o paciente");
     if (!formCriar.profissional_id) return toast.error("Selecione o profissional");
     if (!formCriar.data || !formCriar.hora_inicio || !formCriar.hora_fim) return toast.error("Preencha data e horário");
 
-    setCriando(true);
-    try {
-      const dataInicio = new Date(`${formCriar.data}T${formCriar.hora_inicio}:00`);
-      const dataFim = new Date(`${formCriar.data}T${formCriar.hora_fim}:00`);
-      if (dataFim <= dataInicio) {
-        toast.error("Fim deve ser depois do início");
-        setCriando(false);
+    const dataInicio = new Date(`${formCriar.data}T${formCriar.hora_inicio}:00`);
+    const dataFim = new Date(`${formCriar.data}T${formCriar.hora_fim}:00`);
+    if (dataFim <= dataInicio) {
+      return toast.error("Fim deve ser depois do início");
+    }
+
+    // 🔥 Verifica conflito de bloqueio
+    if (!ignorarConflito) {
+      const conflito = checarConflito(dataInicio, dataFim, formCriar.profissional_id);
+      if (conflito) {
+        setConflitoInfo(conflito);
+        setModalConflitoOpen(true);
         return;
       }
+    }
 
+    setCriando(true);
+    try {
       const { data: pacData } = formCriar.paciente_pacote_id
         ? await supabase.from("paciente_pacotes").select("autorizacao_id").eq("id", formCriar.paciente_pacote_id).maybeSingle()
         : { data: null };
@@ -2422,6 +2485,99 @@ export default function AgendaNova() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+      {/* MODAL CONFLITO — ATENDIMENTO ÚNICO */}
+      <Dialog open={modalConflitoOpen} onOpenChange={setModalConflitoOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-600">
+              ⚠️ Conflito com Bloqueio
+            </DialogTitle>
+          </DialogHeader>
+          {conflitoInfo && (
+            <div className="space-y-4 pt-2">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-900">
+                <p>
+                  Existe um bloqueio de <strong>{TIPOS_BLOQUEIO.find((t) => t.v === conflitoInfo.tipo)?.label}</strong> 
+                  {" "}neste horário
+                  {conflitoInfo.profissional_id === null ? " para a clínica toda" : ` para ${conflitoInfo.profissional?.nome}`}.
+                </p>
+                <p className="mt-2 text-xs font-medium">
+                  Das {format(new Date(conflitoInfo.data_inicio), "HH:mm")} às {format(new Date(conflitoInfo.data_fim), "HH:mm")}
+                </p>
+              </div>
+              <p className="text-sm text-slate-600">
+                Deseja criar o atendimento mesmo assim?
+              </p>
+              <div className="flex gap-2">
+                <Button variant="outline" className="flex-1" onClick={() => setModalConflitoOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button
+                  className="flex-1 bg-amber-600 hover:bg-amber-700 font-bold"
+                  onClick={() => {
+                    setModalConflitoOpen(false);
+                    salvarAtendimento(true); // Prossegue ignorando o conflito
+                  }}
+                >
+                  Criar mesmo assim
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL CONFLITO — RECORRÊNCIA */}
+      <Dialog open={modalConflitoRecOpen} onOpenChange={setModalConflitoRecOpen}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-600">
+              ⚠️ {datasConflitoRec.length} datas caem em bloqueios
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 max-h-40 overflow-y-auto text-xs space-y-1">
+              {datasConflitoRec.map((d, i) => (
+                <div key={i} className="flex justify-between">
+                  <span className="text-amber-900">• {format(d, "EEE, dd/MM/yyyy", { locale: ptBR })}</span>
+                  <span className="text-amber-700 font-medium">{recorrenciaBase?.hora_inicio}</span>
+                </div>
+              ))}
+            </div>
+            <p className="text-sm text-slate-600">
+              Como deseja prosseguir?
+            </p>
+            <div className="flex flex-col gap-2">
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => setModalConflitoRecOpen(false)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                className="w-full bg-amber-600 hover:bg-amber-700 font-bold"
+                onClick={() => {
+                  setModalConflitoRecOpen(false);
+                  criarRecorrencia(false, true); // Ignora os bloqueios e cria todas
+                }}
+              >
+                Criar todas as {previewDatas.length} sessões
+              </Button>
+              <Button
+                variant="secondary"
+                className="w-full font-bold text-slate-700"
+                onClick={() => {
+                  setModalConflitoRecOpen(false);
+                  criarRecorrencia(true, false); // Pula as bloqueadas
+                }}
+              >
+                Pular bloqueadas (criar {previewDatas.length - datasConflitoRec.length})
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
