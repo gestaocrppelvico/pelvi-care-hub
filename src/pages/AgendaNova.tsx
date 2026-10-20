@@ -1276,17 +1276,23 @@ export default function AgendaNova() {
       .eq("paciente_id", p.id)
       .gt("sessoes_restantes", 0)
       .order("sessoes_restantes", { ascending: true })
-      .limit(1);
+      
 
-    if (pacotes && pacotes.length > 0) {
-      const pac = pacotes[0] as any;
+        if (pacotes && pacotes.length > 0) {
+      // Auto-seleciona o primeiro, mas guarda a lista para o Dropdown
+        const [pacotesDisponiveis, setPacotesDisponiveis] = useState<any[]>([]);
+          const pac = pacotes[0] as any;
       const nome = pac.autorizacao?.plano
         ? `Plano ${pac.autorizacao.plano}`
         : pac.pacote?.nome || pac.servico?.nome || "Item";
       setPacoteSugerido({ id: pac.id, label: `${nome} (${pac.sessoes_restantes} rest.)` });
       setFormCriar((prev) => ({ ...prev, paciente_pacote_id: pac.id }));
+      
+      // 🔥 NOVO: Precisamos guardar todos os pacotes num state para o Dropdown
+      setPacotesDisponiveis(pacotes); 
     } else {
       setPacoteSugerido(null);
+      setPacotesDisponiveis([]);
     }
   }
   // 🔥 Criar pacote rápido para o paciente selecionado
@@ -2290,21 +2296,42 @@ export default function AgendaNova() {
               </div>
             </div>
 
-                        {/* Pacote vinculado OU opção de criar */}
+                                    {/* Pacote vinculado OU opção de criar */}
             {formCriar.paciente_id && (
               <div className="space-y-2">
                 <Label className="text-xs font-bold uppercase text-slate-600">Pacote/Serviço *</Label>
 
-                {pacoteSugerido ? (
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center gap-3">
-                    <Package className="w-5 h-5 text-blue-600 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-slate-800 truncate">{pacoteSugerido.label}</div>
-                    </div>
-                    <Button size="sm" variant="ghost" className="h-7 text-xs text-blue-700 hover:bg-blue-100" onClick={() => { setPacoteSugerido(null); setFormCriar({ ...formCriar, paciente_pacote_id: "" }); }}>
-                      Remover
-                    </Button>
-                  </div>
+                {/* 🔥 NOVO: Se o paciente tem pacotes, mostra o Dropdown para escolher */}
+                {pacotesDisponiveis.length > 0 ? (
+                  <Select 
+                    value={formCriar.paciente_pacote_id || ""} 
+                    onValueChange={(v) => {
+                      const pac = pacotesDisponiveis.find(p => p.id === v);
+                      const nome = pac.autorizacao?.plano 
+                        ? `Plano ${pac.autorizacao.plano}` 
+                        : pac.pacote?.nome || pac.servico?.nome || "Item";
+                        
+                      setFormCriar({ ...formCriar, paciente_pacote_id: v });
+                      setPacoteSugerido({ id: v, label: `${nome} (${pac.sessoes_restantes} rest.)` });
+                    }}
+                  >
+                    <SelectTrigger className="h-10 text-sm bg-blue-50 border-blue-200">
+                      <Package className="w-4 h-4 mr-2 text-blue-600" />
+                      <SelectValue placeholder="Selecione o pacote" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {pacotesDisponiveis.map((pac) => {
+                        const nome = pac.autorizacao?.plano 
+                          ? `Plano ${pac.autorizacao.plano}` 
+                          : pac.pacote?.nome || pac.servico?.nome || "Item";
+                        return (
+                          <SelectItem key={pac.id} value={pac.id}>
+                            {nome} ({pac.sessoes_restantes} restantes)
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
                 ) : !mostrarCriarPacote ? (
                   <button
                     type="button"
