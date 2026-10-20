@@ -1242,6 +1242,7 @@ export default function AgendaNova() {
     setBuscaPacienteCriar("");
     setSugestoesPacientesCriar([]);
     setPacoteSugerido(null);
+    setPacotesDisponiveis([]);
     setCriandoPaciente(false);
     setNovoPacienteNome("");
     setNovoPacienteTelefone("");
