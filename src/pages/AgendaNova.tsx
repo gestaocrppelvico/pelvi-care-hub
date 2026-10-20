@@ -1,3 +1,6 @@
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Bell, CheckCheck } from "lucide-react";
+import { useNotificacoes } from "@/hooks/useNotificacoes";
 import { useEffect, useState, useCallback } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import {
@@ -373,6 +376,8 @@ export default function AgendaNova() {
   const [selectedAtend, setSelectedAtend] = useState<Atendimento | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [meuProfId, setMeuProfId] = useState<string | null>(null);
+    // 🔥 Hook de notificações
+  const { notificacoes, naoLidas, marcarComoLida, marcarTodasComoLidas } = useNotificacoes(meuProfId);
   const [agora, setAgora] = useState(new Date());
   const [busy, setBusy] = useState(false);
     // 🔥 States do modo edição
@@ -466,6 +471,7 @@ export default function AgendaNova() {
     repetir: "nunca" as "nunca" | "diariamente" | "semanalmente" | "dias_uteis",
     repetir_ate: "",
     observacoes: "",
+    notificar: true, // 🔥 NOVO
   });
   // 🔥 States de conflito de bloqueio
   const [modalConflitoOpen, setModalConflitoOpen] = useState(false);
@@ -763,7 +769,18 @@ export default function AgendaNova() {
         .from("atendimentos")
         .update(updateData)
         .eq("id", selectedAtend.id);
-      if (error) throw error;
+            if (error) throw error;
+
+      // 🔥 Notifica mudança de horário
+      if (mudouDataHora && selectedAtend.profissional_id) {
+        const isCancel = editForm.tipo_alteracao === "cancelamento";
+        await supabase.from("notificacoes").insert({
+          profissional_id: selectedAtend.profissional_id,
+          tipo: editForm.tipo_alteracao,
+          titulo: isCancel ? "Sessão Cancelada" : "Sessão Remarcada",
+          mensagem: `${selectedAtend.paciente?.nome || selectedAtend.nome_paciente_livre} · De ${format(new Date(selectedAtend.data_inicio), "dd/MM HH:mm")} para ${format(novaData, "dd/MM HH:mm")}`,
+        });
+      }
 
       toast.success("Atendimento atualizado!");
       setModoEdicao(false);
@@ -1150,11 +1167,37 @@ export default function AgendaNova() {
         return;
       }
 
-      const { error } = await supabase.from("bloqueios_agenda").insert(bloqueiosParaCriar);
+            const { error } = await supabase.from("bloqueios_agenda").insert(bloqueiosParaCriar);
       if (error) throw error;
 
-      toast.success(`${bloqueiosParaCriar.length} bloqueio(s) criado(s)!`);
-      setModalBloqueioOpen(false);
+      // 🔥 NOVO: Dispara as notificações se o checkbox estiver marcado
+      if (formBloqueio.notificar) {
+        const tipoLabel = TIPOS_BLOQUEIO.find((t) => t.v === formBloqueio.tipo)?.label || "Bloqueio";
+        const msg = `${format(dtInicio, "dd/MM 'às' HH:mm")} até ${format(dtFim, "dd/MM 'às' HH:mm")}`;
+        
+        // Descobre quem deve receber a notificação
+        let profsNotificar: string[] = [];
+        if (formBloqueio.profissional_id) {
+          // Se for bloqueio de uma profissional específica, avisa só ela
+          profsNotificar = [formBloqueio.profissional_id];
+        } else {
+          // Se for "Clínica Toda" (profissional_id vazio), avisa TODOS
+          profsNotificar = profissionais.map((p) => p.id);
+        }
+
+        // Cria o pacote de notificações
+        const notificacoesParaCriar = profsNotificar.map((pid) => ({
+          profissional_id: pid,
+          tipo: "bloqueio",
+          titulo: `Novo Bloqueio: ${tipoLabel.replace(/[^a-zA-ZÀ-ÿ ]/g, "").trim()}`,
+          mensagem: msg,
+        }));
+
+        // Salva no banco (o sino vai piscar na tela delas)
+        await supabase.from("notificacoes").insert(notificacoesParaCriar);
+      }
+
+      toast.success(`${bloqueiosParaCriar.length} bloqueio(s) criado(s)!`);      setModalBloqueioOpen(false);
       await carregar();
     } catch (err: any) {
       toast.error("Erro: " + err.message);
@@ -1389,7 +1432,17 @@ export default function AgendaNova() {
         paciente_pacote_id: formCriar.paciente_pacote_id || null,
         observacoes: formCriar.observacoes.trim() || null,
       });
-      if (error) throw error;
+            if (error) throw error;
+
+      // 🔥 Notifica o profissional
+      if (formCriar.profissional_id) {
+        await supabase.from("notificacoes").insert({
+          profissional_id: formCriar.profissional_id,
+          tipo: "novo_agendamento",
+          titulo: "Novo Agendamento",
+          mensagem: `${formCriar.paciente_nome} · ${format(new Date(dataInicio), "dd/MM")} às ${formCriar.hora_inicio}`,
+        });
+      }
 
       toast.success("Atendimento criado!");
       setModalCriarOpen(false);
@@ -1466,7 +1519,7 @@ export default function AgendaNova() {
           </h2>
         </div>
 
-        <div className="flex gap-2 items-center self-stretch sm:self-auto">
+                <div className="flex gap-2 items-center self-stretch sm:self-auto">
           <div className="flex gap-1 bg-slate-100 p-1 rounded-lg">
             {(["day", "week", "month", "profissionais"] as const).map((v) => (
               <Button key={v} variant={view === v ? "default" : "ghost"} size="sm" onClick={() => setView(v)} className="text-xs capitalize font-semibold h-8">
@@ -1474,14 +1527,64 @@ export default function AgendaNova() {
               </Button>
             ))}
           </div>
-                    <Button size="sm" onClick={() => abrirCriar()} className="bg-emerald-600 hover:bg-emerald-700 h-8 text-xs font-bold">
+
+          {/* 🔥 SINO DE NOTIFICAÇÕES */}
+          {meuProfId && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="icon" className="h-8 w-8 relative bg-white">
+                  <Bell className="w-4 h-4" />
+                  {naoLidas > 0 && (
+                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center">
+                      {naoLidas}
+                    </span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80 p-0" align="end">
+                <div className="flex items-center justify-between p-3 border-b bg-slate-50">
+                  <h3 className="font-bold text-sm">Notificações</h3>
+                  {naoLidas > 0 && (
+                    <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={marcarTodasComoLidas}>
+                      <CheckCheck className="w-3 h-3 mr-1" /> Marcar todas
+                    </Button>
+                  )}
+                </div>
+                <div className="max-h-80 overflow-y-auto">
+                  {notificacoes.length === 0 ? (
+                    <p className="text-xs text-center text-muted-foreground p-4">Nenhuma notificação.</p>
+                  ) : (
+                    notificacoes.map((n) => (
+                      <div key={n.id} className={`p-3 border-b last:border-0 ${!n.lida ? "bg-blue-50/50" : ""}`}>
+                        <div className="flex justify-between items-start gap-2">
+                          <div className="flex-1">
+                            <p className="text-sm font-bold text-slate-800">{n.titulo}</p>
+                            {n.mensagem && <p className="text-xs text-slate-600 mt-0.5">{n.mensagem}</p>}
+                            <p className="text-[10px] text-muted-foreground mt-1">
+                              {format(new Date(n.created_at), "dd/MM 'às' HH:mm")}
+                            </p>
+                          </div>
+                          {!n.lida && (
+                            <button onClick={() => marcarComoLida(n.id)} className="text-blue-500 hover:bg-blue-100 p-1 rounded">
+                              <CheckCheck className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
+
+          <Button size="sm" onClick={() => abrirCriar()} className="bg-emerald-600 hover:bg-emerald-700 h-8 text-xs font-bold">
             <Plus className="w-3.5 h-3.5 mr-1" /> Novo
           </Button>
           <Button size="sm" onClick={() => abrirModalBloqueio()} className="bg-slate-600 hover:bg-slate-700 h-8 text-xs font-bold">
             <Lock className="w-3.5 h-3.5 mr-1" /> Bloquear
           </Button>
         </div>
-      </div>
 
       {/* TOGGLE */}
       {view === "day" && (
@@ -2730,6 +2833,16 @@ export default function AgendaNova() {
                 className="text-sm"
               />
             </div>
+                        {/* 🔥 Checkbox de Notificar */}
+            <label className="flex items-center gap-2 text-sm cursor-pointer bg-amber-50 border border-amber-200 p-3 rounded-lg">
+              <input
+                type="checkbox"
+                checked={formBloqueio.notificar}
+                onChange={(e) => setFormBloqueio({ ...formBloqueio, notificar: e.target.checked })}
+                className="accent-amber-600 w-4 h-4"
+              />
+              <span className="font-medium text-amber-800">Notificar os profissionais sobre este bloqueio</span>
+            </label>
 
             {/* Botões */}
             <div className="flex gap-2 pt-2">
