@@ -2590,7 +2590,8 @@ export default function AgendaNova() {
           )}
         </DialogContent>
       </Dialog>
-      {/* MODAL CONFLITO — ATENDIMENTO ÚNICO */}
+      
+              {/* MODAL CONFLITO — ATENDIMENTO ÚNICO */}
       <Dialog open={modalConflitoOpen} onOpenChange={setModalConflitoOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -2684,7 +2685,7 @@ export default function AgendaNova() {
         </DialogContent>
       </Dialog>
 
-            {/* MODAL BLOQUEIO */}
+      {/* MODAL BLOQUEIO */}
       <Dialog open={modalBloqueioOpen} onOpenChange={setModalBloqueioOpen}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -2833,7 +2834,8 @@ export default function AgendaNova() {
                 className="text-sm"
               />
             </div>
-                        {/* 🔥 Checkbox de Notificar */}
+
+            {/* 🔥 Checkbox de Notificar */}
             <label className="flex items-center gap-2 text-sm cursor-pointer bg-amber-50 border border-amber-200 p-3 rounded-lg">
               <input
                 type="checkbox"
@@ -2857,7 +2859,7 @@ export default function AgendaNova() {
         </DialogContent>
       </Dialog>
 
-          {/* MODAL WHATSAPP */}
+      {/* MODAL WHATSAPP */}
       <Dialog open={modalWhatsAppOpen} onOpenChange={setModalWhatsAppOpen}>
         <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
