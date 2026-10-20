@@ -1037,12 +1037,9 @@ export default function AgendaNova() {
       }
     }
 
-    setCriandoRecorrencia(true);
+        setCriandoRecorrencia(true);
     try {
-      const [hI, mI] = recorrenciaBase.hora_inicio.split(":").map(Number);
-      const [hF, mF] = recorrenciaBase.hora_fim.split(":").map(Number);
-
-            const atendimentosParaCriar = datasFinais.map((d) => {
+      const atendimentosParaCriar = datasFinais.map((d) => {
         const dtInicio = new Date(d);
         dtInicio.setHours(hI, mI, 0, 0);
         const dtFim = new Date(d);
@@ -1247,8 +1244,8 @@ export default function AgendaNova() {
     setCriandoPaciente(false);
     setNovoPacienteNome("");
     setNovoPacienteTelefone("");
-    setModalCriarOpen(true);
-  };
+        setModalCriarOpen(true);
+
     // 🔥 Carregar planos e pacotes/serviços
     supabase.from("planos_saude").select("id, nome").eq("ativo", true).then(({ data }) => setListaPlanos(data || []));
     Promise.all([
@@ -1261,6 +1258,8 @@ export default function AgendaNova() {
       ];
       setListaPacotesServicos(combined);
     });
+  };
+
   async function selecionarPacienteCriar(p: { id: string; nome: string; telefone: string | null }) {
     setFormCriar((prev) => ({ ...prev, paciente_id: p.id, paciente_nome: p.nome }));
     setBuscaPacienteCriar("");
@@ -1584,6 +1583,7 @@ export default function AgendaNova() {
           <Button size="sm" onClick={() => abrirModalBloqueio()} className="bg-slate-600 hover:bg-slate-700 h-8 text-xs font-bold">
             <Lock className="w-3.5 h-3.5 mr-1" /> Bloquear
           </Button>
+        </div>
         </div>
 
       {/* TOGGLE */}
