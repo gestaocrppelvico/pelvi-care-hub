@@ -420,6 +420,7 @@ export default function AgendaNova() {
   const [novoPacienteTelefone, setNovoPacienteTelefone] = useState("");
     // 🔥 States para criar pacote no modal
   const [mostrarCriarPacote, setMostrarCriarPacote] = useState(false);
+  const [pacotesDisponiveis, setPacotesDisponiveis] = useState<any[]>([]);
   const [listaPlanos, setListaPlanos] = useState<any[]>([]);
   const [listaPacotesServicos, setListaPacotesServicos] = useState<any[]>([]);
   const [novoPacoteForm, setNovoPacoteForm] = useState({
@@ -1260,7 +1261,7 @@ export default function AgendaNova() {
     });
   };
 
-  async function selecionarPacienteCriar(p: { id: string; nome: string; telefone: string | null }) {
+    async function selecionarPacienteCriar(p: { id: string; nome: string; telefone: string | null }) {
     setFormCriar((prev) => ({ ...prev, paciente_id: p.id, paciente_nome: p.nome }));
     setBuscaPacienteCriar("");
     setSugestoesPacientesCriar([]);
@@ -1275,13 +1276,24 @@ export default function AgendaNova() {
       `)
       .eq("paciente_id", p.id)
       .gt("sessoes_restantes", 0)
-      .order("sessoes_restantes", { ascending: true })
-      
+      .order("sessoes_restantes", { ascending: true });
 
-        if (pacotes && pacotes.length > 0) {
-      // Auto-seleciona o primeiro, mas guarda a lista para o Dropdown
-        const [pacotesDisponiveis, setPacotesDisponiveis] = useState<any[]>([]);
-          const pac = pacotes[0] as any;
+    if (pacotes && pacotes.length > 0) {
+      const pac = pacotes[0] as any;
+      const nome = pac.autorizacao?.plano
+        ? `Plano ${pac.autorizacao.plano}`
+        : pac.pacote?.nome || pac.servico?.nome || "Item";
+        
+      setPacoteSugerido({ id: pac.id, label: `${nome} (${pac.sessoes_restantes} rest.)` });
+      setFormCriar((prev) => ({ ...prev, paciente_pacote_id: pac.id }));
+      
+      // 🔥 Salva todos os pacotes para o Dropdown
+      setPacotesDisponiveis(pacotes); 
+    } else {
+      setPacoteSugerido(null);
+      setPacotesDisponiveis([]);
+    }
+  }
       const nome = pac.autorizacao?.plano
         ? `Plano ${pac.autorizacao.plano}`
         : pac.pacote?.nome || pac.servico?.nome || "Item";
