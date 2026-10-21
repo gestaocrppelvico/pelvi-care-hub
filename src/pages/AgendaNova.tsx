@@ -1454,7 +1454,7 @@ export default function AgendaNova() {
     }
   }
 
-      async function salvarAtendimento(ignorarConflito = false) {
+        async function salvarAtendimento(ignorarConflito = false) {
     if (!formCriar.paciente_id) return toast.error("Selecione o paciente");
     if (!formCriar.profissional_id) return toast.error("Selecione o profissional");
     if (!formCriar.data || !formCriar.hora_inicio || !formCriar.hora_fim) return toast.error("Preencha data e horário");
@@ -1472,7 +1472,7 @@ export default function AgendaNova() {
       }
     }
 
-    // 🔥 Verifica se precisa abrir a recorrência ANTES de salvar o 1º
+    // 🔥 Se tem pacote, verifica se precisa de recorrência ANTES de salvar o 1º
     if (formCriar.paciente_pacote_id) {
       const { data: pacInfo } = await supabase
         .from("paciente_pacotes")
@@ -1483,7 +1483,6 @@ export default function AgendaNova() {
       const restantes = (pacInfo?.sessoes_totais || 0) - (pacInfo?.sessoes_realizadas || 0);
 
       if (restantes > 1) {
-        // Não salva ainda! Apenas prepara o modal.
         const diaBase = new Date(`${formCriar.data}T${formCriar.hora_inicio}:00`);
         setRecorrenciaBase({
           paciente_id: formCriar.paciente_id,
@@ -1502,17 +1501,15 @@ export default function AgendaNova() {
           diasSemana: [diaBase.getDay()],
           pularFinsDeSemana: true,
         });
-        setModalCriarOpen(false); // Fecha o modal de criar
-        setModalRecorrenciaOpen(true); // Abre o de recorrência
-        return; // Para a execução aqui
+        setModalCriarOpen(false); 
+        setModalRecorrenciaOpen(true); 
+        return; 
       }
     }
 
-    // Se não tem recorrência, salva o evento único
     await executarInsertAtendimento();
   }
 
-  // Função separada para o Insert (usada pelo salvar normal e pelo "Não criar")
   async function executarInsertAtendimento() {
     setCriando(true);
     try {
@@ -1556,7 +1553,6 @@ export default function AgendaNova() {
       setCriando(false);
     }
   }
-      
   // ============ HELPERS ============
   const prontoParaCheckin =
     !!selectedAtend?.paciente_id && !!selectedAtend?.paciente_pacote_id;
