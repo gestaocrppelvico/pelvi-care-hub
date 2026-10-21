@@ -366,7 +366,7 @@ export default function AgendaNova() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const profFiltroUrl = searchParams.get("profissional");
-
+  const [filtroPaciente, setFiltroPaciente] = useState("");
   const [view, setView] = useState<ViewMode>("day");
   const [modoDia, setModoDia] = useState<ModoDia>("unica");
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -591,7 +591,13 @@ export default function AgendaNova() {
     else setCurrentDate((d) => addMonths(d, 1));
   };
 
-  const atendimentosDoDia = atendimentos.filter((a) =>
+    const atendimentosFiltrados = atendimentos.filter((a) => {
+    if (!filtroPaciente) return true;
+    const nome = a.paciente?.nome || a.nome_paciente_livre || "";
+    return nome.toLowerCase().includes(filtroPaciente.toLowerCase());
+  });
+
+  const atendimentosDoDia = atendimentosFiltrados.filter((a) =>
     isSameDay(new Date(a.data_inicio), currentDate)
   );
 
@@ -766,10 +772,25 @@ export default function AgendaNova() {
         updateData.tipo_alteracao = editForm.tipo_alteracao;
         
         // Se for cancelamento, também muda o status
-        if (editForm.tipo_alteracao === "cancelamento") {
-          updateData.status = "cancelado";
+                if (editForm.tipo_alteracao === "cancelamento") {
+          const cancelarFuturos = confirm(`Deseja cancelar TODOS os eventos futuros deste paciente? (OK = Todos, Cancelar = Apenas este)`);
+          
+          if (cancelarFuturos) {
+             await supabase.from("atendimentos")
+               .update({ status: "cancelado" })
+               .eq("paciente_id", selectedAtend.paciente_id)
+               .eq("profissional_id", selectedAtend.profissional_id)
+               .gte("data_inicio", selectedAtend.data_inicio);
+             
+             toast.success("Eventos futuros cancelados!");
+             setModoEdicao(false);
+             setSheetOpen(false);
+             await carregar();
+             return;
+          } else {
+             updateData.status = "cancelado";
+          }
         }
-      }
 
       const { error } = await supabase
         .from("atendimentos")
@@ -900,10 +921,35 @@ export default function AgendaNova() {
   }
 
   // ============ APAGAR ============
-  async function handleApagarAtendimento() {
+    async function handleApagarAtendimento() {
     if (!selectedAtend || !isAdmin) return;
     const nome = selectedAtend.paciente?.nome || selectedAtend.nome_paciente_livre || "Sem nome";
-    if (!confirm(`Apagar o atendimento de ${nome}?\n\nEsta ação não pode ser desfeita.`)) return;
+    
+    const apagarFuturos = confirm(
+      `Apagar o atendimento de ${nome}?\n\n` +
+      `Clique em OK para apagar APENAS ESTE evento.\n` +
+      `Clique em Cancelar se quiser apagar TODOS os eventos futuros deste paciente.`
+    );
+
+    if (!apagarFuturos) {
+      if (!confirm(`Tem certeza que deseja apagar TODOS os eventos futuros de ${nome}?`)) return;
+      try {
+        const { error } = await supabase.from("atendimentos")
+          .delete()
+          .eq("paciente_id", selectedAtend.paciente_id)
+          .eq("profissional_id", selectedAtend.profissional_id)
+          .gte("data_inicio", selectedAtend.data_inicio); 
+        
+        if (error) throw error;
+        toast.success("Eventos futuros apagados!");
+        setSheetOpen(false);
+        await carregar();
+      } catch (err: any) {
+        toast.error("Erro: " + err.message);
+      }
+      return;
+    }
+
     try {
       const { error } = await supabase.from("atendimentos").delete().eq("id", selectedAtend.id);
       if (error) throw error;
@@ -1408,18 +1454,15 @@ export default function AgendaNova() {
     }
   }
 
-    async function salvarAtendimento(ignorarConflito = false) {
+      async function salvarAtendimento(ignorarConflito = false) {
     if (!formCriar.paciente_id) return toast.error("Selecione o paciente");
     if (!formCriar.profissional_id) return toast.error("Selecione o profissional");
     if (!formCriar.data || !formCriar.hora_inicio || !formCriar.hora_fim) return toast.error("Preencha data e horário");
 
     const dataInicio = new Date(`${formCriar.data}T${formCriar.hora_inicio}:00`);
     const dataFim = new Date(`${formCriar.data}T${formCriar.hora_fim}:00`);
-    if (dataFim <= dataInicio) {
-      return toast.error("Fim deve ser depois do início");
-    }
+    if (dataFim <= dataInicio) return toast.error("Fim deve ser depois do início");
 
-    // 🔥 Verifica conflito de bloqueio
     if (!ignorarConflito) {
       const conflito = checarConflito(dataInicio, dataFim, formCriar.profissional_id);
       if (conflito) {
@@ -1429,15 +1472,60 @@ export default function AgendaNova() {
       }
     }
 
+    // 🔥 Verifica se precisa abrir a recorrência ANTES de salvar o 1º
+    if (formCriar.paciente_pacote_id) {
+      const { data: pacInfo } = await supabase
+        .from("paciente_pacotes")
+        .select("sessoes_restantes, sessoes_totais, sessoes_realizadas")
+        .eq("id", formCriar.paciente_pacote_id)
+        .maybeSingle();
+
+      const restantes = (pacInfo?.sessoes_totais || 0) - (pacInfo?.sessoes_realizadas || 0);
+
+      if (restantes > 1) {
+        // Não salva ainda! Apenas prepara o modal.
+        const diaBase = new Date(`${formCriar.data}T${formCriar.hora_inicio}:00`);
+        setRecorrenciaBase({
+          paciente_id: formCriar.paciente_id,
+          paciente_nome: formCriar.paciente_nome,
+          profissional_id: formCriar.profissional_id,
+          data_inicio: diaBase,
+          hora_inicio: formCriar.hora_inicio,
+          hora_fim: formCriar.hora_fim,
+          paciente_pacote_id: formCriar.paciente_pacote_id,
+          sessoes_restantes: restantes,
+          observacoes: formCriar.observacoes.trim(),
+        });
+        setFormRecorrencia({
+          frequencia: "semanal",
+          numeroSessoes: restantes,
+          diasSemana: [diaBase.getDay()],
+          pularFinsDeSemana: true,
+        });
+        setModalCriarOpen(false); // Fecha o modal de criar
+        setModalRecorrenciaOpen(true); // Abre o de recorrência
+        return; // Para a execução aqui
+      }
+    }
+
+    // Se não tem recorrência, salva o evento único
+    await executarInsertAtendimento();
+  }
+
+  // Função separada para o Insert (usada pelo salvar normal e pelo "Não criar")
+  async function executarInsertAtendimento() {
     setCriando(true);
     try {
+      const dataInicio = new Date(`${formCriar.data}T${formCriar.hora_inicio}:00`);
+      const dataFim = new Date(`${formCriar.data}T${formCriar.hora_fim}:00`);
+
       const { data: pacData } = formCriar.paciente_pacote_id
         ? await supabase.from("paciente_pacotes").select("autorizacao_id").eq("id", formCriar.paciente_pacote_id).maybeSingle()
         : { data: null };
 
       const tipo = pacData?.autorizacao_id ? "Plano" : "Particular";
 
-            const { error } = await supabase.from("atendimentos").insert({
+      const { error } = await supabase.from("atendimentos").insert({
         paciente_id: formCriar.paciente_id,
         profissional_id: formCriar.profissional_id,
         data_inicio: dataInicio.toISOString(),
@@ -1447,9 +1535,8 @@ export default function AgendaNova() {
         paciente_pacote_id: formCriar.paciente_pacote_id || null,
         observacoes: formCriar.observacoes.trim() || null,
       });
-            if (error) throw error;
+      if (error) throw error;
 
-      // 🔥 Notifica o profissional
       if (formCriar.profissional_id) {
         await supabase.from("notificacoes").insert({
           profissional_id: formCriar.profissional_id,
@@ -1461,8 +1548,14 @@ export default function AgendaNova() {
 
       toast.success("Atendimento criado!");
       setModalCriarOpen(false);
+      setModalRecorrenciaOpen(false);
       await carregar();
-
+    } catch (err: any) {
+      toast.error("Erro: " + err.message);
+    } finally {
+      setCriando(false);
+    }
+  }
       // 🔥 Se tem pacote com mais sessões, oferece recorrência
       if (formCriar.paciente_pacote_id) {
         const { data: pacInfo } = await supabase
@@ -1542,7 +1635,16 @@ export default function AgendaNova() {
               </Button>
             ))}
           </div>
-
+          {/* 🔥 NOVO: BUSCA DE PACIENTE */}
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Input
+              placeholder="Buscar paciente..."
+              value={filtroPaciente}
+              onChange={(e) => setFiltroPaciente(e.target.value)}
+              className="h-8 text-xs pl-8 w-[160px] bg-slate-50 border-slate-200"
+            />
+          </div>
           {/* 🔥 SINO DE NOTIFICAÇÕES */}
           {meuProfId && (
             <Popover>
@@ -2604,17 +2706,16 @@ export default function AgendaNova() {
 
               {/* Botões */}
               <div className="flex gap-2 pt-2">
-                <Button
+              <Button
                   variant="outline"
                   className="flex-1 h-11"
                   onClick={() => {
-                    setModalRecorrenciaOpen(false);
-                    setRecorrenciaBase(null);
+                    executarInsertAtendimento(); // 🔥 Salva apenas 1
                   }}
-                  disabled={criandoRecorrencia}
+                  disabled={criandoRecorrencia || criando}
                 >
                   Não criar
-                </Button>
+                </Button>                
                 <Button
                   className="flex-1 h-11 bg-emerald-600 hover:bg-emerald-700 font-bold"
                   onClick={criarRecorrencia}
