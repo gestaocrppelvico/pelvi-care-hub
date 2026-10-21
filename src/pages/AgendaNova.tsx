@@ -728,7 +728,7 @@ export default function AgendaNova() {
     setModoEdicao(true);
   }
 
-  // 🔥 Salvar edição
+    // 🔥 Salvar edição
   async function salvarEdicao() {
     if (!selectedAtend) return;
     if (!editForm.data || !editForm.hora_inicio || !editForm.hora_fim) {
@@ -772,7 +772,7 @@ export default function AgendaNova() {
         updateData.tipo_alteracao = editForm.tipo_alteracao;
         
         // Se for cancelamento, também muda o status
-                if (editForm.tipo_alteracao === "cancelamento") {
+        if (editForm.tipo_alteracao === "cancelamento") {
           const cancelarFuturos = confirm(`Deseja cancelar TODOS os eventos futuros deste paciente? (OK = Todos, Cancelar = Apenas este)`);
           
           if (cancelarFuturos) {
@@ -791,12 +791,14 @@ export default function AgendaNova() {
              updateData.status = "cancelado";
           }
         }
+      } // 🔥 ESTA CHAVE ESTAVA FALTANDO AQUI!
 
       const { error } = await supabase
         .from("atendimentos")
         .update(updateData)
         .eq("id", selectedAtend.id);
-            if (error) throw error;
+      
+      if (error) throw error;
 
       // 🔥 Notifica mudança de horário
       if (mudouDataHora && selectedAtend.profissional_id) {
@@ -819,7 +821,6 @@ export default function AgendaNova() {
       setBusy(false);
     }
   }
-
   // ============ SELECIONAR PACIENTE (Sheet) ============
   const selecionarPacienteSheet = async (p: { id: string; nome: string; telefone: string | null }) => {
     setPacienteSelecionado(p);
