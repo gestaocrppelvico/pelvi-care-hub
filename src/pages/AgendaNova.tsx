@@ -1556,45 +1556,7 @@ export default function AgendaNova() {
       setCriando(false);
     }
   }
-      // 🔥 Se tem pacote com mais sessões, oferece recorrência
-      if (formCriar.paciente_pacote_id) {
-        const { data: pacInfo } = await supabase
-          .from("paciente_pacotes")
-          .select("sessoes_restantes")
-          .eq("id", formCriar.paciente_pacote_id)
-          .maybeSingle();
-
-        const restantes = pacInfo?.sessoes_restantes ?? 0;
-
-        if (restantes > 1) {
-          const diaBase = new Date(`${formCriar.data}T${formCriar.hora_inicio}:00`);
-          setRecorrenciaBase({
-            paciente_id: formCriar.paciente_id,
-            paciente_nome: formCriar.paciente_nome,
-            profissional_id: formCriar.profissional_id,
-            data_inicio: diaBase,
-            hora_inicio: formCriar.hora_inicio,
-            hora_fim: formCriar.hora_fim,
-            paciente_pacote_id: formCriar.paciente_pacote_id,
-            sessoes_restantes: restantes,
-            observacoes: formCriar.observacoes.trim(),
-          });
-          setFormRecorrencia({
-            frequencia: "semanal",
-            numeroSessoes: restantes,
-            diasSemana: [diaBase.getDay()],
-            pularFinsDeSemana: true,
-          });
-          setModalRecorrenciaOpen(true);
-        }
-      }
-    } catch (err: any) {
-      toast.error("Erro: " + err.message);
-    } finally {
-      setCriando(false);
-    }
-  }
-
+      
   // ============ HELPERS ============
   const prontoParaCheckin =
     !!selectedAtend?.paciente_id && !!selectedAtend?.paciente_pacote_id;
