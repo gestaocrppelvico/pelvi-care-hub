@@ -1296,13 +1296,6 @@ export default function AgendaNova() {
     }
   }
           
-      // 🔥 NOVO: Precisamos guardar todos os pacotes num state para o Dropdown
-      setPacotesDisponiveis(pacotes); 
-    } else {
-      setPacoteSugerido(null);
-      setPacotesDisponiveis([]);
-    }
-  }
   // 🔥 Criar pacote rápido para o paciente selecionado
   async function criarPacoteRapido() {
     if (!formCriar.paciente_id) {
