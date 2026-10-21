@@ -640,26 +640,31 @@ export default function AgendaNova() {
   }, [buscaPacienteCriar]);
 
   // ============ CARREGAR ITENS DO PACIENTE ============
-  async function carregarItensPaciente(pacienteId: string, itemPreSelecionado?: string | null) {
+    async function carregarItensPaciente(pacienteId: string, itemPreSelecionado?: string | null) {
     const { data } = await supabase
       .from("paciente_pacotes")
       .select(`
-        id, sessoes_restantes, sessoes_totais,
+        id, sessoes_restantes, sessoes_totais, sessoes_realizadas,
         autorizacao:autorizacoes(plano, numero_guia),
         pacote:pacotes(nome),
         servico:servicos(nome)
       `)
       .eq("paciente_id", pacienteId)
-      .gt("sessoes_restantes", 0)
       .order("created_at", { ascending: false });
 
-    setItensPaciente(data || []);
+    // 🔥 Filtra apenas os que realmente têm saldo
+    const pacotesValidos = (data || []).filter(pac => {
+      const restantesReais = pac.sessoes_totais - pac.sessoes_realizadas;
+      return restantesReais > 0;
+    });
 
-    if (data && data.length > 0) {
-      if (itemPreSelecionado && data.some((i) => i.id === itemPreSelecionado)) {
+    setItensPaciente(pacotesValidos);
+
+    if (pacotesValidos.length > 0) {
+      if (itemPreSelecionado && pacotesValidos.some((i) => i.id === itemPreSelecionado)) {
         setItemSelecionadoId(itemPreSelecionado);
       } else {
-        setItemSelecionadoId(data[0].id);
+        setItemSelecionadoId(pacotesValidos[0].id);
       }
     } else {
       setItemSelecionadoId(null);
@@ -1262,7 +1267,7 @@ export default function AgendaNova() {
     });
   };
 
-      async function selecionarPacienteCriar(p: { id: string; nome: string; telefone: string | null }) {
+        async function selecionarPacienteCriar(p: { id: string; nome: string; telefone: string | null }) {
     setFormCriar((prev) => ({ ...prev, paciente_id: p.id, paciente_nome: p.nome }));
     setBuscaPacienteCriar("");
     setSugestoesPacientesCriar([]);
@@ -1270,26 +1275,30 @@ export default function AgendaNova() {
     const { data: pacotes } = await supabase
       .from("paciente_pacotes")
       .select(`
-        id, sessoes_restantes,
+        id, sessoes_restantes, sessoes_totais, sessoes_realizadas,
         autorizacao:autorizacoes(plano),
         pacote:pacotes(nome),
         servico:servicos(nome)
       `)
       .eq("paciente_id", p.id)
-      .gt("sessoes_restantes", 0)
-      .order("sessoes_restantes", { ascending: true });
+      .order("created_at", { ascending: false });
 
-    if (pacotes && pacotes.length > 0) {
-      const pac = pacotes[0] as any;
+    // 🔥 Filtra apenas os que realmente têm saldo
+    const pacotesValidos = (pacotes || []).filter(pac => {
+      const restantesReais = pac.sessoes_totais - pac.sessoes_realizadas;
+      return restantesReais > 0;
+    });
+
+    if (pacotesValidos.length > 0) {
+      const pac = pacotesValidos[0] as any;
       const nome = pac.autorizacao?.plano
         ? `Plano ${pac.autorizacao.plano}`
         : pac.pacote?.nome || pac.servico?.nome || "Item";
         
-      setPacoteSugerido({ id: pac.id, label: `${nome} (${pac.sessoes_restantes} rest.)` });
+      setPacoteSugerido({ id: pac.id, label: `${nome} (${pac.sessoes_totais - pac.sessoes_realizadas} rest.)` });
       setFormCriar((prev) => ({ ...prev, paciente_pacote_id: pac.id }));
       
-      // 🔥 Salva todos os pacotes para o Dropdown
-      setPacotesDisponiveis(pacotes); 
+      setPacotesDisponiveis(pacotesValidos); 
     } else {
       setPacoteSugerido(null);
       setPacotesDisponiveis([]);
