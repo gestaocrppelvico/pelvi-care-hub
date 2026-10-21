@@ -1262,7 +1262,7 @@ export default function AgendaNova() {
     });
   };
 
-    async function selecionarPacienteCriar(p: { id: string; nome: string; telefone: string | null }) {
+      async function selecionarPacienteCriar(p: { id: string; nome: string; telefone: string | null }) {
     setFormCriar((prev) => ({ ...prev, paciente_id: p.id, paciente_nome: p.nome }));
     setBuscaPacienteCriar("");
     setSugestoesPacientesCriar([]);
