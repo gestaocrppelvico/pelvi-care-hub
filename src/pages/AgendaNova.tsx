@@ -1295,12 +1295,7 @@ export default function AgendaNova() {
       setPacotesDisponiveis([]);
     }
   }
-      const nome = pac.autorizacao?.plano
-        ? `Plano ${pac.autorizacao.plano}`
-        : pac.pacote?.nome || pac.servico?.nome || "Item";
-      setPacoteSugerido({ id: pac.id, label: `${nome} (${pac.sessoes_restantes} rest.)` });
-      setFormCriar((prev) => ({ ...prev, paciente_pacote_id: pac.id }));
-      
+          
       // 🔥 NOVO: Precisamos guardar todos os pacotes num state para o Dropdown
       setPacotesDisponiveis(pacotes); 
     } else {
