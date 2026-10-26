@@ -30,8 +30,8 @@ import { aplicarTemplate, abrirWhatsapp, getPreferenciaWhatsApp } from "@/lib/cr
 // ==========================================================
 // CONFIGURAÇÕES
 // ==========================================================
-const HORA_INICIO = 7;
-const HORA_FIM = 21;
+const HORA_INICIO = 6;
+const HORA_FIM = 22;
 const ALTURA_HORA = 60;
 const DURACAO_PADRAO = 40;
 // ==========================================================
