@@ -1569,99 +1569,109 @@ export default function AgendaNova() {
 
   return (
     <div className="space-y-3 p-2 max-w-7xl mx-auto pb-24">
-      {/* HEADER */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-white p-3 rounded-xl border shadow-sm">
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="icon" onClick={anterior}>
-            <ChevronLeft className="w-4 h-4" />
-          </Button>
-          <Button variant="outline" onClick={() => setCurrentDate(new Date())} className="text-xs font-semibold">Hoje</Button>
-          <Button variant="outline" size="icon" onClick={proximo}>
-            <ChevronRight className="w-4 h-4" />
-          </Button>
-          <h2 className="text-sm font-bold capitalize text-slate-700 ml-1 truncate">
+            {/* HEADER RESPONSIVO */}
+      <div className="bg-white p-3 rounded-xl border shadow-sm flex flex-col gap-3">
+        {/* Linha 1: Data e Botões de Navegação */}
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="icon" className="h-8 w-8" onClick={anterior}>
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+            <Button variant="outline" onClick={() => setCurrentDate(new Date())} className="text-xs font-semibold h-8 px-3">Hoje</Button>
+            <Button variant="outline" size="icon" className="h-8 w-8" onClick={proximo}>
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          </div>
+          <h2 className="text-sm font-bold capitalize text-slate-700 w-full sm:w-auto mt-1 sm:mt-0">
             {view === "month"
               ? format(currentDate, "MMMM 'de' yyyy", { locale: ptBR })
               : format(currentDate, "EEEE, dd 'de' MMMM", { locale: ptBR })}
           </h2>
         </div>
 
-                <div className="flex gap-2 items-center self-stretch sm:self-auto">
-          <div className="flex gap-1 bg-slate-100 p-1 rounded-lg">
+        {/* Linha 2: Visualizações e Ações */}
+        <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center justify-between">
+          <div className="flex gap-1 bg-slate-100 p-1 rounded-lg overflow-x-auto">
             {(["day", "week", "month", "profissionais"] as const).map((v) => (
-              <Button key={v} variant={view === v ? "default" : "ghost"} size="sm" onClick={() => setView(v)} className="text-xs capitalize font-semibold h-8">
+              <Button key={v} variant={view === v ? "default" : "ghost"} size="sm" onClick={() => setView(v)} className="text-xs capitalize font-semibold h-7 flex-1 sm:flex-none">
                 {v === "day" ? "Dia" : v === "week" ? "Semana" : v === "month" ? "Mês" : "Profis."}
               </Button>
             ))}
           </div>
-          {/* 🔥 NOVO: BUSCA DE PACIENTE */}
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-            <Input
-              placeholder="Buscar paciente..."
-              value={filtroPaciente}
-              onChange={(e) => setFiltroPaciente(e.target.value)}
-              className="h-8 text-xs pl-8 w-[160px] bg-slate-50 border-slate-200"
-            />
-          </div>
-          {/* 🔥 SINO DE NOTIFICAÇÕES */}
-          {meuProfId && (
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" size="icon" className="h-8 w-8 relative bg-white">
-                  <Bell className="w-4 h-4" />
-                  {naoLidas > 0 && (
-                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center">
-                      {naoLidas}
-                    </span>
-                  )}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-80 p-0" align="end">
-                <div className="flex items-center justify-between p-3 border-b bg-slate-50">
-                  <h3 className="font-bold text-sm">Notificações</h3>
-                  {naoLidas > 0 && (
-                    <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={marcarTodasComoLidas}>
-                      <CheckCheck className="w-3 h-3 mr-1" /> Marcar todas
-                    </Button>
-                  )}
-                </div>
-                <div className="max-h-80 overflow-y-auto">
-                  {notificacoes.length === 0 ? (
-                    <p className="text-xs text-center text-muted-foreground p-4">Nenhuma notificação.</p>
-                  ) : (
-                    notificacoes.map((n) => (
-                      <div key={n.id} className={`p-3 border-b last:border-0 ${!n.lida ? "bg-blue-50/50" : ""}`}>
-                        <div className="flex justify-between items-start gap-2">
-                          <div className="flex-1">
-                            <p className="text-sm font-bold text-slate-800">{n.titulo}</p>
-                            {n.mensagem && <p className="text-xs text-slate-600 mt-0.5">{n.mensagem}</p>}
-                            <p className="text-[10px] text-muted-foreground mt-1">
-                              {format(new Date(n.created_at), "dd/MM 'às' HH:mm")}
-                            </p>
-                          </div>
-                          {!n.lida && (
-                            <button onClick={() => marcarComoLida(n.id)} className="text-blue-500 hover:bg-blue-100 p-1 rounded">
-                              <CheckCheck className="w-3 h-3" />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </PopoverContent>
-            </Popover>
-          )}
 
-          <Button size="sm" onClick={() => abrirCriar()} className="bg-emerald-600 hover:bg-emerald-700 h-8 text-xs font-bold">
-            <Plus className="w-3.5 h-3.5 mr-1" /> Novo
-          </Button>
-          <Button size="sm" onClick={() => abrirModalBloqueio()} className="bg-slate-600 hover:bg-slate-700 h-8 text-xs font-bold">
-            <Lock className="w-3.5 h-3.5 mr-1" /> Bloquear
-          </Button>
+          <div className="flex gap-2 items-center flex-wrap sm:flex-nowrap">
+            {/* 🔥 NOVO: BUSCA DE PACIENTE (Ocupa 100% no celular) */}
+            <div className="relative flex-1 sm:flex-none sm:w-[180px]">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Input
+                placeholder="Buscar paciente..."
+                value={filtroPaciente}
+                onChange={(e) => setFiltroPaciente(e.target.value)}
+                className="h-8 text-xs pl-8 w-full bg-slate-50 border-slate-200"
+              />
+            </div>
+
+            <div className="flex gap-2 flex-1 sm:flex-none">
+              {/* 🔥 SINO DE NOTIFICAÇÕES */}
+              {meuProfId && (
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="icon" className="h-8 w-8 relative bg-white shrink-0">
+                      <Bell className="w-4 h-4" />
+                      {naoLidas > 0 && (
+                        <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center">
+                          {naoLidas}
+                        </span>
+                      )}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-80 p-0" align="end">
+                    <div className="flex items-center justify-between p-3 border-b bg-slate-50">
+                      <h3 className="font-bold text-sm">Notificações</h3>
+                      {naoLidas > 0 && (
+                        <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={marcarTodasComoLidas}>
+                          <CheckCheck className="w-3 h-3 mr-1" /> Marcar todas
+                        </Button>
+                      )}
+                    </div>
+                    <div className="max-h-80 overflow-y-auto">
+                      {notificacoes.length === 0 ? (
+                        <p className="text-xs text-center text-muted-foreground p-4">Nenhuma notificação.</p>
+                      ) : (
+                        notificacoes.map((n) => (
+                          <div key={n.id} className={`p-3 border-b last:border-0 ${!n.lida ? "bg-blue-50/50" : ""}`}>
+                            <div className="flex justify-between items-start gap-2">
+                              <div className="flex-1">
+                                <p className="text-sm font-bold text-slate-800">{n.titulo}</p>
+                                {n.mensagem && <p className="text-xs text-slate-600 mt-0.5">{n.mensagem}</p>}
+                                <p className="text-[10px] text-muted-foreground mt-1">
+                                  {format(new Date(n.created_at), "dd/MM 'às' HH:mm")}
+                                </p>
+                              </div>
+                              {!n.lida && (
+                                <button onClick={() => marcarComoLida(n.id)} className="text-blue-500 hover:bg-blue-100 p-1 rounded">
+                                  <CheckCheck className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              )}
+
+              <Button size="sm" onClick={() => abrirCriar()} className="bg-emerald-600 hover:bg-emerald-700 h-8 text-xs font-bold flex-1 sm:flex-none">
+                <Plus className="w-3.5 h-3.5 mr-1" /> Novo
+              </Button>
+              <Button size="sm" onClick={() => abrirModalBloqueio()} className="bg-slate-600 hover:bg-slate-700 h-8 text-xs font-bold flex-1 sm:flex-none">
+                <Lock className="w-3.5 h-3.5 mr-1" /> Bloquear
+              </Button>
+            </div>
+          </div>
         </div>
-        </div>
+      </div>
 
       {/* TOGGLE */}
       {view === "day" && (
