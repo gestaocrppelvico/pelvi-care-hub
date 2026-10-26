@@ -43,8 +43,10 @@ function App() {
         <Route element={<ProtectedRoute />}>
           <Route element={<Layout />}>
             <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/agenda" element={<Agenda />} />
-            <Route path="/agenda-nova" element={<AgendaNova />} />
+            {/* 🔥 A rota principal agora é a Agenda Nova */}
+            <Route path="/agenda" element={<AgendaNova />} />
+            {/* A antiga fica guardada num link secreto caso você precise consultar algo */}
+            <Route path="/agenda-antiga" element={<Agenda />} />
             
             {/* ============ PACIENTES ============ */}
             <Route path="/pacientes" element={<Pacientes />} />
