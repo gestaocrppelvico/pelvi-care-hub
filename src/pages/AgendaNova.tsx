@@ -1570,7 +1570,7 @@ export default function AgendaNova() {
   return (
     <div className="space-y-3 p-2 max-w-7xl mx-auto pb-24">
             {/* HEADER RESPONSIVO */}
-      <div className="bg-white p-3 rounded-xl border shadow-sm flex flex-col gap-3">
+      <div className="bg-white p-3 rounded-xl border shadow-sm flex flex-col gap-3 sticky top-0 z-40">
         {/* Linha 1: Data e Botões de Navegação */}
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2">
@@ -1686,8 +1686,7 @@ export default function AgendaNova() {
       {/* VISÃO DIA — 1 COLUNA */}
       {view === "day" && modoDia === "unica" && (
         <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
-          <div className="overflow-y-auto" style={{ maxHeight: "calc(100vh - 240px)" }}>
-            <div className="relative" style={{ height: `${(HORA_FIM - HORA_INICIO) * ALTURA_HORA + 40}px` }}>
+          <div className="relative" style={{ height: `${(HORA_FIM - HORA_INICIO) * ALTURA_HORA + 40}px` }}>
               {Array.from({ length: HORA_FIM - HORA_INICIO + 1 }, (_, i) => (
                 <div key={i} className="absolute left-0 right-0 flex items-start pointer-events-none" style={{ top: `${i * ALTURA_HORA}px` }}>
                   <div className="w-14 text-[10px] text-muted-foreground text-right pr-2 -mt-2 font-medium">
