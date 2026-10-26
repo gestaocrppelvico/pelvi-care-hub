@@ -1683,76 +1683,74 @@ export default function AgendaNova() {
         </div>
       )}
 
-      {/* VISÃO DIA — 1 COLUNA */}
+            {/* VISÃO DIA — 1 COLUNA */}
       {view === "day" && modoDia === "unica" && (
         <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
           <div className="relative" style={{ height: `${(HORA_FIM - HORA_INICIO) * ALTURA_HORA + 40}px` }}>
-              {Array.from({ length: HORA_FIM - HORA_INICIO + 1 }, (_, i) => (
-                <div key={i} className="absolute left-0 right-0 flex items-start pointer-events-none" style={{ top: `${i * ALTURA_HORA}px` }}>
-                  <div className="w-14 text-[10px] text-muted-foreground text-right pr-2 -mt-2 font-medium">
-                    {String(HORA_INICIO + i).padStart(2, "0")}:00
-                  </div>
-                  <div className="flex-1 border-t border-slate-100" />
+            {Array.from({ length: HORA_FIM - HORA_INICIO + 1 }, (_, i) => (
+              <div key={i} className="absolute left-0 right-0 flex items-start pointer-events-none" style={{ top: `${i * ALTURA_HORA}px` }}>
+                <div className="w-14 text-[10px] text-muted-foreground text-right pr-2 -mt-2 font-medium">
+                  {String(HORA_INICIO + i).padStart(2, "0")}:00
                 </div>
-              ))}
-
-              <div
-                className="absolute left-14 right-0 top-0 bottom-0 cursor-pointer"
-                onClick={(e) => {
-                  if ((e.target as HTMLElement).closest("button")) return;
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const y = e.clientY - rect.top;
-                  const horas = y / ALTURA_HORA;
-                  const horaInt = Math.floor(horas) + HORA_INICIO;
-                  const minInt = Math.floor((horas % 1) * 4) * 15;
-                  const hora = `${String(horaInt).padStart(2, "0")}:${String(minInt).padStart(2, "0")}`;
-                  abrirCriar(currentDate, hora);
-                }}
-              >
-                                {/* 🔥 Bloqueios — renderizam atrás dos eventos */}
-                {bloqueios
-                  .filter((b) => isSameDay(new Date(b.data_inicio), currentDate))
-                  .map((b) => {
-                    const ini = new Date(b.data_inicio);
-                    const fim = new Date(b.data_fim);
-                    const minIni = (ini.getHours() - HORA_INICIO) * 60 + ini.getMinutes();
-                    const minFim = (fim.getHours() - HORA_INICIO) * 60 + fim.getMinutes();
-                    const top = Math.max(0, (minIni / 60) * ALTURA_HORA);
-                    const height = Math.max(((minFim - minIni) / 60) * ALTURA_HORA, 26);
-                    return (
-                      <BlocoBloqueio
-                        key={b.id}
-                        bloqueio={b}
-                        top={top}
-                        height={height}
-                        leftPercent={0}
-                        widthPercent={100}
-                        onClick={() => handleApagarBloqueio(b)}
-                      />
-                    );
-                  })}
-
-                {atendimentosDoDia.length === 0 ? (
-                  <div className="flex items-center justify-center h-full text-sm text-muted-foreground pointer-events-none">
-                    Nenhum atendimento. Clique em um horário para criar.
-                  </div>
-                ) : (
-                  calcularLayout(atendimentosDoDia).map(({ at, top, height, leftPercent, widthPercent }) => (
-                    <BlocoEvento key={at.id} at={at} onClick={() => abrirDetalhes(at)} top={top} height={height} leftPercent={leftPercent} widthPercent={widthPercent} />
-                  ))
-                )}
-
-                {isToday(currentDate) && agora.getHours() >= HORA_INICIO && agora.getHours() <= HORA_FIM && (
-                  <div className="absolute left-0 right-0 border-t-2 border-red-500 z-10 pointer-events-none" style={{ top: `${((agora.getHours() - HORA_INICIO) * 60 + agora.getMinutes()) / 60 * ALTURA_HORA}px` }}>
-                    <div className="absolute -left-1.5 -top-1.5 w-3 h-3 bg-red-500 rounded-full" />
-                  </div>
-                )}
+                <div className="flex-1 border-t border-slate-100" />
               </div>
+            ))}
+
+            <div
+              className="absolute left-14 right-0 top-0 bottom-0 cursor-pointer"
+              onClick={(e) => {
+                if ((e.target as HTMLElement).closest("button")) return;
+                const rect = e.currentTarget.getBoundingClientRect();
+                const y = e.clientY - rect.top;
+                const horas = y / ALTURA_HORA;
+                const horaInt = Math.floor(horas) + HORA_INICIO;
+                const minInt = Math.floor((horas % 1) * 4) * 15;
+                const hora = `${String(horaInt).padStart(2, "0")}:${String(minInt).padStart(2, "0")}`;
+                abrirCriar(currentDate, hora);
+              }}
+            >
+              {/* 🔥 Bloqueios — renderizam atrás dos eventos */}
+              {bloqueios
+                .filter((b) => isSameDay(new Date(b.data_inicio), currentDate))
+                .map((b) => {
+                  const ini = new Date(b.data_inicio);
+                  const fim = new Date(b.data_fim);
+                  const minIni = (ini.getHours() - HORA_INICIO) * 60 + ini.getMinutes();
+                  const minFim = (fim.getHours() - HORA_INICIO) * 60 + fim.getMinutes();
+                  const top = Math.max(0, (minIni / 60) * ALTURA_HORA);
+                  const height = Math.max(((minFim - minIni) / 60) * ALTURA_HORA, 26);
+                  return (
+                    <BlocoBloqueio
+                      key={b.id}
+                      bloqueio={b}
+                      top={top}
+                      height={height}
+                      leftPercent={0}
+                      widthPercent={100}
+                      onClick={() => handleApagarBloqueio(b)}
+                    />
+                  );
+                })}
+
+              {atendimentosDoDia.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-sm text-muted-foreground pointer-events-none">
+                  Nenhum atendimento. Clique em um horário para criar.
+                </div>
+              ) : (
+                calcularLayout(atendimentosDoDia).map(({ at, top, height, leftPercent, widthPercent }) => (
+                  <BlocoEvento key={at.id} at={at} onClick={() => abrirDetalhes(at)} top={top} height={height} leftPercent={leftPercent} widthPercent={widthPercent} />
+                ))
+              )}
+
+              {isToday(currentDate) && agora.getHours() >= HORA_INICIO && agora.getHours() <= HORA_FIM && (
+                <div className="absolute left-0 right-0 border-t-2 border-red-500 z-10 pointer-events-none" style={{ top: `${((agora.getHours() - HORA_INICIO) * 60 + agora.getMinutes()) / 60 * ALTURA_HORA}px` }}>
+                  <div className="absolute -left-1.5 -top-1.5 w-3 h-3 bg-red-500 rounded-full" />
+                </div>
+              )}
             </div>
           </div>
         </div>
       )}
-
       {/* VISÃO DIA — POR PROFISSIONAL */}
       {view === "day" && modoDia === "porProfissional" && (
         <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
