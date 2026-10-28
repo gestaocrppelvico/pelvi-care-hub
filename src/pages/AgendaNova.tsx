@@ -494,6 +494,22 @@ export default function AgendaNova() {
       .then(({ data }) => setProfissionais((data as any) || []));
   }, []);
 
+    // 🔥 Carregar planos, pacotes e serviços GLOBALMENTE (para o Novo e para o Check-in)
+  useEffect(() => {
+    supabase.from("planos_saude").select("id, nome").eq("ativo", true).then(({ data }) => setListaPlanos(data || []));
+    
+    Promise.all([
+      supabase.from("pacotes").select("id, nome, numero_sessoes, preco_total").eq("ativo", true),
+      supabase.from("servicos").select("id, nome, preco").eq("ativo", true),
+    ]).then(([{ data: pacotes }, { data: servicos }]) => {
+      const combined = [
+        ...(pacotes || []).map((p) => ({ ...p, tipo_item: "pacote" })),
+        ...(servicos || []).map((s) => ({ ...s, tipo_item: "servico" })),
+      ];
+      setListaPacotesServicos(combined);
+    });
+  }, []);
+
   useEffect(() => {
     if (!user) return;
     supabase
@@ -1300,19 +1316,7 @@ export default function AgendaNova() {
     setNovoPacienteTelefone("");
         setModalCriarOpen(true);
 
-    // 🔥 Carregar planos e pacotes/serviços
-    supabase.from("planos_saude").select("id, nome").eq("ativo", true).then(({ data }) => setListaPlanos(data || []));
-    Promise.all([
-      supabase.from("pacotes").select("id, nome, numero_sessoes, preco_total").eq("ativo", true),
-      supabase.from("servicos").select("id, nome, preco").eq("ativo", true),
-    ]).then(([{ data: pacotes }, { data: servicos }]) => {
-      const combined = [
-        ...(pacotes || []).map((p) => ({ ...p, tipo_item: "pacote" })),
-        ...(servicos || []).map((s) => ({ ...s, tipo_item: "servico" })),
-      ];
-      setListaPacotesServicos(combined);
-    });
-  };
+    };
 
         async function selecionarPacienteCriar(p: { id: string; nome: string; telefone: string | null }) {
     setFormCriar((prev) => ({ ...prev, paciente_id: p.id, paciente_nome: p.nome }));
