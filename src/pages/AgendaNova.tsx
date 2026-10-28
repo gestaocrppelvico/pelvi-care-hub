@@ -1353,8 +1353,9 @@ export default function AgendaNova() {
   }
           
   // 🔥 Criar pacote rápido para o paciente selecionado
-  async function criarPacoteRapido() {
-    if (!formCriar.paciente_id) {
+    async function criarPacoteRapido(pacienteIdOverride?: string) {
+    const pId = pacienteIdOverride || formCriar.paciente_id;
+    if (!pId) {
       toast.error("Selecione um paciente primeiro");
       return;
     }
@@ -1382,7 +1383,7 @@ export default function AgendaNova() {
         const { data: aut, error: errAut } = await supabase
           .from("autorizacoes")
           .insert({
-            paciente_id: formCriar.paciente_id,
+            paciente_id: pId,
             plano: planoNome,
             numero_guia: novoPacoteForm.numero_guia.trim(),
             sessoes_autorizadas: sessoesTotais,
@@ -1398,7 +1399,7 @@ export default function AgendaNova() {
       const { data: novoPacote, error: errPac } = await supabase
         .from("paciente_pacotes")
         .insert({
-          paciente_id: formCriar.paciente_id,
+          paciente_id: pId,
           autorizacao_id: autorizacaoId,
           pacote_id: item.tipo_item === "pacote" ? item.id : null,
           servico_id: item.tipo_item === "servico" ? item.id : null,
@@ -1412,14 +1413,21 @@ export default function AgendaNova() {
         .single();
       if (errPac) throw errPac;
 
-      toast.success("Pacote criado e vinculado!");
-      setFormCriar((prev) => ({ ...prev, paciente_pacote_id: novoPacote.id }));
-      setPacoteSugerido({
-        id: novoPacote.id,
-        label: `${item.tipo_item === "pacote" ? item.nome : item.nome} (${sessoesTotais} rest.)`,
-      });
+      toast.success("Pacote/serviço criado com sucesso!");
       setMostrarCriarPacote(false);
       setNovoPacoteForm({ tipo: "particular", plano_id: "", numero_guia: "", pacote_servico_id: "", preco: "" });
+
+      if (pacienteIdOverride) {
+        // Estamos no check-in: recarrega a lista e já seleciona o novo pacote
+        await carregarItensPaciente(pId, novoPacote.id);
+      } else {
+        // Estamos no modal de novo atendimento
+        setFormCriar((prev) => ({ ...prev, paciente_pacote_id: novoPacote.id }));
+        setPacoteSugerido({
+          id: novoPacote.id,
+          label: `${item.nome} (${sessoesTotais} rest.)`,
+        });
+      }
     } catch (err: any) {
       toast.error("Erro: " + err.message);
     } finally {
@@ -2213,7 +2221,7 @@ export default function AgendaNova() {
                 )}
               </div>
 
-              {/* Pacote */}
+                            {/* Pacote */}
               {pacienteSelecionado && (
                 <div className="space-y-2">
                   <Label className="text-xs font-bold">Pacote/Serviço a consumir</Label>
@@ -2235,16 +2243,78 @@ export default function AgendaNova() {
                       </SelectContent>
                     </Select>
                   ) : (
-                    <p className="text-xs text-amber-600">Este paciente não possui itens com saldo.</p>
+                    <div className="text-xs text-amber-600 bg-amber-50 p-2 rounded border border-amber-200">
+                      Este paciente não possui itens com saldo.
+                    </div>
                   )}
 
-                  <Button onClick={handleSalvarVinculacao} className="w-full" disabled={busy || !pacienteSelecionado}>
+                  {/* 🔥 NOVO: Formulário para adicionar pacote direto pelo Sheet */}
+                  {itensPaciente.length === 0 && (
+                    <div className="mt-2">
+                      {!mostrarCriarPacote ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setMostrarCriarPacote(true)}
+                          className="w-full text-xs border-emerald-300 text-emerald-700 hover:bg-emerald-50 h-10 font-medium"
+                        >
+                          <Plus className="w-4 h-4 mr-1" /> Adicionar pacote/serviço agora
+                        </Button>
+                      ) : (
+                        <div className="border rounded-lg p-3 space-y-2 bg-slate-50">
+                          <div className="text-xs font-bold text-slate-600 flex justify-between items-center">
+                            <span>Novo pacote/serviço</span>
+                            <Button type="button" size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => setMostrarCriarPacote(false)}>
+                              <X className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+
+                          <div className="flex gap-2">
+                            <button type="button" onClick={() => setNovoPacoteForm({ ...novoPacoteForm, tipo: "particular" })} className={`flex-1 h-9 text-xs rounded-lg border-2 font-medium ${novoPacoteForm.tipo === "particular" ? "border-blue-400 bg-blue-50 text-blue-700" : "border-slate-200 text-slate-500"}`}>💰 Particular</button>
+                            <button type="button" onClick={() => setNovoPacoteForm({ ...novoPacoteForm, tipo: "plano" })} className={`flex-1 h-9 text-xs rounded-lg border-2 font-medium ${novoPacoteForm.tipo === "plano" ? "border-purple-400 bg-purple-50 text-purple-700" : "border-slate-200 text-slate-500"}`}>📋 Plano</button>
+                          </div>
+
+                          {novoPacoteForm.tipo === "plano" && (
+                            <>
+                              <Select value={novoPacoteForm.plano_id} onValueChange={(v) => setNovoPacoteForm({ ...novoPacoteForm, plano_id: v })}>
+                                <SelectTrigger className="h-9 text-sm bg-background"><SelectValue placeholder="Selecione o plano" /></SelectTrigger>
+                                <SelectContent>
+                                  {listaPlanos.map((p) => (<SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>))}
+                                </SelectContent>
+                              </Select>
+                              <Input placeholder="Número da guia" value={novoPacoteForm.numero_guia} onChange={(e) => setNovoPacoteForm({ ...novoPacoteForm, numero_guia: e.target.value })} className="h-9 text-sm bg-background" />
+                            </>
+                          )}
+
+                          <Select value={novoPacoteForm.pacote_servico_id} onValueChange={(v) => setNovoPacoteForm({ ...novoPacoteForm, pacote_servico_id: v })}>
+                            <SelectTrigger className="h-9 text-sm bg-background"><SelectValue placeholder="Selecione pacote ou serviço" /></SelectTrigger>
+                            <SelectContent>
+                              {listaPacotesServicos.map((item) => (
+                                <SelectItem key={item.id} value={item.id}>
+                                  {item.tipo_item === "pacote" ? `📦 ${item.nome} (${item.numero_sessoes} sessões)` : `📄 ${item.nome}`}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+
+                          <Input type="number" step="0.01" placeholder="Valor (R$) — opcional" value={novoPacoteForm.preco} onChange={(e) => setNovoPacoteForm({ ...novoPacoteForm, preco: e.target.value })} className="h-9 text-sm bg-background" />
+
+                          <Button type="button" onClick={() => criarPacoteRapido(pacienteSelecionado.id)} disabled={criandoPacote} className="w-full h-9 text-xs bg-emerald-600 hover:bg-emerald-700">
+                            {criandoPacote ? "Criando..." : "Criar e vincular"}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Botão que estava embaixo */}
+                  <Button onClick={handleSalvarVinculacao} className="w-full" disabled={busy || !pacienteSelecionado || !itemSelecionadoId}>
                     <CheckCircle2 className="w-4 h-4 mr-2" />
                     {busy ? "Vinculando..." : "Vincular e Preparar Check-in"}
                   </Button>
                 </div>
               )}
-
+                  
               {/* Status */}
               <div className="space-y-2 pt-2 border-t">
                 <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Alterar Status</Label>
