@@ -1401,8 +1401,8 @@ export default function AgendaNova() {
     }
   }
           
-  // 🔥 Criar pacote rápido para o paciente selecionado
-    async function criarPacoteRapido(pacienteIdOverride?: string) {
+    // 🔥 Criar pacote rápido para o paciente selecionado
+  async function criarPacoteRapido(pacienteIdOverride?: string) {
     const pId = pacienteIdOverride || formCriar.paciente_id;
     if (!pId) {
       toast.error("Selecione um paciente primeiro");
@@ -1462,20 +1462,46 @@ export default function AgendaNova() {
         .single();
       if (errPac) throw errPac;
 
-      toast.success("Pacote/serviço criado com sucesso!");
       setMostrarCriarPacote(false);
       setNovoPacoteForm({ tipo: "particular", plano_id: "", numero_guia: "", pacote_servico_id: "", preco: "" });
 
-      if (pacienteIdOverride) {
-        // Estamos no check-in: recarrega a lista e já seleciona o novo pacote
+      if (pacienteIdOverride && selectedAtend) {
+        // 🔥 NOVO: Estamos no check-in. Vamos vincular direto ao atendimento!
+        const { error: errAtend } = await supabase
+          .from("atendimentos")
+          .update({
+            paciente_id: pId,
+            paciente_pacote_id: novoPacote.id
+          })
+          .eq("id", selectedAtend.id);
+
+        if (errAtend) throw errAtend;
+
+        // Atualiza a tela para liberar o botão de Check-in
+        setSelectedAtend(prev => prev ? {
+          ...prev,
+          paciente_id: pId,
+          paciente_pacote_id: novoPacote.id,
+          paciente: {
+            id: pId,
+            nome: pacienteSelecionado?.nome || "",
+            telefone: pacienteSelecionado?.telefone || null,
+            pronome_tratamento: null
+          }
+        } : null);
+
+        // Recarrega a lista de itens para atualizar o dropdown
         await carregarItensPaciente(pId, novoPacote.id);
+        
+        toast.success("Pacote criado e vinculado ao atendimento! Pronto para o check-in.");
       } else {
-        // Estamos no modal de novo atendimento
+        // Estamos no modal de novo atendimento (mantém o comportamento antigo)
         setFormCriar((prev) => ({ ...prev, paciente_pacote_id: novoPacote.id }));
         setPacoteSugerido({
           id: novoPacote.id,
           label: `${item.nome} (${sessoesTotais} rest.)`,
         });
+        toast.success("Pacote/serviço criado com sucesso!");
       }
     } catch (err: any) {
       toast.error("Erro: " + err.message);
@@ -1483,7 +1509,6 @@ export default function AgendaNova() {
       setCriandoPacote(false);
     }
   }
-
   async function criarPacienteRapido() {
     if (!novoPacienteNome.trim()) {
       toast.error("Informe o nome");
