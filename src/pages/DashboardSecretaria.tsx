@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { Calendar, Users, AlertTriangle, MessageCircle, Cake, ArrowRight, Link2, FileText, CheckCircle, CreditCard, User, Phone } from "lucide-react";
+import { Calendar, Users, AlertTriangle, MessageCircle, Cake, ArrowRight, Link2, FileText, CheckCircle, CreditCard } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -23,9 +23,10 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
   const [totalOrfaosMes, setTotalOrfaosMes] = useState(0);
   const [fichasIncompletas, setFichasIncompletas] = useState<any[]>([]);
   const [renovacoesParticulares, setRenovacoesParticulares] = useState<any[]>([]);
-  const [pagamentosPendentes, setPagamentosPendentes] = useState<any[]>([]);
-  // 🔥 NOVOS ESTADOS
+  
+  // 🔥 ESTADOS DO DASHBOARD
   const [pacotesTerminando, setPacotesTerminando] = useState<any[]>([]);
+  const [pagamentosPendentes, setPagamentosPendentes] = useState<any[]>([]);
   const [pacientesAltaRecente, setPacientesAltaRecente] = useState<any[]>([]);
 
   const carregarDashboard = async () => {
@@ -47,7 +48,7 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
       const startProximo = startOfDay(dataProxima).toISOString();
       const endProximo = endOfDay(dataProxima).toISOString();
 
-            // 🔥 1. Pacotes terminando (APENAS PACOTES, sem avulsos ou planos)
+      // 🔥 1. Pacotes terminando (APENAS PACOTES: tem pacote_id e NÃO tem autorizacao_id)
       const { data: pacotesTerminandoData } = await supabase
         .from("paciente_pacotes")
         .select(`
@@ -59,12 +60,25 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
         `)
         .gt("sessoes_restantes", 0)
         .lte("sessoes_restantes", 2)
-        .not("pacote_id", "is", null) // Tem que ser pacote
-        .is("autorizacao_id", null)  // Não pode ser de plano
+        .not("pacote_id", "is", null) 
+        .is("autorizacao_id", null)  
         .order("sessoes_restantes", { ascending: true })
         .limit(10);
-      
-      // 🔥 2. Pacientes com alta médica nos últimos 7 dias (para enviar link de avaliação)
+
+      // 🔥 2. Pagamentos Pendentes
+      const { data: pagamentosData } = await supabase
+        .from("paciente_pacotes")
+        .select(`
+          id,
+          preco_pago,
+          paciente_id,
+          paciente:pacientes(nome)
+        `)
+        .eq("status_pagamento", "pendente")
+        .is("autorizacao_id", null)
+        .limit(10);
+
+      // 🔥 3. Pacientes com alta médica nos últimos 7 dias (para enviar link de avaliação)
       const dataAltaLimite = subDays(hoje, 7).toISOString();
       const { data: altaRecenteData } = await supabase
         .from("prontuarios")
@@ -78,21 +92,7 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
         .gte("created_at", dataAltaLimite)
         .order("created_at", { ascending: false })
         .limit(10);
-      
-      // 🔥 3. Pagamentos Pendentes
-      const { data: pagamentosData } = await supabase
-        .from("paciente_pacotes")
-        .select(`
-          id,
-          preco_pago,
-          paciente_id,
-          paciente:pacientes(nome)
-        `)
-        .eq("status_pagamento", "pendente")
-        .is("autorizacao_id", null)
-        .limit(10);
 
-      setPagamentosPendentes(pagamentosData || []);
       // 4. Demais consultas (existentes)
       const [resHoje, resProximo, resPacientes, resOrfaosMes, resRenovacoes] = await Promise.all([
         supabase.from("atendimentos").select("id, profissional:profissionais(id, nome)").gte("data_inicio", startHoje).lte("data_inicio", endHoje).not("status", "eq", "cancelado"),
@@ -108,6 +108,7 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
       setRenovacoesParticulares(resRenovacoes.data || []);
       
       setPacotesTerminando(pacotesTerminandoData || []);
+      setPagamentosPendentes(pagamentosData || []);
       setPacientesAltaRecente(altaRecenteData || []);
 
       const mmDdHoje = format(hoje, "MM-dd");
@@ -216,9 +217,11 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
       </Card>
 
       {/* LINHA 2: PACOTES TERMINANDO */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="md:col-span-2">
-          <Card className="p-4 shadow-sm border-l-4 border-l-amber-500">
+      <div className="grid grid-cols-1 gap-4">
+        <Card className="p-4 shadow-sm border-l-4 border-l-amber-500">
+          <h2 className="text-sm font-bold uppercase tracking-wider text-amber-700 flex items-center gap-2 mb-3">
+            <AlertTriangle className="w-4 h-4" /> Pacotes terminando
+          </h2>
           {pacotesTerminando.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-4">Nenhum pacote com saldo baixo.</p>
           ) : (
@@ -248,8 +251,7 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
             </div>
           )}
         </Card>
-
-        
+      </div>
 
       {/* LINHA 3: AÇÕES PENDENTES */}
       <Card className="p-4 shadow-sm border-t-4 border-t-amber-500">
@@ -258,6 +260,26 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
         </h2>
         <div className="space-y-2 mt-3 max-h-[350px] overflow-y-auto pr-1">
           
+          {/* PAGAMENTOS PENDENTES */}
+          {pagamentosPendentes.map((pag) => (
+            <Link
+              key={pag.id}
+              to={`/pacientes/${pag.paciente_id}/financeiro`}
+              className="block p-3 border border-rose-200 bg-rose-50/30 rounded-xl hover:bg-rose-50 transition-all"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex-1">
+                  <span className="font-bold text-rose-700 uppercase block text-[9px] tracking-wide mb-0.5">Pagamento Pendente</span>
+                  <p className="font-bold text-slate-800 text-sm truncate">{pag.paciente?.nome}</p>
+                  <p className="text-muted-foreground text-xs">Valor: R$ {Number(pag.preco_pago).toFixed(2)}</p>
+                </div>
+                <Button size="sm" variant="outline" className="border-rose-300 text-rose-700 hover:bg-rose-100 font-semibold shrink-0">
+                  <CreditCard className="w-3.5 h-3.5 mr-1" /> Cobrar
+                </Button>
+              </div>
+            </Link>
+          ))}
+
           {/* RENOVAÇÕES PARTICULARES */}
           {renovacoesParticulares.map((r) => (
             <Link
@@ -290,25 +312,7 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
               </Button>
             </div>
           )}
-          {/* PAGAMENTOS PENDENTES */}
-          {pagamentosPendentes.map((pag) => (
-            <Link
-              key={pag.id}
-              to={`/pacientes/${pag.paciente_id}/financeiro`}
-              className="block p-3 border border-rose-200 bg-rose-50/30 rounded-xl hover:bg-rose-50 transition-all"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex-1">
-                  <span className="font-bold text-rose-700 uppercase block text-[9px] tracking-wide mb-0.5">Pagamento Pendente</span>
-                  <p className="font-bold text-slate-800 text-sm truncate">{pag.paciente?.nome}</p>
-                  <p className="text-muted-foreground text-xs">Valor: R$ {Number(pag.preco_pago).toFixed(2)}</p>
-                </div>
-                <Button size="sm" variant="outline" className="border-rose-300 text-rose-700 hover:bg-rose-100 font-semibold shrink-0">
-                  <CreditCard className="w-3.5 h-3.5 mr-1" /> Cobrar
-                </Button>
-              </div>
-            </Link>
-          ))}
+
           {/* FICHAS INCOMPLETAS */}
           {fichasIncompletas.map((f) => (
             <Link
@@ -330,7 +334,7 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
           ))}
 
           {/* ESTADO VAZIO */}
-          {renovacoesParticulares.length === 0 && totalOrfaosMes === 0 && fichasIncompletas.length === 0 && (
+          {renovacoesParticulares.length === 0 && totalOrfaosMes === 0 && fichasIncompletas.length === 0 && pagamentosPendentes.length === 0 && (
             <div className="text-center py-6 text-sm text-muted-foreground border-2 border-dashed rounded-xl bg-slate-50/30">
               <CheckCircle className="w-6 h-6 text-emerald-400 mx-auto mb-2" /> Tudo em dia!
             </div>
