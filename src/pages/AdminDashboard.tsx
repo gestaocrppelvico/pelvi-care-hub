@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Users, Calendar, DollarSign, TrendingUp, Clock, CheckCircle, XCircle, Activity, FileText, Award } from "lucide-react";
-import { format, subDays, startOfMonth, endOfMonth, startOfDay, endOfDay } from "date-fns";
+import { format, subDays, startOfMonth, endOfMonth, startOfDay, endOfDay, eachDayOfInterval } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ interface DashData {
   atendimentosMes: number;
   realizadosMes: number;
   canceladosMes: number;
+  faltasMes: number;
   agendadosMes: number;
   faturamentoMes: number;
   repassesPendentesMes: number;
@@ -29,12 +30,12 @@ interface DashData {
   alertasEstoque: number;
   topProfissionais: { nome: string; count: number }[];
   topServicos: { nome: string; count: number }[];
+  taxaRealizacao: number;
   atendimentosPorDia: { dia: string; count: number }[];
   avaliacoesMes: number;
   novosTratamentosMes: number;
   novosTratamentosManual: number;
-  dadosGraficoLinha: { dia: string; agendados: number; realizados: number }[];
-  // 🔥 NOVOS CAMPOS: ALTAS
+  dadosGraficoLinha: { dia: string; faltas: number; realizados: number }[];
   altasMes: number;
   topAltasProfissionais: { nome: string; count: number }[];
 }
@@ -93,7 +94,12 @@ export default function AdminDashboard() {
       supabase.from("medicos").select("id, ultima_visita").not("ultima_visita", "is", null),
       supabase.from("paciente_pacotes").select("id, sessoes_restantes").gt("sessoes_restantes", 0),
       supabase.from("estoque_insumos").select("id, quantidade_atual, quantidade_minima"),
-      supabase.from("pagamentos").select("valor, data_pagamento").gte("data_pagamento", format(startOfMonth(now), "yyyy-MM-dd")).lte("data_pagamento", format(endOfMonth(now), "yyyy-MM-dd")).not("paciente_id", "is", null), // 🔥 SÓ CONTA O QUE O PACIENTE PAGOU (IGNORA REPASSES/CONTAS)
+      // 🔥 CORREÇÃO FATURAMENTO: Só pacientes (ignora repasses e contas)
+      supabase.from("pagamentos")
+        .select("valor, data_pagamento")
+        .gte("data_pagamento", format(startOfMonth(now), "yyyy-MM-dd"))
+        .lte("data_pagamento", format(endOfMonth(now), "yyyy-MM-dd"))
+        .not("paciente_id", "is", null),
       supabase.from("atendimentos")
         .select("id", { count: "exact", head: true })
         .eq("servico_id", servicoAvaliacaoId || "")
@@ -117,7 +123,6 @@ export default function AdminDashboard() {
         .gte("data_inicio", mesStart)
         .lte("data_inicio", mesEnd)
         : supabase.from("atendimentos").select("paciente_id", { count: "exact", head: true }).limit(0),
-      // 🔥 NOVO: Buscar TODAS as altas fisioterapêuticas (histórico total)
       supabase.from("prontuarios")
         .select("id, created_at, paciente_id, profissional_id, profissional:profissionais(nome)")
         .eq("alta_medica", true),
@@ -126,6 +131,7 @@ export default function AdminDashboard() {
     const atendMes = atendMesData ?? [];
     const realizados = atendMes.filter((a) => a.status === "realizado");
     const cancelados = atendMes.filter((a) => a.status === "cancelado");
+    const faltas = atendMes.filter((a) => a.status === "faltou");
     const agendados = atendMes.filter((a) => a.status === "agendado");
 
     const repasses = repassesData ?? [];
@@ -133,7 +139,6 @@ export default function AdminDashboard() {
     const repassesPg = repasses.filter((r) => r.status === "pago").reduce((s, r) => s + Number(r.valor_repasse), 0);
 
     const faturamento = (pagamentosData ?? []).reduce((s, p) => s + Number(p.valor), 0);
-
     const alertas = (estoqueData ?? []).filter((i) => Number(i.quantidade_atual) <= Number(i.quantidade_minima)).length;
 
     // Lógica de Novos Tratamentos
@@ -141,68 +146,49 @@ export default function AdminDashboard() {
     const pacientesComAvaliacao = pacientesAvaliacao?.map(a => a.paciente_id) || [];
     const pacientesComSessao = pacientesSessao?.map(a => a.paciente_id) || [];
     const automaticos = pacientesComAvaliacao.filter(id => pacientesComSessao.includes(id));
-    const automaticosFiltrados = automaticos.filter(id => 
-      !pacientesManual?.some(p => p.id === id)
-    );
+    const automaticosFiltrados = automaticos.filter(id => !pacientesManual?.some(p => p.id === id));
     const novosTratamentosTotal = manualCount + automaticosFiltrados.length;
 
-    // 🔥 PROCESSAR ALTAS
+    // Processar Altas
     const altas = altasData ?? [];
-    
-    // Contagem de altas no mês atual
-    const altasMes = altas.filter((a: any) => 
-      a.created_at >= mesStart && a.created_at <= mesEnd
-    ).length;
-
-    // Ranking de altas por profissional (histórico total)
+    const altasMes = altas.filter((a: any) => a.created_at >= mesStart && a.created_at <= mesEnd).length;
     const altaMap = new Map<string, number>();
     altas.forEach((a: any) => {
       const nome = a.profissional?.nome ?? "—";
       altaMap.set(nome, (altaMap.get(nome) ?? 0) + 1);
     });
-    const topAltas = [...altaMap.entries()]
-      .map(([nome, count]) => ({ nome, count }))
-      .sort((a, b) => b.count - a.count);
+    const topAltas = [...altaMap.entries()].map(([nome, count]) => ({ nome, count })).sort((a, b) => b.count - a.count);
 
-    // Top profissionais (atendimentos)
+    // Top profissionais e serviços
     const profMap = new Map<string, number>();
-    realizados.forEach((a: any) => {
-      const nome = a.profissional?.nome ?? "—";
-      profMap.set(nome, (profMap.get(nome) ?? 0) + 1);
-    });
+    realizados.forEach((a: any) => profMap.set(a.profissional?.nome ?? "—", (profMap.get(a.profissional?.nome ?? "—") ?? 0) + 1));
     const topProf = [...profMap.entries()].map(([nome, count]) => ({ nome, count })).sort((a, b) => b.count - a.count).slice(0, 5);
 
-    // Top serviços
     const servMap = new Map<string, number>();
-    realizados.forEach((a: any) => {
-      const nome = a.servico?.nome ?? "Sem serviço";
-      servMap.set(nome, (servMap.get(nome) ?? 0) + 1);
-    });
+    realizados.forEach((a: any) => servMap.set(a.servico?.nome ?? "Sem serviço", (servMap.get(a.servico?.nome ?? "Sem serviço") ?? 0) + 1));
     const topServ = [...servMap.entries()].map(([nome, count]) => ({ nome, count })).sort((a, b) => b.count - a.count).slice(0, 5);
 
-    // Atendimentos por dia (últimos 14 dias)
-    const porDiaDetalhado: { dia: string; agendados: number; realizados: number }[] = [];
+    // 🔥 CORREÇÃO: Construir gráficos do Mês Inteiro
+    const diasDoMes = eachDayOfInterval({ start: startOfMonth(now), end: endOfMonth(now) });
+    const porDiaDetalhado: { dia: string; faltas: number; realizados: number }[] = [];
+    const porDiaTotal: { dia: string; count: number }[] = [];
 
-    for (let i = 13; i >= 0; i--) {
-      const dataRef = subDays(now, i);
-      const diaISO = format(dataRef, "yyyy-MM-dd");
-      const label = format(dataRef, "dd/MM");
+    diasDoMes.forEach(dia => {
+      const diaISO = format(dia, "yyyy-MM-dd");
+      const label = format(dia, "dd/MM");
+      const diaAtend = atendMes.filter(a => a.data_inicio.startsWith(diaISO));
 
-      const diaAtendimentos = atendMes.filter((a) => a.data_inicio.startsWith(diaISO));
-      const agendadosCount = diaAtendimentos.filter(a => a.status === "agendado").length;
-      const realizadosCount = diaAtendimentos.filter(a => a.status === "realizado").length;
+      const realizadosCount = diaAtend.filter(a => a.status === "realizado").length;
+      const faltasCount = diaAtend.filter(a => a.status === "faltou" || a.status === "cancelado").length;
+      const totalDia = diaAtend.length;
 
-      porDiaDetalhado.push({
-        dia: label,
-        agendados: agendadosCount,
-        realizados: realizadosCount,
-      });
-    }
+      porDiaDetalhado.push({ dia: label, faltas: faltasCount, realizados: realizadosCount });
+      porDiaTotal.push({ dia: label, count: totalDia });
+    });
 
-    const porDiaTotal = porDiaDetalhado.map(item => ({
-      dia: item.dia,
-      count: item.agendados + item.realizados
-    }));
+    // 🔥 CORREÇÃO TAXA: Apenas o que já aconteceu
+    const totalConcluidos = realizados.length + faltas.length + cancelados.length;
+    const taxaRealizacao = totalConcluidos > 0 ? Math.round((realizados.length / totalConcluidos) * 100) : 0;
 
     const trintaDias = format(subDays(now, 30), "yyyy-MM-dd");
     const medVisRecentes = (medVisitados ?? []).filter((m) => m.ultima_visita && m.ultima_visita >= trintaDias).length;
@@ -215,6 +201,7 @@ export default function AdminDashboard() {
       atendimentosMes: atendMes.length,
       realizadosMes: realizados.length,
       canceladosMes: cancelados.length,
+      faltasMes: faltas.length,
       agendadosMes: agendados.length,
       faturamentoMes: faturamento,
       repassesPendentesMes: repassesPend,
@@ -225,6 +212,7 @@ export default function AdminDashboard() {
       alertasEstoque: alertas,
       topProfissionais: topProf,
       topServicos: topServ,
+      taxaRealizacao,
       atendimentosPorDia: porDiaTotal,
       avaliacoesMes: avaliacoesCount ?? 0,
       novosTratamentosMes: novosTratamentosTotal,
@@ -239,9 +227,6 @@ export default function AdminDashboard() {
   if (loading) return <p className="text-muted-foreground text-center py-8">Carregando dashboard...</p>;
   if (!d) return null;
 
-  const maxDia = Math.max(...d.atendimentosPorDia.map((x) => x.count), 1);
-  const taxaRealizacao = d.atendimentosMes > 0 ? Math.round((d.realizadosMes / d.atendimentosMes) * 100) : 0;
-
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2">
@@ -252,7 +237,6 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* NOVOS CARDS: Avaliações e Novos Tratamentos */}
       <div className="grid grid-cols-2 gap-3">
         <KPI icon={FileText} label="Avaliações no mês" value={d.avaliacoesMes} />
         <KPI icon={TrendingUp} label="Novos tratamentos no mês" value={d.novosTratamentosMes} />
@@ -263,7 +247,6 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* KPIs existentes */}
       <div className="grid grid-cols-2 gap-3">
         <KPI icon={Calendar} label="Atend. hoje" value={d.atendimentosHoje} />
         <KPI icon={TrendingUp} label="Atend. mês" value={d.atendimentosMes} />
@@ -271,60 +254,58 @@ export default function AdminDashboard() {
         <KPI icon={DollarSign} label="Faturamento mês" value={`R$ ${d.faturamentoMes.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`} />
       </div>
 
-      {/* 🔥 NOVO KPI: Altas fisioterapêuticas no mês */}
       <div className="grid grid-cols-1 gap-3">
         <KPI icon={Award} label="Altas fisioterapêuticas no mês" value={d.altasMes} />
       </div>
 
-      {/* Taxa de realização */}
+      {/* 🔥 TAXA DE REALIZAÇÃO CORRIGIDA */}
       <Card className="p-4 space-y-2">
         <div className="flex justify-between text-sm">
-          <span className="text-muted-foreground">Taxa de realização</span>
-          <span className="font-bold">{taxaRealizacao}%</span>
+          <span className="text-muted-foreground">Taxa de realização (Sessões passadas)</span>
+          <span className="font-bold">{d.taxaRealizacao}%</span>
         </div>
-        <Progress value={taxaRealizacao} className="h-3" />
-        <div className="flex gap-4 text-xs text-muted-foreground">
+        <Progress value={d.taxaRealizacao} className="h-3" />
+        <div className="flex gap-4 text-xs text-muted-foreground flex-wrap">
           <span className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-primary" /> {d.realizadosMes} realizados</span>
-          <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {d.agendadosMes} agendados</span>
+          <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-amber-500" /> {d.faltasMes} faltas</span>
           <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-destructive" /> {d.canceladosMes} cancelados</span>
         </div>
       </Card>
 
-      {/* GRÁFICO DE LINHA: Agendados vs Realizados */}
+      {/* 🔥 GRÁFICO 1: FALTAS vs REALIZADOS */}
       <Card className="p-4 space-y-3">
-        <h2 className="font-semibold text-sm">Curva de Atendimentos — Agendados vs Realizados</h2>
+        <h2 className="font-semibold text-sm">Sucesso vs Prejuízo (Faltas/Canc. vs Realizados)</h2>
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={d.dadosGraficoLinha}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-              <XAxis dataKey="dia" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+              <XAxis dataKey="dia" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} interval={2} />
               <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
               <Tooltip contentStyle={{ borderRadius: '8px', fontSize: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
               <Legend />
-              <Line
-                type="monotone"
-                dataKey="agendados"
-                stroke="#f59e0b"
-                strokeWidth={2.5}
-                dot={{ r: 3, strokeWidth: 1.5 }}
-                activeDot={{ r: 5 }}
-                name="Agendados"
-              />
-              <Line
-                type="monotone"
-                dataKey="realizados"
-                stroke="#4f46e5"
-                strokeWidth={2.5}
-                dot={{ r: 3, strokeWidth: 1.5 }}
-                activeDot={{ r: 5 }}
-                name="Realizados"
-              />
+              <Line type="monotone" dataKey="faltas" stroke="#f59e0b" strokeWidth={2.5} dot={{ r: 2 }} activeDot={{ r: 5 }} name="Faltas/Canc." />
+              <Line type="monotone" dataKey="realizados" stroke="#4f46e5" strokeWidth={2.5} dot={{ r: 2 }} activeDot={{ r: 5 }} name="Realizados" />
             </LineChart>
           </ResponsiveContainer>
         </div>
       </Card>
 
-      {/* Repasses do mês */}
+      {/* 🔥 GRÁFICO 2: CURVA DE ATENDIMENTOS (TOTAL DO DIA) */}
+      <Card className="p-4 space-y-3">
+        <h2 className="font-semibold text-sm">Curva de Atendimentos — Este Mês</h2>
+        <div className="h-64">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={d.atendimentosPorDia}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+              <XAxis dataKey="dia" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} interval={2} />
+              <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+              <Tooltip contentStyle={{ borderRadius: '8px', fontSize: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+              <Line type="monotone" dataKey="count" stroke="#4f46e5" strokeWidth={3} dot={{ r: 3, strokeWidth: 2 }} activeDot={{ r: 6 }} name="Total do Dia" />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+
       <Card className="p-4 space-y-2">
         <h2 className="font-semibold text-sm">Repasses do mês</h2>
         <div className="grid grid-cols-2 gap-3">
@@ -339,7 +320,6 @@ export default function AdminDashboard() {
         </div>
       </Card>
 
-      {/* 🔥 NOVO: Ranking de Altas Fisioterapêuticas */}
       {d.topAltasProfissionais.length > 0 && (
         <Card className="p-4 space-y-2 border-l-4 border-l-purple-500">
           <h2 className="font-semibold text-sm flex items-center gap-2">
@@ -367,7 +347,6 @@ export default function AdminDashboard() {
         </Card>
       )}
 
-      {/* Rankings existentes */}
       <div className="grid grid-cols-1 gap-3">
         {d.topProfissionais.length > 0 && (
           <Card className="p-4 space-y-2">
@@ -393,7 +372,6 @@ export default function AdminDashboard() {
         )}
       </div>
 
-      {/* Resumo geral */}
       <Card className="p-4 space-y-2">
         <h2 className="font-semibold text-sm">Resumo geral</h2>
         <div className="grid grid-cols-2 gap-y-2 text-sm">
