@@ -395,6 +395,7 @@ export default function AgendaNova() {
   const [buscaPaciente, setBuscaPaciente] = useState("");
   const [sugestoesPacientes, setSugestoesPacientes] = useState<{ id: string; nome: string; telefone: string | null }[]>([]);
   const [pacienteSelecionado, setPacienteSelecionado] = useState<{ id: string; nome: string; telefone: string | null } | null>(null);
+  const [criandoPacienteSheet, setCriandoPacienteSheet] = useState(false);
   const [itensPaciente, setItensPaciente] = useState<any[]>([]);
   const [itemSelecionadoId, setItemSelecionadoId] = useState<string | null>(null);
   const [temProntuario, setTemProntuario] = useState(false);
@@ -858,7 +859,38 @@ export default function AgendaNova() {
     setSugestoesPacientes([]);
     await carregarItensPaciente(p.id);
   };
-
+  // 🔥 Criar paciente rápido direto pelo Sheet de Check-in
+  async function criarPacienteNoSheet() {
+    if (!novoPacienteNome.trim()) {
+      toast.error("Informe o nome");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { data, error } = await supabase
+        .from("pacientes")
+        .insert({
+          nome: novoPacienteNome.trim(),
+          telefone: novoPacienteTelefone.trim() || null,
+          ativo: true,
+        })
+        .select("id, nome, telefone")
+        .single();
+      if (error) throw error;
+      
+      toast.success("Paciente criado!");
+      setCriandoPacienteSheet(false);
+      setNovoPacienteNome("");
+      setNovoPacienteTelefone("");
+      
+      // Seleciona a paciente automaticamente para o check-in
+      await selecionarPacienteSheet(data);
+    } catch (err: any) {
+      toast.error("Erro: " + err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
     // ============ VINCULAR (Sheet) ============
   async function handleSalvarVinculacao() {
     if (!selectedAtend || !pacienteSelecionado) {
@@ -2022,31 +2054,62 @@ export default function AgendaNova() {
               {/* Vincular paciente */}
               <div className="space-y-2 border-b pb-3">
                 <Label className="text-xs font-bold">Paciente</Label>
-                <div className="relative">
-                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <Input
-                    placeholder="Buscar por nome..."
-                    value={buscaPaciente}
-                    onChange={(e) => setBuscaPaciente(e.target.value)}
-                    className="h-10 text-sm pl-9"
-                  />
-                </div>
-                {sugestoesPacientes.length > 0 && (
-                  <div className="border rounded-lg max-h-40 overflow-y-auto bg-white">
-                    {sugestoesPacientes.map((p) => (
-                      <button key={p.id} onClick={() => selecionarPacienteSheet(p)} className="w-full text-left px-3 py-2 hover:bg-blue-50 text-sm border-b last:border-0">
-                        {p.nome} {p.telefone && `(${p.telefone})`}
-                      </button>
-                    ))}
+                
+                {criandoPacienteSheet ? (
+                  <div className="border rounded-lg p-3 space-y-2 bg-slate-50 animate-in fade-in slide-in-from-top-2">
+                    <div className="text-xs font-bold text-slate-600 flex justify-between">
+                      <span>Novo paciente</span>
+                    </div>
+                    <Input placeholder="Nome completo" value={novoPacienteNome} onChange={(e) => setNovoPacienteNome(e.target.value)} className="h-9 text-sm" />
+                    <Input placeholder="Telefone (opcional)" value={novoPacienteTelefone} onChange={(e) => setNovoPacienteTelefone(e.target.value)} className="h-9 text-sm" />
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" className="flex-1 h-8 text-xs" onClick={() => setCriandoPacienteSheet(false)}>Cancelar</Button>
+                      <Button size="sm" className="flex-1 h-8 text-xs bg-emerald-600 hover:bg-emerald-700" onClick={criarPacienteNoSheet} disabled={busy}>
+                        <UserPlus className="w-3 h-3 mr-1" /> Criar
+                      </Button>
+                    </div>
                   </div>
+                ) : (
+                  <>
+                    <div className="relative">
+                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <Input
+                        placeholder="Buscar por nome..."
+                        value={buscaPaciente}
+                        onChange={(e) => setBuscaPaciente(e.target.value)}
+                        className="h-10 text-sm pl-9"
+                      />
+                    </div>
+                    
+                    {sugestoesPacientes.length > 0 && (
+                      <div className="border rounded-lg max-h-40 overflow-y-auto bg-white">
+                        {sugestoesPacientes.map((p) => (
+                          <button key={p.id} onClick={() => selecionarPacienteSheet(p)} className="w-full text-left px-3 py-2 hover:bg-blue-50 text-sm border-b last:border-0">
+                            {p.nome} {p.telefone && `(${p.telefone})`}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    
+                    {buscaPaciente.trim().length >= 2 && sugestoesPacientes.length === 0 && (
+                      <button 
+                        onClick={() => { setNovoPacienteNome(buscaPaciente.trim()); setCriandoPacienteSheet(true); }} 
+                        className="w-full text-left px-3 py-2 border rounded-lg text-sm text-emerald-700 hover:bg-emerald-50 border-emerald-200 font-medium"
+                      >
+                        + Criar novo paciente "{buscaPaciente}"
+                      </button>
+                    )}
+                  </>
                 )}
-                {pacienteSelecionado && (
-                  <div className="bg-green-50 p-2 rounded text-sm font-medium text-green-800">
-                    ✅ {pacienteSelecionado.nome} selecionado
+
+                {/* Mostra quem está selecionado */}
+                {pacienteSelecionado && !criandoPacienteSheet && (
+                  <div className="bg-green-50 p-2 rounded text-sm font-medium text-green-800 flex justify-between items-center">
+                    <span>✅ {pacienteSelecionado.nome} selecionado</span>
+                    <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] text-green-700 hover:bg-green-100" onClick={() => setPacienteSelecionado(null)}>Trocar</Button>
                   </div>
                 )}
               </div>
-
               {/* Pacote */}
               {pacienteSelecionado && (
                 <div className="space-y-2">
