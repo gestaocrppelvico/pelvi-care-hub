@@ -2285,8 +2285,6 @@ export default function AgendaNova() {
                           </Button>
                         </div>
                       )}
-                    </div>
-                  )}
 
                   {/* Botão que estava embaixo */}
                   <Button onClick={handleSalvarVinculacao} className="w-full" disabled={busy || !pacienteSelecionado || !itemSelecionadoId}>
