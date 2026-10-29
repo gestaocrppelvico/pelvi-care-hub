@@ -44,7 +44,7 @@ export default function Dashboard() {
 
   // ===== Estados de Auditoria =====
   const [faltasPendentes, setFaltasPendentes] = useState<any[]>([]);
-    const [evolucoesAtrasadas, setEvolucoesAtrasadas] = useState<any[]>([]);
+  const [evolucoesAtrasadas, setEvolucoesAtrasadas] = useState<any[]>([]);
   const [evolucoesPorProfissional, setEvolucoesPorProfissional] = useState<{ id: string; nome: string; cor: string | null; count: number }[]>([]);
   const [totalEvolucoesPendentes, setTotalEvolucoesPendentes] = useState(0);
   const [guiasRenovar, setGuiasRenovar] = useState<any[]>([]);
@@ -71,7 +71,7 @@ export default function Dashboard() {
   const [medicosVisitados, setMedicosVisitados] = useState(0);
   const [pacotesAtivos, setPacotesAtivos] = useState(0);
   const [alertasEstoque, setAlertasEstoque] = useState(0);
-  const [dadosGraficoLinha, setDadosGraficoLinha] = useState<{ dia: string; agendados: number; realizados: number }[]>([]);
+  const [dadosGraficoLinha, setDadosGraficoLinha] = useState<{ dia: string; faltas: number; realizados: number }[]>([]);
 
   const periodo = useMemo(() => {
     const hoje = new Date();
@@ -158,7 +158,7 @@ export default function Dashboard() {
           { data: altasData },
         ] = await Promise.all([
           supabase.from("atendimentos").select("id, data_inicio, paciente:pacientes(nome), profissional:profissionais(nome)").eq("status", "faltou"),
-                    supabase.from("atendimentos").select("id, data_inicio, profissional_id, profissional:profissionais(id, nome, cor_agenda)").eq("status", "realizado").lt("data_inicio", new Date(agora.getTime() - 48 * 60 * 60 * 1000).toISOString()).gte("data_inicio", DATA_CORTE.toISOString()),
+          supabase.from("atendimentos").select("id, data_inicio, profissional_id, profissional:profissionais(id, nome, cor_agenda)").eq("status", "realizado").lt("data_inicio", new Date(agora.getTime() - 48 * 60 * 60 * 1000).toISOString()).gte("data_inicio", DATA_CORTE.toISOString()),
           supabase.from("paciente_pacotes").select("id, paciente_id, sessoes_restantes, autorizacao:autorizacoes(plano), paciente:pacientes(nome)").not("autorizacao_id", "is", null).eq("status_renovacao", "vai_renovar"),
           supabase.from("atendimentos").select("id, data_inicio, status, profissional_id, servico_id, profissional:profissionais(nome), servico:servicos(nome)").gte("data_inicio", inicioPeriodo).lte("data_inicio", fimPeriodo),
           supabase.from("paciente_pacotes").select("id, autorizacao:autorizacoes(plano)"),
@@ -171,7 +171,8 @@ export default function Dashboard() {
           supabase.from("medicos").select("id, ultima_visita").not("ultima_visita", "is", null),
           supabase.from("paciente_pacotes").select("id, sessoes_restantes").gt("sessoes_restantes", 0),
           supabase.from("estoque_insumos").select("id, quantidade_atual, quantidade_minima"),
-          supabase.from("pagamentos").select("valor, data_pagamento").gte("data_pagamento", format(periodo.inicioDate, "yyyy-MM-dd")).lte("data_pagamento", format(periodo.fimDate, "yyyy-MM-dd")),
+          // 🔥 CORREÇÃO FATURAMENTO: Só pacientes (ignora repasses e contas)
+          supabase.from("pagamentos").select("valor, data_pagamento").gte("data_pagamento", format(periodo.inicioDate, "yyyy-MM-dd")).lte("data_pagamento", format(periodo.fimDate, "yyyy-MM-dd")).not("paciente_id", "is", null),
           supabase.from("atendimentos").select("id", { count: "exact", head: true }).eq("servico_id", servicoAvaliacaoId || "").eq("status", "realizado").gte("data_inicio", inicioPeriodo).lte("data_inicio", fimPeriodo),
           supabase.from("pacientes").select("id").gte("data_inicio_tratamento", format(periodo.inicioDate, "yyyy-MM-dd")).lte("data_inicio_tratamento", format(periodo.fimDate, "yyyy-MM-dd")),
           supabase.from("atendimentos").select("paciente_id").eq("servico_id", servicoAvaliacaoId || "").eq("status", "realizado").gte("data_inicio", inicioPeriodo).lte("data_inicio", fimPeriodo),
@@ -223,19 +224,19 @@ export default function Dashboard() {
         });
         const topServ = [...servMap.entries()].map(([nome, count]) => ({ nome, count })).sort((a, b) => b.count - a.count).slice(0, 5);
 
-        const porDiaDetalhado: { dia: string; agendados: number; realizados: number }[] = [];
+        const porDiaDetalhado: { dia: string; faltas: number; realizados: number }[] = [];
 
         if (filtroPeriodo === "dia") {
-          const horasMap: Record<string, { agendados: number; realizados: number }> = {};
+          const horasMap: Record<string, { faltas: number; realizados: number }> = {};
           for (let h = 7; h <= 21; h++) {
             const label = `${h.toString().padStart(2, "0")}h`;
-            horasMap[label] = { agendados: 0, realizados: 0 };
+            horasMap[label] = { faltas: 0, realizados: 0 };
           }
           atendPeriodo.forEach((a) => {
             const h = new Date(a.data_inicio).getHours();
             const label = `${h.toString().padStart(2, "0")}h`;
             if (horasMap[label]) {
-              if (a.status === "agendado") horasMap[label].agendados++;
+              if (a.status === "faltou" || a.status === "cancelado") horasMap[label].faltas++;
               if (a.status === "realizado") horasMap[label].realizados++;
             }
           });
@@ -250,7 +251,7 @@ export default function Dashboard() {
             const diaAtend = atendPeriodo.filter((a) => a.data_inicio.startsWith(diaISO));
             porDiaDetalhado.push({
               dia: label,
-              agendados: diaAtend.filter(a => a.status === "agendado").length,
+              faltas: diaAtend.filter(a => a.status === "faltou" || a.status === "cancelado").length,
               realizados: diaAtend.filter(a => a.status === "realizado").length,
             });
           });
@@ -269,7 +270,7 @@ export default function Dashboard() {
         });
 
         setFaltasPendentes(resFaltas.data || []);
-                // 🔥 Calcular evoluções pendentes por profissional
+        
         const atendidos = resEvolucoes.data || [];
         const idsAtend = atendidos.map((a: any) => a.id);
         
@@ -382,13 +383,16 @@ export default function Dashboard() {
 
   if (loading) return <div className="p-10 text-center text-muted-foreground animate-pulse">A carregar o Painel de Gestão...</div>;
 
-  const taxaRealizacao = atendimentosPeriodo.length > 0 
-    ? Math.round((atendimentosPeriodo.filter(a => a.status === "realizado").length / atendimentosPeriodo.length) * 100) 
-    : 0;
   const totalRealizados = atendimentosPeriodo.filter(a => a.status === "realizado").length;
-  const totalAgendados = atendimentosPeriodo.filter(a => a.status === "agendado").length;
+  const totalFaltas = atendimentosPeriodo.filter(a => a.status === "faltou").length;
   const totalCancelados = atendimentosPeriodo.filter(a => a.status === "cancelado").length;
+  const totalConcluidos = totalRealizados + totalFaltas + totalCancelados;
 
+  const taxaRealizacao = totalConcluidos > 0 
+    ? Math.round((totalRealizados / totalConcluidos) * 100) 
+    : 0;
+
+  const totalAgendados = atendimentosPeriodo.filter(a => a.status === "agendado").length;
   const percentualHoje = atendPrevistosHoje > 0 ? Math.round((atendRealizadosHoje / atendPrevistosHoje) * 100) : 0;
 
   return (
@@ -458,7 +462,7 @@ export default function Dashboard() {
           </div>
         </Card>
 
-                <Card className="p-0 overflow-hidden shadow-sm border-t-4 border-t-blue-500 flex flex-col h-64">
+        <Card className="p-0 overflow-hidden shadow-sm border-t-4 border-t-blue-500 flex flex-col h-64">
           <div className="bg-blue-50/50 p-3 border-b border-blue-100 flex items-center justify-between">
             <h3 className="font-bold text-xs uppercase tracking-wider text-blue-700 flex items-center gap-1.5"><Stethoscope className="w-4 h-4"/> Renovar Guias</h3>
             <Badge className="bg-blue-100 text-blue-700">{guiasRenovar.length}</Badge>
@@ -509,7 +513,7 @@ export default function Dashboard() {
           </div>
         </Card>
 
-                <Card className="p-0 overflow-hidden shadow-sm border-t-4 border-t-amber-500 flex flex-col h-64">
+        <Card className="p-0 overflow-hidden shadow-sm border-t-4 border-t-amber-500 flex flex-col h-64">
           <div className="bg-amber-50/50 p-3 border-b border-amber-100 flex items-center justify-between">
             <h3 className="font-bold text-xs uppercase tracking-wider text-amber-700 flex items-center gap-1.5"><Clock className="w-4 h-4"/> Evoluções Pendentes</h3>
             <Badge className="bg-amber-100 text-amber-700">{totalEvolucoesPendentes}</Badge>
@@ -571,13 +575,13 @@ export default function Dashboard() {
 
       <Card className="p-4 space-y-2">
         <div className="flex justify-between text-sm">
-          <span className="text-muted-foreground">Taxa de realização — {labelPeriodo}</span>
+          <span className="text-muted-foreground">Taxa de realização (Sessões passadas) — {labelPeriodo}</span>
           <span className="font-bold">{taxaRealizacao}%</span>
         </div>
         <Progress value={taxaRealizacao} className="h-3" />
-        <div className="flex gap-4 text-xs text-muted-foreground">
+        <div className="flex gap-4 text-xs text-muted-foreground flex-wrap">
           <span className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-primary" /> {totalRealizados} realizados</span>
-          <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {totalAgendados} agendados</span>
+          <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-amber-500" /> {totalFaltas} faltas</span>
           <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-destructive" /> {totalCancelados} cancelados</span>
         </div>
       </Card>
@@ -585,22 +589,7 @@ export default function Dashboard() {
       {/* ===== 3º ANDAR: GRÁFICOS ===== */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card className="p-4 shadow-sm">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-4 text-center">Curva de Atendimentos — {labelPeriodo}</h3>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={dadosGraficoMensal}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis dataKey="dia" tick={{fontSize: 10}} tickLine={false} axisLine={false} />
-                <YAxis tick={{fontSize: 10}} tickLine={false} axisLine={false} />
-                <ChartTooltip contentStyle={{ borderRadius: '8px', fontSize: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                <Line type="monotone" dataKey="Atendimentos" stroke="#4f46e5" strokeWidth={3} dot={{r: 4, strokeWidth: 2}} activeDot={{r: 6}} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-
-        <Card className="p-4 shadow-sm">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-4 text-center">Agendados vs Realizados — {labelPeriodo}</h3>
+          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-4 text-center">Sucesso vs Prejuízo (Faltas/Canc. vs Realizados) — {labelPeriodo}</h3>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={dadosGraficoLinha}>
@@ -609,8 +598,23 @@ export default function Dashboard() {
                 <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
                 <ChartTooltip contentStyle={{ borderRadius: '8px', fontSize: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
                 <Legend />
-                <Line type="monotone" dataKey="agendados" stroke="#f59e0b" strokeWidth={2.5} dot={{ r: 3 }} name="Agendados" />
+                <Line type="monotone" dataKey="faltas" stroke="#f59e0b" strokeWidth={2.5} dot={{ r: 3 }} name="Faltas/Canc." />
                 <Line type="monotone" dataKey="realizados" stroke="#4f46e5" strokeWidth={2.5} dot={{ r: 3 }} name="Realizados" />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+
+        <Card className="p-4 shadow-sm">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-4 text-center">Curva de Atendimentos (Total do Dia) — {labelPeriodo}</h3>
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={dadosGraficoMensal}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="dia" tick={{fontSize: 10}} tickLine={false} axisLine={false} />
+                <YAxis tick={{fontSize: 10}} tickLine={false} axisLine={false} />
+                <ChartTooltip contentStyle={{ borderRadius: '8px', fontSize: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                <Line type="monotone" dataKey="Atendimentos" stroke="#4f46e5" strokeWidth={3} dot={{r: 4, strokeWidth: 2}} activeDot={{r: 6}} />
               </LineChart>
             </ResponsiveContainer>
           </div>
