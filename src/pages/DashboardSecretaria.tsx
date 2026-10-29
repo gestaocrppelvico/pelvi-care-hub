@@ -23,10 +23,9 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
   const [totalOrfaosMes, setTotalOrfaosMes] = useState(0);
   const [fichasIncompletas, setFichasIncompletas] = useState<any[]>([]);
   const [renovacoesParticulares, setRenovacoesParticulares] = useState<any[]>([]);
-  
+  const [pagamentosPendentes, setPagamentosPendentes] = useState<any[]>([]);
   // 🔥 NOVOS ESTADOS
   const [pacotesTerminando, setPacotesTerminando] = useState<any[]>([]);
-  const [guiasVencendo, setGuiasVencendo] = useState<any[]>([]);
   const [pacientesAltaRecente, setPacientesAltaRecente] = useState<any[]>([]);
 
   const carregarDashboard = async () => {
@@ -48,7 +47,7 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
       const startProximo = startOfDay(dataProxima).toISOString();
       const endProximo = endOfDay(dataProxima).toISOString();
 
-      // 🔥 1. Pacotes terminando (≤ 2 sessões restantes)
+            // 🔥 1. Pacotes terminando (APENAS PACOTES, sem avulsos ou planos)
       const { data: pacotesTerminandoData } = await supabase
         .from("paciente_pacotes")
         .select(`
@@ -60,28 +59,12 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
         `)
         .gt("sessoes_restantes", 0)
         .lte("sessoes_restantes", 2)
+        .not("pacote_id", "is", null) // Tem que ser pacote
+        .is("autorizacao_id", null)  // Não pode ser de plano
         .order("sessoes_restantes", { ascending: true })
         .limit(10);
-
-      // 🔥 2. Guias prestes a vencer (validade < 60 dias e com saldo > 0)
-      const dataLimite = addDays(hoje, 60).toISOString();
-      const { data: guiasVencendoData } = await supabase
-        .from("paciente_pacotes")
-        .select(`
-          id,
-          sessoes_restantes,
-          sessoes_totais,
-          autorizacao:autorizacoes(plano, data_validade, numero_guia),
-          paciente_id,
-          paciente:pacientes(nome, telefone)
-        `)
-        .not("autorizacao_id", "is", null)
-        .gt("sessoes_restantes", 0)
-        .lte("autorizacao.data_validade", dataLimite)
-        .order("autorizacao.data_validade", { ascending: true })
-        .limit(10);
-
-      // 🔥 3. Pacientes com alta médica nos últimos 7 dias (para enviar link de avaliação)
+      
+      // 🔥 2. Pacientes com alta médica nos últimos 7 dias (para enviar link de avaliação)
       const dataAltaLimite = subDays(hoje, 7).toISOString();
       const { data: altaRecenteData } = await supabase
         .from("prontuarios")
@@ -95,7 +78,21 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
         .gte("created_at", dataAltaLimite)
         .order("created_at", { ascending: false })
         .limit(10);
+      
+      // 🔥 3. Pagamentos Pendentes
+      const { data: pagamentosData } = await supabase
+        .from("paciente_pacotes")
+        .select(`
+          id,
+          preco_pago,
+          paciente_id,
+          paciente:pacientes(nome)
+        `)
+        .eq("status_pagamento", "pendente")
+        .is("autorizacao_id", null)
+        .limit(10);
 
+      setPagamentosPendentes(pagamentosData || []);
       // 4. Demais consultas (existentes)
       const [resHoje, resProximo, resPacientes, resOrfaosMes, resRenovacoes] = await Promise.all([
         supabase.from("atendimentos").select("id, profissional:profissionais(id, nome)").gte("data_inicio", startHoje).lte("data_inicio", endHoje).not("status", "eq", "cancelado"),
@@ -111,7 +108,6 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
       setRenovacoesParticulares(resRenovacoes.data || []);
       
       setPacotesTerminando(pacotesTerminandoData || []);
-      setGuiasVencendo(guiasVencendoData || []);
       setPacientesAltaRecente(altaRecenteData || []);
 
       const mmDdHoje = format(hoje, "MM-dd");
@@ -219,13 +215,10 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
         )}
       </Card>
 
-      {/* LINHA 2: PACOTES TERMINANDO E GUIAS VENCENDO */}
+      {/* LINHA 2: PACOTES TERMINANDO */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* PACOTES TERMINANDO */}
-        <Card className="p-4 shadow-sm border-l-4 border-l-amber-500">
-          <h2 className="text-sm font-bold uppercase tracking-wider text-amber-700 flex items-center gap-2 mb-3">
-            <AlertTriangle className="w-4 h-4" /> Pacotes terminando
-          </h2>
+        <div className="md:col-span-2">
+          <Card className="p-4 shadow-sm border-l-4 border-l-amber-500">
           {pacotesTerminando.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-4">Nenhum pacote com saldo baixo.</p>
           ) : (
@@ -256,39 +249,7 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
           )}
         </Card>
 
-        {/* GUIAS VENCENDO */}
-        <Card className="p-4 shadow-sm border-l-4 border-l-purple-500">
-          <h2 className="text-sm font-bold uppercase tracking-wider text-purple-700 flex items-center gap-2 mb-3">
-            <FileText className="w-4 h-4" /> Guias prestes a vencer
-          </h2>
-          {guiasVencendo.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-4">Nenhuma guia próxima do vencimento.</p>
-          ) : (
-            <div className="space-y-2 max-h-60 overflow-y-auto">
-              {guiasVencendo.map((g) => (
-                <Link
-                  key={g.id}
-                  to={`/pacientes/${g.paciente_id}`}
-                  className="block p-2 rounded-lg border hover:bg-purple-50/50 hover:border-purple-300 transition-all"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-sm text-slate-800 truncate hover:text-purple-700">
-                      {g.paciente?.nome || "Paciente"}
-                    </span>
-                    <Badge variant="outline" className="text-purple-700 border-purple-200">
-                      {g.autorizacao?.plano || "Plano"}
-                    </Badge>
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-0.5">
-                    {g.sessoes_restantes} sessões restantes · 
-                    Vence em {format(new Date(g.autorizacao?.data_validade), "dd/MM/yyyy")}
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
-        </Card>
-      </div>
+        
 
       {/* LINHA 3: AÇÕES PENDENTES */}
       <Card className="p-4 shadow-sm border-t-4 border-t-amber-500">
@@ -329,7 +290,25 @@ export default function DashboardSecretaria({ nomeUsuario }: { nomeUsuario: stri
               </Button>
             </div>
           )}
-
+          {/* PAGAMENTOS PENDENTES */}
+          {pagamentosPendentes.map((pag) => (
+            <Link
+              key={pag.id}
+              to={`/pacientes/${pag.paciente_id}/financeiro`}
+              className="block p-3 border border-rose-200 bg-rose-50/30 rounded-xl hover:bg-rose-50 transition-all"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex-1">
+                  <span className="font-bold text-rose-700 uppercase block text-[9px] tracking-wide mb-0.5">Pagamento Pendente</span>
+                  <p className="font-bold text-slate-800 text-sm truncate">{pag.paciente?.nome}</p>
+                  <p className="text-muted-foreground text-xs">Valor: R$ {Number(pag.preco_pago).toFixed(2)}</p>
+                </div>
+                <Button size="sm" variant="outline" className="border-rose-300 text-rose-700 hover:bg-rose-100 font-semibold shrink-0">
+                  <CreditCard className="w-3.5 h-3.5 mr-1" /> Cobrar
+                </Button>
+              </div>
+            </Link>
+          ))}
           {/* FICHAS INCOMPLETAS */}
           {fichasIncompletas.map((f) => (
             <Link
