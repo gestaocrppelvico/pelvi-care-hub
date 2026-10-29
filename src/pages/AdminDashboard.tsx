@@ -93,7 +93,7 @@ export default function AdminDashboard() {
       supabase.from("medicos").select("id, ultima_visita").not("ultima_visita", "is", null),
       supabase.from("paciente_pacotes").select("id, sessoes_restantes").gt("sessoes_restantes", 0),
       supabase.from("estoque_insumos").select("id, quantidade_atual, quantidade_minima"),
-      supabase.from("pagamentos").select("valor, data_pagamento").gte("data_pagamento", format(startOfMonth(now), "yyyy-MM-dd")).lte("data_pagamento", format(endOfMonth(now), "yyyy-MM-dd")),
+      supabase.from("pagamentos").select("valor, data_pagamento").gte("data_pagamento", format(startOfMonth(now), "yyyy-MM-dd")).lte("data_pagamento", format(endOfMonth(now), "yyyy-MM-dd")).not("paciente_id", "is", null), // 🔥 SÓ CONTA O QUE O PACIENTE PAGOU (IGNORA REPASSES/CONTAS)
       supabase.from("atendimentos")
         .select("id", { count: "exact", head: true })
         .eq("servico_id", servicoAvaliacaoId || "")
