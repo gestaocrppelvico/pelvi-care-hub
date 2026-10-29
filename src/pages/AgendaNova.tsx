@@ -1,5 +1,5 @@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Bell, CheckCheck } from "lucide-react";
+import { Bell, CheckCheck, RefreshCw } from "lucide-react";
 import { useNotificacoes } from "@/hooks/useNotificacoes";
 import { useEffect, useState, useCallback } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
@@ -380,6 +380,7 @@ export default function AgendaNova() {
   const { notificacoes, naoLidas, marcarComoLida, marcarTodasComoLidas } = useNotificacoes(meuProfId);
   const [agora, setAgora] = useState(new Date());
   const [busy, setBusy] = useState(false);
+  const [atualizando, setAtualizando] = useState(false);
     // 🔥 States do modo edição
   const [modoEdicao, setModoEdicao] = useState(false);
   const [editForm, setEditForm] = useState({
@@ -692,7 +693,20 @@ export default function AgendaNova() {
       setItemSelecionadoId(null);
     }
   }
-
+  // 🔥 Função para puxar do Google e atualizar a tela
+  const handleRefresh = async () => {
+    setAtualizando(true);
+    try {
+      const { error } = await supabase.functions.invoke("gcal-pull");
+      if (error) throw error;
+      await carregar(); // Recarrega os dados do banco na tela
+      toast.success("Agenda atualizada com o Google Calendar!");
+    } catch (err: any) {
+      toast.error("Erro ao atualizar: " + err.message);
+    } finally {
+      setAtualizando(false);
+    }
+  };
   // ============ ABRIR DETALHES ============
   const abrirDetalhes = async (at: Atendimento) => {
     setSelectedAtend(at);
@@ -1674,11 +1688,8 @@ export default function AgendaNova() {
                 </Popover>
               )}
 
-              <Button size="sm" onClick={() => abrirCriar()} className="bg-emerald-600 hover:bg-emerald-700 h-8 text-xs font-bold flex-1 sm:flex-none">
-                <Plus className="w-3.5 h-3.5 mr-1" /> Novo
-              </Button>
-              <Button size="sm" onClick={() => abrirModalBloqueio()} className="bg-slate-600 hover:bg-slate-700 h-8 text-xs font-bold flex-1 sm:flex-none">
-                <Lock className="w-3.5 h-3.5 mr-1" /> Bloquear
+                         <Button size="sm" onClick={handleRefresh} disabled={atualizando} className="bg-slate-800 hover:bg-slate-900 h-8 text-xs font-bold flex-1 sm:flex-none">
+                <RefreshCw className={`w-3.5 h-3.5 mr-1 ${atualizando ? "animate-spin" : ""}`} /> Atualizar
               </Button>
             </div>
           </div>
@@ -1708,19 +1719,7 @@ export default function AgendaNova() {
               </div>
             ))}
 
-            <div
-              className="absolute left-14 right-0 top-0 bottom-0 cursor-pointer"
-              onClick={(e) => {
-                if ((e.target as HTMLElement).closest("button")) return;
-                const rect = e.currentTarget.getBoundingClientRect();
-                const y = e.clientY - rect.top;
-                const horas = y / ALTURA_HORA;
-                const horaInt = Math.floor(horas) + HORA_INICIO;
-                const minInt = Math.floor((horas % 1) * 4) * 15;
-                const hora = `${String(horaInt).padStart(2, "0")}:${String(minInt).padStart(2, "0")}`;
-                abrirCriar(currentDate, hora);
-              }}
-            >
+                          <div className="absolute left-14 right-0 top-0 bottom-0">
               {/* 🔥 Bloqueios — renderizam atrás dos eventos */}
               {bloqueios
                 .filter((b) => isSameDay(new Date(b.data_inicio), currentDate))
@@ -1790,19 +1789,8 @@ export default function AgendaNova() {
                       <span className="text-xs font-bold" style={{ color: cor }}>{prof.nome.split(" ")[0]}</span>
                       {eventosProf.length > 0 && <span className="text-[9px] text-slate-500">({eventosProf.length})</span>}
                     </div>
-                    <div
-                      className="relative cursor-pointer"
+                    <div className="relative"
                       style={{ height: `${(HORA_FIM - HORA_INICIO) * ALTURA_HORA}px` }}
-                      onClick={(e) => {
-                        if ((e.target as HTMLElement).closest("button")) return;
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        const y = e.clientY - rect.top;
-                        const horas = y / ALTURA_HORA;
-                        const horaInt = Math.floor(horas) + HORA_INICIO;
-                        const minInt = Math.floor((horas % 1) * 4) * 15;
-                        const hora = `${String(horaInt).padStart(2, "0")}:${String(minInt).padStart(2, "0")}`;
-                        abrirCriar(currentDate, hora, prof.id);
-                      }}
                     >
                       {Array.from({ length: HORA_FIM - HORA_INICIO + 1 }, (_, i) => (
                         <div key={i} className="absolute left-0 right-0 border-t border-slate-100 pointer-events-none" style={{ top: `${i * ALTURA_HORA}px` }} />
@@ -1962,19 +1950,8 @@ export default function AgendaNova() {
                           🔄 {selectedAtend.tipo_alteracao}
                         </Badge>
                       )}
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 text-xs border-blue-300 text-blue-700 hover:bg-blue-50 shrink-0"
-                      onClick={entrarModoEdicao}
-                    >
-                      ✏️ Editar
-                    </Button>
-                  </div>
-                </div>
-              )}
-
+                   
+          
               {/* Dados do evento — MODO EDIÇÃO */}
               {modoEdicao && (
                 <div className="bg-blue-50/40 p-3 rounded-xl border border-blue-200 space-y-3">
