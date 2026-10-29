@@ -31,8 +31,8 @@ interface Pagamento {
 
 export default function Pagamentos() {
   const navigate = useNavigate();
-  const { isAdmin, isSecretaria } = useAuth();
-  const podeGerenciar = isAdmin || isSecretaria;
+  const { isAdmin } = useAuth();
+  const podeGerenciar = isAdmin;
 
   const [pagamentos, setPagamentos] = useState<Pagamento[]>([]);
   const [loading, setLoading] = useState(true);
@@ -218,7 +218,18 @@ export default function Pagamentos() {
     setModalAberto(true);
   }
 
-  const formatBRL = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    const formatBRL = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+  // 🔥 TRAVA DE SEGURANÇA: Se não for Admin, bloqueia a tela inteira
+  if (!isAdmin) {
+    return (
+      <div className="p-8 text-center mt-10 space-y-4">
+        <h2 className="text-xl font-bold text-slate-700">Acesso Restrito</h2>
+        <p className="text-muted-foreground">Apenas administradores têm permissão para visualizar a página de pagamentos.</p>
+        <Button variant="outline" onClick={() => navigate("/dashboard")}>Voltar para o Início</Button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4 pb-20">
