@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Plus, Wallet, Receipt, Pencil, Trash2, Filter, Calendar, DollarSign } from "lucide-react";
+import { ArrowLeft, Plus, Wallet, Receipt, Pencil, Trash2, Filter, Calendar, DollarSign, User, Package } from "lucide-react";
 import { toast } from "sonner";
 import { format, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -25,6 +25,8 @@ interface Pagamento {
   observacoes: string | null;
   created_at: string;
   categoria?: string;
+  paciente?: { nome: string } | null;
+  pacote_info?: any;
 }
 
 export default function Pagamentos() {
@@ -70,17 +72,28 @@ export default function Pagamentos() {
 
       const { data, error } = await supabase
         .from("pagamentos")
-        .select("*")
+        .select(`
+          *,
+          paciente:pacientes(nome),
+          pacote_info:paciente_pacotes(
+            pacote:pacotes(nome),
+            servico:servicos(nome)
+          )
+        `)
         .gte("data_pagamento", format(start, "yyyy-MM-dd"))
         .lte("data_pagamento", format(end, "yyyy-MM-dd"))
         .order("data_pagamento", { ascending: false });
 
       if (error) throw error;
 
-      const pagamentosComCategoria = (data || []).map(p => ({
-        ...p,
-        categoria: p.observacoes?.toLowerCase().includes("repasse") ? "repasse" : "conta_fixa"
-      }));
+      const pagamentosComCategoria = (data || []).map(p => {
+        let categoria = "receita";
+        // Se não tem paciente_id, é uma despesa (repasse ou conta fixa)
+        if (!p.paciente_id) {
+          categoria = p.observacoes?.toLowerCase().includes("repasse") ? "repasse" : "conta_fixa";
+        }
+        return { ...p, categoria };
+      });
 
       setPagamentos(pagamentosComCategoria);
     } catch (err: any) {
@@ -113,13 +126,9 @@ export default function Pagamentos() {
     return filtrados;
   }, [pagamentos, filtroTipo, filtroBeneficiario, profissionais]);
 
-  const totalPago = pagamentosFiltrados.reduce((acc, p) => acc + Number(p.valor), 0);
-  const totalRepasses = pagamentosFiltrados
-    .filter(p => p.categoria === "repasse")
-    .reduce((acc, p) => acc + Number(p.valor), 0);
-  const totalContas = pagamentosFiltrados
-    .filter(p => p.categoria === "conta_fixa")
-    .reduce((acc, p) => acc + Number(p.valor), 0);
+  const totalRecebido = pagamentosFiltrados.filter(p => p.categoria === "receita").reduce((acc, p) => acc + Number(p.valor), 0);
+  const totalRepasses = pagamentosFiltrados.filter(p => p.categoria === "repasse").reduce((acc, p) => acc + Number(p.valor), 0);
+  const totalContas = pagamentosFiltrados.filter(p => p.categoria === "conta_fixa").reduce((acc, p) => acc + Number(p.valor), 0);
 
   async function salvarPagamento() {
     if (!form.beneficiario.trim()) {
@@ -187,6 +196,12 @@ export default function Pagamentos() {
   }
 
   function abrirEdicao(pag: Pagamento) {
+    if (pag.categoria === "receita") {
+      toast.info("Para editar pagamentos de pacientes, acesse a ficha financeira do paciente.");
+      navigate(`/pacientes/${pag.paciente_id}/financeiro`);
+      return;
+    }
+
     setEditandoId(pag.id);
     const partes = pag.observacoes?.split(" - ") || [];
     const categoria = partes[0]?.toLowerCase().includes("repasse") ? "repasse" : "conta_fixa";
@@ -234,6 +249,7 @@ export default function Pagamentos() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="todos">Todos</SelectItem>
+            <SelectItem value="receita">Receitas (Pacientes)</SelectItem>
             <SelectItem value="repasse">Repasses</SelectItem>
             <SelectItem value="conta_fixa">Contas Fixas</SelectItem>
           </SelectContent>
@@ -241,7 +257,7 @@ export default function Pagamentos() {
 
         <Select value={filtroBeneficiario} onValueChange={setFiltroBeneficiario}>
           <SelectTrigger className="w-full sm:w-[180px] h-9">
-            <SelectValue placeholder="Beneficiário" />
+            <SelectValue placeholder="Beneficiário (Prof)" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="todos">Todos</SelectItem>
@@ -272,19 +288,19 @@ export default function Pagamentos() {
             }}
             className="bg-emerald-600 hover:bg-emerald-700"
           >
-            <Plus className="w-4 h-4 mr-1" /> Novo Pagamento
+            <Plus className="w-4 h-4 mr-1" /> Nova Despesa
           </Button>
         )}
       </div>
 
       {/* Resumo */}
       <div className="grid grid-cols-3 gap-2">
-        <Card className="p-3">
-          <div className="text-xs text-muted-foreground">Total Pago</div>
-          <div className="font-bold text-lg">{formatBRL(totalPago)}</div>
+        <Card className="p-3 border-l-4 border-l-emerald-500">
+          <div className="text-xs text-muted-foreground">Total Recebido (Pacientes)</div>
+          <div className="font-bold text-lg text-emerald-600">{formatBRL(totalRecebido)}</div>
         </Card>
         <Card className="p-3 border-l-4 border-l-blue-500">
-          <div className="text-xs text-muted-foreground">Repasses</div>
+          <div className="text-xs text-muted-foreground">Repasses Pagos</div>
           <div className="font-bold text-blue-600">{formatBRL(totalRepasses)}</div>
         </Card>
         <Card className="p-3 border-l-4 border-l-amber-500">
@@ -302,50 +318,80 @@ export default function Pagamentos() {
             Nenhum pagamento registrado neste período.
           </Card>
         ) : (
-          pagamentosFiltrados.map((p) => (
-            <Card key={p.id} className="p-4 flex items-center gap-4 hover:shadow-md transition-shadow">
-              <Receipt className={`w-5 h-5 ${p.categoria === 'repasse' ? 'text-blue-500' : 'text-amber-500'} shrink-0`} />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-semibold text-slate-800">
-                    {p.observacoes?.split(" - ")[1]?.split(" | ")[0] || p.observacoes || "Pagamento"}
-                  </span>
-                  <Badge variant={p.categoria === 'repasse' ? 'default' : 'secondary'} className="text-[10px]">
-                    {p.categoria === 'repasse' ? 'Repasse' : 'Conta Fixa'}
-                  </Badge>
+          pagamentosFiltrados.map((p) => {
+            const isReceita = p.categoria === "receita";
+            const nomePaciente = p.paciente?.nome || "Paciente não identificado";
+            const nomeItem = p.pacote_info?.pacote?.nome || p.pacote_info?.servico?.nome || "Sessão Avulsa";
+            
+            // Extrair nome do beneficiário de despesas
+            const nomeDespesa = p.observacoes?.split(" - ")[1]?.split(" | ")[0] || p.observacoes || "Despesa";
+
+            return (
+              <Card key={p.id} className="p-4 flex items-center gap-4 hover:shadow-md transition-shadow">
+                {isReceita ? (
+                  <div className="p-2 bg-emerald-100 rounded-full shrink-0">
+                    <User className="w-5 h-5 text-emerald-600" />
+                  </div>
+                ) : (
+                  <Receipt className={`w-5 h-5 ${p.categoria === 'repasse' ? 'text-blue-500' : 'text-amber-500'} shrink-0`} />
+                )}
+                
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-bold text-slate-800 text-sm">
+                      {isReceita ? nomePaciente : nomeDespesa}
+                    </span>
+                    <Badge variant={isReceita ? 'default' : p.categoria === 'repasse' ? 'secondary' : 'outline'} className={`text-[10px] ${isReceita ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : ''}`}>
+                      {isReceita ? 'Receita' : p.categoria === 'repasse' ? 'Repasse' : 'Conta Fixa'}
+                    </Badge>
+                  </div>
+                  
+                  <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
+                    <span>{format(parseISO(p.data_pagamento), "dd/MM/yyyy", { locale: ptBR })}</span>
+                    <span>·</span>
+                    <span className="capitalize">{p.forma.replace("_", " ")}</span>
+                  </div>
+
+                  {isReceita && (
+                    <div className="text-[11px] text-slate-600 mt-1 flex items-center gap-1 bg-slate-50 w-fit px-2 py-0.5 rounded border">
+                      <Package className="w-3 h-3" /> Referente a: {nomeItem}
+                    </div>
+                  )}
+                  
+                  {!isReceita && p.observacoes && (
+                    <div className="text-[11px] text-slate-500 italic mt-1 truncate max-w-md">
+                      {p.observacoes}
+                    </div>
+                  )}
                 </div>
-                <div className="text-xs text-muted-foreground mt-0.5">
-                  {format(parseISO(p.data_pagamento), "dd/MM/yyyy", { locale: ptBR })} · {p.forma}
+
+                <div className={`font-bold shrink-0 ${isReceita ? 'text-emerald-600' : 'text-slate-600'}`}>
+                  {isReceita ? "+" : "-"} {formatBRL(Number(p.valor))}
                 </div>
-                {p.observacoes && (
-                  <div className="text-[11px] text-slate-500 italic mt-1 truncate max-w-md">
-                    {p.observacoes}
+
+                {podeGerenciar && (
+                  <div className="flex gap-1 shrink-0">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => abrirEdicao(p)}>
+                      <Pencil className="w-4 h-4 text-blue-600" />
+                    </Button>
+                    {!isReceita && (
+                      <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-red-50" onClick={() => excluirPagamento(p.id)}>
+                        <Trash2 className="w-4 h-4 text-red-500" />
+                      </Button>
+                    )}
                   </div>
                 )}
-              </div>
-              <div className="font-bold text-emerald-600 shrink-0">
-                {formatBRL(Number(p.valor))}
-              </div>
-              {podeGerenciar && (
-                <div className="flex gap-1 shrink-0">
-                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => abrirEdicao(p)}>
-                    <Pencil className="w-4 h-4 text-blue-600" />
-                  </Button>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-red-50" onClick={() => excluirPagamento(p.id)}>
-                    <Trash2 className="w-4 h-4 text-red-500" />
-                  </Button>
-                </div>
-              )}
-            </Card>
-          ))
+              </Card>
+            );
+          })
         )}
       </div>
 
-      {/* Modal Novo/Editar Pagamento */}
+      {/* Modal Nova Despesa (Repasse / Conta Fixa) */}
       <Dialog open={modalAberto} onOpenChange={setModalAberto}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
-            <DialogTitle>{editandoId ? "Editar" : "Novo"} Pagamento</DialogTitle>
+            <DialogTitle>{editandoId ? "Editar Despesa" : "Nova Despesa"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
@@ -432,12 +478,12 @@ export default function Pagamentos() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setModalAberto(false)}>Cancelar</Button>
-            <Button onClick={salvarPagamento} className="bg-emerald-600 hover:bg-emerald-700">
-              <DollarSign className="w-4 h-4 mr-1" /> {editandoId ? "Atualizar" : "Registrar"}
+            <Button onClick={salvarPagamento} className="bg-slate-800 hover:bg-slate-900 text-white">
+              <DollarSign className="w-4 h-4 mr-1" /> {editandoId ? "Atualizar" : "Registrar Despesa"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
   );
-            }
+}
