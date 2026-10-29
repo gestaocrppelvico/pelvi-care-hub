@@ -218,7 +218,7 @@ export default function EditarEvolucao() {
               onClick={() => setAltaMedica(!altaMedica)}
               className="w-full"
             >
-              {altaMedica ? "✅ Dar Alta" : "Dar Alta Médica"}
+              {altaMedica ? "✅ Dar Alta" : "Dar Alta Fisioterapêutica"}
             </Button>
           </div>
         </div>
