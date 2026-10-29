@@ -859,16 +859,13 @@ export default function AgendaNova() {
     await carregarItensPaciente(p.id);
   };
 
-  // ============ VINCULAR (Sheet) ============
+    // ============ VINCULAR (Sheet) ============
   async function handleSalvarVinculacao() {
     if (!selectedAtend || !pacienteSelecionado) {
       toast.error("Paciente não selecionado.");
       return;
     }
-    if (itensPaciente.length > 0 && !itemSelecionadoId) {
-      toast.error("Selecione um pacote/serviço para consumir.");
-      return;
-    }
+    // 🔥 O pacote (itemSelecionadoId) agora é opcional na vinculação
 
     setBusy(true);
     try {
@@ -894,7 +891,7 @@ export default function AgendaNova() {
         },
       };
       setSelectedAtend(atualizado);
-      toast.success("Vinculado! Pronto para check-in.");
+      toast.success("Paciente vinculado! Prepare o pacote para o check-in.");
       await carregar();
     } catch (err: any) {
       toast.error("Erro: " + err.message);
@@ -902,14 +899,16 @@ export default function AgendaNova() {
       setBusy(false);
     }
   }
-
-  // ============ CHECK-IN RÁPIDO ============
+    // ============ CHECK-IN RÁPIDO ============
   async function handleCheckinRapido() {
     if (!selectedAtend) return;
+    
+    // 🔥 AQUI ESTÁ A TRAVA: Não deixa dar check-in sem pacote
     if (!selectedAtend.paciente_id || !selectedAtend.paciente_pacote_id) {
-      toast.error("Vincule paciente e pacote primeiro.");
+      toast.error("Para realizar o check-in, você precisa vincular um pacote/serviço primeiro.");
       return;
     }
+
     setBusy(true);
     try {
       const { error } = await supabase
@@ -926,7 +925,6 @@ export default function AgendaNova() {
       setBusy(false);
     }
   }
-
   // ============ MUDAR STATUS (select) ============
   async function handleSalvarStatus() {
     if (!selectedAtend) return;
@@ -2136,7 +2134,7 @@ export default function AgendaNova() {
                   )}
 
                   {/* Botão Vincular e Check-in */}
-                  <Button onClick={handleSalvarVinculacao} className="w-full" disabled={busy || !pacienteSelecionado || !itemSelecionadoId}>
+                  <Button onClick={handleSalvarVinculacao} className="w-full" disabled={busy || !pacienteSelecionado}>
                     <CheckCircle2 className="w-4 h-4 mr-2" />
                     {busy ? "Vinculando..." : "Vincular e Preparar Check-in"}
                   </Button>
