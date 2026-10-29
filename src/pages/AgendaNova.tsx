@@ -559,6 +559,7 @@ export default function AgendaNova() {
         `)
         .gte("data_inicio", start.toISOString())
         .lte("data_inicio", end.toISOString())
+        .not("status", "in", '("remarcado","cancelado")') // 🔥 ESCONDE OS REMARCADOS
         .order("data_inicio", { ascending: true });
 
       if (!isAdmin && !isSecretaria && meuProfId) {
