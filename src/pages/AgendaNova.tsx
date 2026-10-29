@@ -1911,7 +1911,7 @@ export default function AgendaNova() {
         </div>
       )}
 
-      {/* SHEET DE DETALHES */}
+            {/* SHEET DE DETALHES */}
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
         <SheetContent side="right" className="w-full sm:max-w-md p-5 space-y-4 overflow-y-auto">
           <SheetHeader>
@@ -1920,187 +1920,34 @@ export default function AgendaNova() {
 
           {selectedAtend && (
             <>
-                            {/* Dados do evento — MODO VISUALIZAÇÃO */}
-              {!modoEdicao && (
-                <div className="bg-slate-50 p-3 rounded-xl border space-y-1 text-xs">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      {selectedAtend.paciente_id && selectedAtend.paciente?.nome ? (
-                        <a
-                          href={`/pacientes/${selectedAtend.paciente_id}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="font-bold text-sm text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1.5"
-                        >
-                          {selectedAtend.paciente.nome}
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </a>
-                      ) : (
-                        <p className="font-bold text-sm text-slate-700">{selectedAtend.nome_paciente_livre || "Sem identificação"}</p>
-                      )}
-                      <p className="text-muted-foreground mt-1">
-                        <Clock className="w-3 h-3 inline mr-1" />
-                        {format(new Date(selectedAtend.data_inicio), "dd 'de' MMMM 'às' HH:mm", { locale: ptBR })}
-                      </p>
-                      <p className="text-muted-foreground uppercase font-semibold text-[10px] tracking-wide text-blue-600 mt-1">
-                        Profissional: {selectedAtend.profissional?.nome || "Não definido"}
-                      </p>
-                      {selectedAtend.tipo_alteracao && (
-                        <Badge variant="outline" className="text-[9px] mt-1">
-                          🔄 {selectedAtend.tipo_alteracao}
-                        </Badge>
-                      )}
-                   
-          
-              {/* Dados do evento — MODO EDIÇÃO */}
-              {modoEdicao && (
-                <div className="bg-blue-50/40 p-3 rounded-xl border border-blue-200 space-y-3">
-                  <div className="text-xs font-bold text-blue-700 uppercase tracking-wider flex items-center justify-between">
-                    <span>✏️ Editando atendimento</span>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-6 w-6 p-0"
-                      onClick={() => setModoEdicao(false)}
-                    >
-                      <X className="w-4 h-4" />
-                    </Button>
-                  </div>
-
-                  {/* Paciente (read-only no modo edição) */}
-                  <div>
-                    <Label className="text-[10px] uppercase text-slate-500 font-bold">Paciente</Label>
-                    <div className="text-sm font-medium text-slate-800 mt-0.5">
-                      {selectedAtend.paciente?.nome || selectedAtend.nome_paciente_livre || "—"}
-                    </div>
-                    <p className="text-[10px] text-slate-500 italic mt-0.5">
-                      Para trocar o paciente, use a busca na seção abaixo.
+              {/* Dados do evento */}
+              <div className="bg-slate-50 p-3 rounded-xl border space-y-1 text-xs">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    {selectedAtend.paciente_id && selectedAtend.paciente?.nome ? (
+                      <a
+                        href={`/pacientes/${selectedAtend.paciente_id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-bold text-sm text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1.5"
+                      >
+                        {selectedAtend.paciente.nome}
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    ) : (
+                      <p className="font-bold text-sm text-slate-700">{selectedAtend.nome_paciente_livre || "Sem identificação"}</p>
+                    )}
+                    <p className="text-muted-foreground mt-1">
+                      <Clock className="w-3 h-3 inline mr-1" />
+                      {format(new Date(selectedAtend.data_inicio), "dd 'de' MMMM 'às' HH:mm", { locale: ptBR })}
+                    </p>
+                    <p className="text-muted-foreground uppercase font-semibold text-[10px] tracking-wide text-blue-600 mt-1">
+                      Profissional: {selectedAtend.profissional?.nome || "Não definido"}
                     </p>
                   </div>
-
-                  {/* Data */}
-                  <div>
-                    <Label className="text-[10px] uppercase text-slate-500 font-bold">Data</Label>
-                    <Input
-                      type="date"
-                      value={editForm.data}
-                      onChange={(e) => setEditForm({ ...editForm, data: e.target.value })}
-                      className="h-9 text-sm mt-1"
-                    />
-                  </div>
-
-                  {/* Horários */}
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <Label className="text-[10px] uppercase text-slate-500 font-bold">Início</Label>
-                      <Input
-                        type="time"
-                        value={editForm.hora_inicio}
-                        onChange={(e) => setEditForm({ ...editForm, hora_inicio: e.target.value })}
-                        className="h-9 text-sm mt-1"
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-[10px] uppercase text-slate-500 font-bold">Fim</Label>
-                      <Input
-                        type="time"
-                        value={editForm.hora_fim}
-                        onChange={(e) => setEditForm({ ...editForm, hora_fim: e.target.value })}
-                        className="h-9 text-sm mt-1"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Profissional */}
-                  <div>
-                    <Label className="text-[10px] uppercase text-slate-500 font-bold">Profissional</Label>
-                    <Select value={editForm.profissional_id} onValueChange={(v) => setEditForm({ ...editForm, profissional_id: v })}>
-                      <SelectTrigger className="h-9 text-sm mt-1">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {profissionais.map((p) => (
-                          <SelectItem key={p.id} value={p.id}>
-                            <div className="flex items-center gap-2">
-                              <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: p.cor_agenda || "#3b82f6" }} />
-                              <span>{p.nome}</span>
-                            </div>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Tipo de alteração (só se data ou hora mudou) */}
-                  {(() => {
-                    const dtInicioOriginal = new Date(selectedAtend.data_inicio);
-                    const dtFimOriginal = selectedAtend.data_fim ? new Date(selectedAtend.data_fim) : new Date(dtInicioOriginal.getTime() + DURACAO_PADRAO * 60 * 1000);
-                    const novaData = new Date(`${editForm.data}T${editForm.hora_inicio}:00`);
-                    const novaDataFim = new Date(`${editForm.data}T${editForm.hora_fim}:00`);
-                    const mudouDataHora = 
-                      novaData.getTime() !== dtInicioOriginal.getTime() ||
-                      novaDataFim.getTime() !== dtFimOriginal.getTime();
-
-                    if (!mudouDataHora) return null;
-
-                    return (
-                      <div className="bg-white border rounded-lg p-3 space-y-2">
-                        <Label className="text-[10px] uppercase text-slate-500 font-bold">
-                          Tipo de alteração *
-                        </Label>
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setEditForm({ ...editForm, tipo_alteracao: "remarcacao" })}
-                            className={`flex-1 h-9 text-xs rounded-lg border-2 font-medium transition-all ${
-                              editForm.tipo_alteracao === "remarcacao"
-                                ? "border-amber-400 bg-amber-50 text-amber-700"
-                                : "border-slate-200 text-slate-500 hover:border-slate-300"
-                            }`}
-                          >
-                            🔄 Remarcação
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setEditForm({ ...editForm, tipo_alteracao: "cancelamento" })}
-                            className={`flex-1 h-9 text-xs rounded-lg border-2 font-medium transition-all ${
-                              editForm.tipo_alteracao === "cancelamento"
-                                ? "border-red-400 bg-red-50 text-red-700"
-                                : "border-slate-200 text-slate-500 hover:border-slate-300"
-                            }`}
-                          >
-                            ❌ Cancelamento
-                          </button>
-                        </div>
-                        <p className="text-[10px] text-slate-500 italic">
-                          {editForm.tipo_alteracao === "cancelamento"
-                            ? "⚠️ O status será alterado para Cancelado."
-                            : "A data/hora será atualizada."}
-                        </p>
-                      </div>
-                    );
-                  })()}
-
-                  {/* Botões */}
-                  <div className="flex gap-2 pt-1">
-                    <Button
-                      variant="outline"
-                      className="flex-1 h-10 text-xs"
-                      onClick={() => setModoEdicao(false)}
-                      disabled={busy}
-                    >
-                      Cancelar
-                    </Button>
-                    <Button
-                      className="flex-1 h-10 text-xs bg-blue-600 hover:bg-blue-700 font-bold"
-                      onClick={salvarEdicao}
-                      disabled={busy}
-                    >
-                      {busy ? "Salvando..." : "Salvar Alterações"}
-                    </Button>
-                  </div>
                 </div>
-              )}
+              </div>
+
               {/* Status de vinculação */}
               <div className="flex flex-col gap-1.5 bg-slate-50 p-3 rounded-xl border text-xs">
                 <div className="flex items-center gap-2">
@@ -2202,7 +2049,7 @@ export default function AgendaNova() {
                 )}
               </div>
 
-                            {/* Pacote */}
+              {/* Pacote */}
               {pacienteSelecionado && (
                 <div className="space-y-2">
                   <Label className="text-xs font-bold">Pacote/Serviço a consumir</Label>
@@ -2229,7 +2076,7 @@ export default function AgendaNova() {
                     </div>
                   )}
 
-                  {/* 🔥 NOVO: Formulário para adicionar pacote direto pelo Sheet */}
+                  {/* Formulário para adicionar pacote direto pelo Sheet */}
                   {itensPaciente.length === 0 && (
                     <div className="mt-2">
                       {!mostrarCriarPacote ? (
@@ -2285,15 +2132,17 @@ export default function AgendaNova() {
                           </Button>
                         </div>
                       )}
+                    </div>
+                  )}
 
-                  {/* Botão que estava embaixo */}
+                  {/* Botão Vincular e Check-in */}
                   <Button onClick={handleSalvarVinculacao} className="w-full" disabled={busy || !pacienteSelecionado || !itemSelecionadoId}>
                     <CheckCircle2 className="w-4 h-4 mr-2" />
                     {busy ? "Vinculando..." : "Vincular e Preparar Check-in"}
                   </Button>
                 </div>
               )}
-                  
+
               {/* Status */}
               <div className="space-y-2 pt-2 border-t">
                 <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Alterar Status</Label>
