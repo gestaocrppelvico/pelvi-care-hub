@@ -151,7 +151,7 @@ export default function Dashboard() {
           { data: pacotesData },
           { data: estoqueData },
           { data: pagamentosData },
-          { count: avaliacoesCount },
+          { data: pacotesAvaliacao },
           { data: pacientesManual },
           { data: pacientesAvaliacao },
           { data: pacientesSessao },
@@ -173,7 +173,8 @@ export default function Dashboard() {
           supabase.from("estoque_insumos").select("id, quantidade_atual, quantidade_minima"),
           // 🔥 CORREÇÃO FATURAMENTO: Só pacientes (ignora repasses e contas)
           supabase.from("pagamentos").select("valor, data_pagamento").gte("data_pagamento", format(periodo.inicioDate, "yyyy-MM-dd")).lte("data_pagamento", format(periodo.fimDate, "yyyy-MM-dd")).not("paciente_id", "is", null),
-          supabase.from("atendimentos").select("id", { count: "exact", head: true }).eq("servico_id", servicoAvaliacaoId || "").eq("status", "realizado").gte("data_inicio", inicioPeriodo).lte("data_inicio", fimPeriodo),
+                    // 🔥 NOVO: Busca os pacotes/serviços que são avaliação
+          supabase.from("paciente_pacotes").select("id, servico_id, pacote_id").eq("servico_id", servicoAvaliacaoId || ""),
           supabase.from("pacientes").select("id").gte("data_inicio_tratamento", format(periodo.inicioDate, "yyyy-MM-dd")).lte("data_inicio_tratamento", format(periodo.fimDate, "yyyy-MM-dd")),
           supabase.from("atendimentos").select("paciente_id").eq("servico_id", servicoAvaliacaoId || "").eq("status", "realizado").gte("data_inicio", inicioPeriodo).lte("data_inicio", fimPeriodo),
           servicoAvaliacaoId ? supabase.from("atendimentos").select("paciente_id").not("servico_id", "eq", servicoAvaliacaoId).eq("status", "realizado").gte("data_inicio", inicioPeriodo).lte("data_inicio", fimPeriodo) : supabase.from("atendimentos").select("paciente_id", { count: "exact", head: true }).limit(0),
@@ -315,7 +316,22 @@ export default function Dashboard() {
         setRepassesPend(repassesPendSum);
         setRepassesPg(repassesPgSum);
         setFaturamento(faturamentoSum);
-        setAvaliacoes(avaliacoesCount ?? 0);
+                // 🔥 NOVO CÁLCULO DE AVALIAÇÕES
+        const idsPacotesAvaliacao = pacotesAvaliacao?.map((p: any) => p.id) || [];
+        let qtdAvaliacoes = 0;
+        
+        if (idsPacotesAvaliacao.length > 0) {
+          const { count } = await supabase
+            .from("atendimentos")
+            .select("id", { count: "exact", head: true })
+            .in("paciente_pacote_id", idsPacotesAvaliacao)
+            .eq("status", "realizado")
+            .gte("data_inicio", inicioPeriodo)
+            .lte("data_inicio", fimPeriodo);
+          
+          qtdAvaliacoes = count ?? 0;
+        }
+        setAvaliacoes(qtdAvaliacoes);
         setNovosTratamentos(novosTratamentosTotal);
         setNovosTratamentosManual(manualCount);
         setAltas(altasCount);
