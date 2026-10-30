@@ -558,7 +558,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KPI icon={Calendar} label="Atend. previstos hoje" value={atendPrevistosHoje} />
         <KPI icon={CheckCircle} label="Realizados hoje" value={`${atendRealizadosHoje} (${percentualHoje}%)`} />
-        <KPI icon={TrendingUp} label="Atend. no período" value={atendimentosPeriodo.length} />
+        <KPI icon={TrendingUp} label="Volume de Agenda" value={atendimentosPeriodo.length} />
         <KPI icon={Users} label="Pacientes ativos" value={pacAtivos} />
         <KPI icon={DollarSign} label="Faturamento" value={`R$ ${faturamento.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`} />
         <KPI icon={FileText} label="Avaliações" value={avaliacoes} />
