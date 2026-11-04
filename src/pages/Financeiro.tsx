@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { 
   Wallet, Package, Settings, CheckCircle2, Activity, Undo2, Pencil, 
-  Search, ArrowUpDown, AlertTriangle, Check, X, DollarSign, Calendar, Trash2 
+  Search, ArrowUpDown, AlertTriangle, Check, X, DollarSign, Calendar, Trash2, FileCheck2 
 } from "lucide-react";
 import { toast } from "sonner";
 import { startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval, parseISO, startOfDay, endOfDay, format } from "date-fns";
@@ -192,7 +192,7 @@ export default function Financeiro() {
     return Array.from(lista.entries()).map(([id, nome]) => ({ id, nome }));
   }, [repasses]);
 
-  // ----- FILTROS E ORDENAÇÃO DOS REPASSES (🔥 CORRIGIDO AQUI) -----
+  // ----- FILTROS E ORDENAÇÃO DOS REPASSES -----
   const repassesFiltrados = useMemo(() => {
     let filtrados = repasses;
     
@@ -217,7 +217,7 @@ export default function Financeiro() {
       
       if (start && end) {
         filtrados = filtrados.filter(r => {
-          // 🔥 USA A DATA DO ATENDIMENTO. Se não tiver, usa a de criação.
+          // Usa a data do atendimento para o filtro (fallback para data de criação)
           const dataReferencia = r.atendimento?.data_inicio 
             ? parseISO(r.atendimento.data_inicio) 
             : parseISO(r.created_at);
@@ -234,7 +234,6 @@ export default function Financeiro() {
     }
 
     const comparar = (a: RepasseRow, b: RepasseRow) => {
-      // 🔥 ORDENA PELA DATA DO ATENDIMENTO
       const dataA = a.atendimento?.data_inicio ? new Date(a.atendimento.data_inicio).getTime() : new Date(a.created_at).getTime();
       const dataB = b.atendimento?.data_inicio ? new Date(b.atendimento.data_inicio).getTime() : new Date(b.created_at).getTime();
 
@@ -469,7 +468,8 @@ export default function Financeiro() {
         <h1 className="text-2xl font-bold">Financeiro</h1>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+      {/* 🔥 AQUI ESTÁ O CARD DE AUTORIZAÇÕES RESTAURADO */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-2">
         <Link to="/financeiro/servicos">
           <Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full">
             <Package className="w-5 h-5 text-primary" />
@@ -494,6 +494,12 @@ export default function Financeiro() {
           <Card className="p-3 flex items-center gap-2 hover:bg-blue-50 transition-colors h-full border-blue-200">
             <DollarSign className="w-5 h-5 text-blue-600" />
             <div className="font-medium text-sm text-blue-800">Pagamentos</div>
+          </Card>
+        </Link>
+        <Link to="/financeiro/autorizacoes"> {/* Ajuste a rota se necessário */}
+          <Card className="p-3 flex items-center gap-2 hover:bg-purple-50 transition-colors h-full border-purple-200">
+            <FileCheck2 className="w-5 h-5 text-purple-600" />
+            <div className="font-medium text-sm text-purple-800">Autorizações</div>
           </Card>
         </Link>
       </div>
