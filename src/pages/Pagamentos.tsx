@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Wallet, Receipt, Filter, Calendar, DollarSign, User, CheckCircle2, Clock, Trash2 } from "lucide-react";
+import { ArrowLeft, Wallet, Receipt, Filter, Calendar, DollarSign, User, CheckCircle2, Clock, Trash2, Scale, TrendingUp, TrendingDown } from "lucide-react";
 import { toast } from "sonner";
 import { format, startOfMonth, endOfMonth, parseISO, startOfDay, endOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -154,6 +154,9 @@ export default function Pagamentos() {
   const totalRepassesPagos = pagamentos.filter(p => p.categoria === "repasse").reduce((acc, p) => acc + Number(p.valor), 0);
   const totalContas = pagamentos.filter(p => p.categoria === "conta_fixa").reduce((acc, p) => acc + Number(p.valor), 0);
 
+  // 🔥 NOVO: CÁLCULO DO BALANÇO
+  const balancoMes = totalRecebido - (totalRepassesPagos + totalContas);
+
   async function registrarDespesa() {
     if (!formDespesa.beneficiario.trim() || !formDespesa.valor || parseFloat(formDespesa.valor) <= 0) {
       toast.error("Preencha os campos obrigatórios."); return;
@@ -209,7 +212,6 @@ export default function Pagamentos() {
 
   return (
     <div className="space-y-4 pb-20 max-w-6xl mx-auto p-2">
-      {/* 🔥 CABEÇALHO RESPONSIVO: Empilha no celular, alinha na tela grande */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="icon" onClick={() => navigate("/financeiro")}><ArrowLeft className="w-5 h-5" /></Button>
@@ -221,7 +223,6 @@ export default function Pagamentos() {
         </Button>
       </div>
 
-      {/* 🔥 FILTROS RESPONSIVOS */}
       <Card className="p-3 flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <Calendar className="w-4 h-4 text-muted-foreground shrink-0" />
@@ -244,8 +245,8 @@ export default function Pagamentos() {
         </Button>
       </Card>
 
-      {/* 🔥 CARDS DE RESUMO: 1 coluna no celular, 3 na tela grande */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      {/* 🔥 GRID AJUSTADO PARA 4 CARDS */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <Card className="p-3 sm:p-4 border-l-4 border-l-emerald-500">
           <div className="text-xs text-muted-foreground">Receitas (Pacientes)</div>
           <div className="font-bold text-xl sm:text-2xl text-emerald-600">{formatBRL(totalRecebido)}</div>
@@ -257,6 +258,17 @@ export default function Pagamentos() {
         <Card className="p-3 sm:p-4 border-l-4 border-l-amber-500">
           <div className="text-xs text-muted-foreground">Contas Fixas Pagas</div>
           <div className="font-bold text-xl sm:text-2xl text-amber-600">{formatBRL(totalContas)}</div>
+        </Card>
+        
+        {/* 🔥 NOVO CARD DE BALANÇO */}
+        <Card className={`p-3 sm:p-4 border-l-4 ${balancoMes >= 0 ? 'border-l-indigo-500' : 'border-l-red-500'}`}>
+          <div className="text-xs text-muted-foreground flex items-center gap-1">
+            <Scale className="w-3.5 h-3.5" /> Balanço do Mês
+          </div>
+          <div className={`font-bold text-xl sm:text-2xl flex items-center gap-1 ${balancoMes >= 0 ? 'text-indigo-600' : 'text-red-600'}`}>
+            {balancoMes >= 0 ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
+            {formatBRL(balancoMes)}
+          </div>
         </Card>
       </div>
 
@@ -333,7 +345,6 @@ export default function Pagamentos() {
         </div>
       </div>
 
-      {/* MODAIS AJUSTADOS COM SCROLL PARA NÃO VAZAR A TELA NO CELULAR */}
       <Dialog open={modalDespesaAberto} onOpenChange={setModalDespesaAberto}>
         <DialogContent className="sm:max-w-[425px] max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Registrar Nova Despesa</DialogTitle></DialogHeader>
