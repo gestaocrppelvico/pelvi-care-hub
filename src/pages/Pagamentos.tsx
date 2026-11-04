@@ -10,9 +10,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Plus, Wallet, Receipt, Pencil, Trash2, Filter, Calendar, DollarSign, User, CheckCircle2, Clock } from "lucide-react";
+import { ArrowLeft, Wallet, Receipt, Filter, Calendar, DollarSign, User, CheckCircle2, Clock, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { format, startOfMonth, endOfMonth, parseISO } from "date-fns";
+import { format, startOfMonth, endOfMonth, parseISO, startOfDay, endOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
 interface Pagamento {
@@ -65,39 +65,27 @@ export default function Pagamentos() {
     valor: "",
     forma: "pix",
     data_pagamento: format(new Date(), "yyyy-MM-dd"),
-    categoria: "conta_fixa",
     observacoes: ""
   });
 
   const [formPagamento, setFormPagamento] = useState({
     forma: "pix",
     data_pagamento: format(new Date(), "yyyy-MM-dd"),
-    observacoes: ""
   });
-
-  const [profissionais, setProfissionais] = useState<{ id: string; nome: string }[]>([]);
-
-  useEffect(() => {
-    supabase
-      .from("profissionais")
-      .select("id, nome")
-      .eq("ativo", true)
-      .order("nome")
-      .then(({ data }) => setProfissionais(data || []));
-  }, []);
 
   async function carregarDados() {
     setLoading(true);
     try {
-      const start = startOfMonth(parseISO(filtroMes + "-01"));
-      const end = endOfMonth(start);
+      // 🔥 BLINDAGEM DE FUSO HORÁRIO PARA O MÊS INTEIRO
+      const inicioMes = startOfDay(parseISO(filtroMes + "-01"));
+      const fimMes = endOfDay(endOfMonth(inicioMes));
 
-      // 1. Buscar Receitas e Despesas Avulsas (Extrato)
+      // 1. Extrato Financeiro (Receitas e Despesas já pagas)
       const { data: pagData, error: pagError } = await supabase
         .from("pagamentos")
         .select(`*, paciente:pacientes(nome)`)
-        .gte("data_pagamento", format(start, "yyyy-MM-dd"))
-        .lte("data_pagamento", format(end, "yyyy-MM-dd"))
+        .gte("data_pagamento", format(inicioMes, "yyyy-MM-dd"))
+        .lte("data_pagamento", format(fimMes, "yyyy-MM-dd"))
         .order("data_pagamento", { ascending: false });
 
       if (pagError) throw pagError;
@@ -111,13 +99,13 @@ export default function Pagamentos() {
       });
       setPagamentos(extratoFormatado);
 
-      // 2. 🔥 Buscar APENAS Repasses com status "conferido" para pagar
+      // 2. 🔥 Buscar APENAS Repasses com status "conferido" (Regime de Competência)
       const { data: repData, error: repError } = await supabase
         .from("repasses_atendimento")
         .select(`id, valor_repasse, status, profissional:profissionais(id, nome, cor_agenda)`)
-        .eq("status", "conferido") // 👈 AQUI ESTÁ A MUDANÇA (traz só os conferidos)
-        .gte("data_atendimento", start.toISOString())
-        .lte("data_atendimento", end.toISOString());
+        .eq("status", "conferido") 
+        .gte("data_atendimento", inicioMes.toISOString())
+        .lte("data_atendimento", fimMes.toISOString());
 
       if (repError) throw repError;
       setRepassesConferidos((repData as any) || []);
@@ -181,7 +169,7 @@ export default function Pagamentos() {
       valor: parseFloat(formDespesa.valor),
       forma: formDespesa.forma,
       data_pagamento: formDespesa.data_pagamento,
-      observacoes: `${formDespesa.categoria === "repasse" ? "Repasse" : "Conta Fixa"} - ${formDespesa.beneficiario}${formDespesa.observacoes ? " | " + formDespesa.observacoes : ""}`
+      observacoes: `Conta Fixa - ${formDespesa.beneficiario}${formDespesa.observacoes ? " | " + formDespesa.observacoes : ""}`
     };
 
     try {
@@ -200,18 +188,18 @@ export default function Pagamentos() {
     if (!repasseSelecionado) return;
 
     try {
-      // 1. Registrar no extrato de pagamentos
+      // 1. Registrar no extrato de pagamentos (Saída de Caixa)
       const { error: errPag } = await supabase.from("pagamentos").insert({
         paciente_id: null,
         valor: repasseSelecionado.total,
         forma: formPagamento.forma,
         data_pagamento: formPagamento.data_pagamento,
-        observacoes: `Repasse - ${repasseSelecionado.nome} | Referente a ${format(parseISO(filtroMes + "-01"), "MMMM/yyyy", { locale: ptBR })} ${formPagamento.observacoes ? " | " + formPagamento.observacoes : ""}`
+        observacoes: `Repasse - ${repasseSelecionado.nome} | Referente a ${format(parseISO(filtroMes + "-01"), "MMMM/yyyy", { locale: ptBR })}`
       });
 
       if (errPag) throw errPag;
 
-      // 2. Atualizar os repasses para "pago"
+      // 2. Atualizar os repasses conferidos para "pago"
       const { error: errRep } = await supabase
         .from("repasses_atendimento")
         .update({ status: "pago" })
@@ -229,7 +217,7 @@ export default function Pagamentos() {
   }
 
   async function excluirPagamento(id: string) {
-    if (!confirm("Tem certeza que deseja excluir este registro do extrato? (Isso não volta o status do repasse para pendente)")) return;
+    if (!confirm("Tem certeza que deseja excluir este registro do extrato? (Isso não volta o status do repasse para conferido)")) return;
     try {
       const { error } = await supabase.from("pagamentos").delete().eq("id", id);
       if (error) throw error;
