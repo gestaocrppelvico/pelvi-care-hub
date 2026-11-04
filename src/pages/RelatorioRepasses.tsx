@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { format, startOfMonth, endOfMonth, parseISO, startOfDay, endOfDay } from "date-fns";
+import { format, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { ArrowLeft, Printer, TrendingUp, Calculator, FileText, Activity } from "lucide-react";
 import { toast } from "sonner";
@@ -45,9 +45,11 @@ export default function RelatorioRepasses() {
 
     setLoading(true);
     
-    // 🔥 CORREÇÃO DE FUSO HORÁRIO: Força o início do dia às 00:00:00 e fim do dia às 23:59:59
-    const inicioFormatado = startOfDay(parseISO(dataInicio)).toISOString();
-    const fimFormatado = endOfDay(parseISO(dataFim)).toISOString();
+    // 🔥 CORREÇÃO DE FUSO HORÁRIO: 
+    // O input já retorna YYYY-MM-DD. Para o fim do dia, adicionamos o horário limite.
+    // Isso evita que o toISOString() mude a data e pule atendimentos.
+    const inicioFormatado = dataInicio;
+    const fimFormatado = `${dataFim}T23:59:59.999`;
 
     let query = supabase
       .from("repasses_atendimento")
