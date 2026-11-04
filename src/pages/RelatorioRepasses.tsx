@@ -45,9 +45,7 @@ export default function RelatorioRepasses() {
 
     setLoading(true);
     
-    // 🔥 CORREÇÃO DE FUSO HORÁRIO: 
-    // O input já retorna YYYY-MM-DD. Para o fim do dia, adicionamos o horário limite.
-    // Isso evita que o toISOString() mude a data e pule atendimentos.
+    // 🔥 FILTRO CORRETO: Sem toISOString para não quebrar o fuso.
     const inicioFormatado = dataInicio;
     const fimFormatado = `${dataFim}T23:59:59.999`;
 
@@ -78,8 +76,7 @@ export default function RelatorioRepasses() {
   }
 
   const { totalReceita, totalRepasses, lucroBruto, margemLucro, resumoPorProfissional } = useMemo(() => {
-    let rec = 0;
-    let rep = 0;
+    let rec = 0; let rep = 0;
     const mapaFisio = new Map<string, { nome: string; receita: number; repasse: number; qtd: number }>();
 
     repasses.forEach((r) => {
@@ -88,78 +85,50 @@ export default function RelatorioRepasses() {
       const fisioId = r.profissional?.id || "sem-id";
       const fisioNome = r.profissional?.nome || "Desconhecido";
 
-      rec += valRec;
-      rep += valRep;
+      rec += valRec; rep += valRep;
 
       const atual = mapaFisio.get(fisioId) || { nome: fisioNome, receita: 0, repasse: 0, qtd: 0 };
       mapaFisio.set(fisioId, {
-        nome: fisioNome,
-        receita: atual.receita + valRec,
-        repasse: atual.repasse + valRep,
-        qtd: atual.qtd + 1,
+        nome: fisioNome, receita: atual.receita + valRec, repasse: atual.repasse + valRep, qtd: atual.qtd + 1,
       });
     });
 
     const lucro = rec - rep;
     const margem = rec > 0 ? (lucro / rec) * 100 : 0;
 
-    return {
-      totalReceita: rec,
-      totalRepasses: rep,
-      lucroBruto: lucro,
-      margemLucro: margem,
-      resumoPorProfissional: Array.from(mapaFisio.values()),
-    };
+    return { totalReceita: rec, totalRepasses: rep, lucroBruto: lucro, margemLucro: margem, resumoPorProfissional: Array.from(mapaFisio.values()) };
   }, [repasses]);
 
-  function formatBRL(v: number) {
-    return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-  }
+  function formatBRL(v: number) { return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
 
   return (
     <div className="space-y-6 pb-12">
       <div className="flex items-center justify-between print:hidden">
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
-            <ArrowLeft className="w-5 h-5" />
-          </Button>
+          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}><ArrowLeft className="w-5 h-5" /></Button>
           <div>
             <h1 className="text-2xl font-bold">Relatório Analítico de Repasses</h1>
             <p className="text-sm text-muted-foreground">Visão sintética e detalhada das operações</p>
           </div>
         </div>
-        <Button variant="outline" onClick={() => window.print()} disabled={repasses.length === 0} className="gap-2">
-          <Printer className="w-4 h-4" /> Imprimir / PDF
-        </Button>
+        <Button variant="outline" onClick={() => window.print()} disabled={repasses.length === 0} className="gap-2"><Printer className="w-4 h-4" /> Imprimir / PDF</Button>
       </div>
 
       <Card className="p-4 print:hidden bg-muted/30 border-dashed">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold">Data Início (da sessão)</label>
-            <Input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold">Data Fim (da sessão)</label>
-            <Input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} />
-          </div>
+          <div className="space-y-1.5"><label className="text-xs font-semibold">Data Início (da sessão)</label><Input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} /></div>
+          <div className="space-y-1.5"><label className="text-xs font-semibold">Data Fim (da sessão)</label><Input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} /></div>
           <div className="space-y-1.5">
             <label className="text-xs font-semibold">Fisioterapeuta</label>
             <Select value={filtroFisio} onValueChange={setFiltroFisio}>
-              <SelectTrigger className="bg-background">
-                <SelectValue placeholder="Selecione..." />
-              </SelectTrigger>
+              <SelectTrigger className="bg-background"><SelectValue placeholder="Selecione..." /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="todos">Toda a Equipe</SelectItem>
-                {profissionaisLista.map(p => (
-                  <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>
-                ))}
+                {profissionaisLista.map(p => <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
-          <Button onClick={gerarRelatorio} disabled={loading} className="w-full font-semibold">
-            {loading ? "Processando..." : "Gerar Relatório"}
-          </Button>
+          <Button onClick={gerarRelatorio} disabled={loading} className="w-full font-semibold">{loading ? "Processando..." : "Gerar Relatório"}</Button>
         </div>
       </Card>
 
@@ -171,49 +140,24 @@ export default function RelatorioRepasses() {
 
       {repasses.length > 0 && (
         <div className="space-y-8">
-          
           <section className="space-y-4">
-            <h2 className="text-lg font-bold flex items-center gap-2 border-b pb-2">
-              <Activity className="w-5 h-5 text-primary" /> Visão Sintética Geral
-            </h2>
-            
+            <h2 className="text-lg font-bold flex items-center gap-2 border-b pb-2"><Activity className="w-5 h-5 text-primary" /> Visão Sintética Geral</h2>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <Card className="p-4 border-l-4 border-l-blue-500">
-                <div className="text-xs text-muted-foreground flex items-center gap-1"><FileText className="w-3 h-3"/> Total Faturado</div>
-                <div className="text-xl font-bold">{formatBRL(totalReceita)}</div>
-              </Card>
-              <Card className="p-4 border-l-4 border-l-amber-500">
-                <div className="text-xs text-muted-foreground flex items-center gap-1"><Calculator className="w-3 h-3"/> Total Repassado</div>
-                <div className="text-xl font-bold">{formatBRL(totalRepasses)}</div>
-              </Card>
-              <Card className="p-4 border-l-4 border-l-emerald-500">
-                <div className="text-xs text-muted-foreground flex items-center gap-1"><TrendingUp className="w-3 h-3"/> Lucro Bruto</div>
-                <div className="text-xl font-bold text-emerald-700">{formatBRL(lucroBruto)}</div>
-              </Card>
-              <Card className="p-4 border-l-4 border-l-purple-500">
-                <div className="text-xs text-muted-foreground flex items-center gap-1"><Activity className="w-3 h-3"/> Margem de Lucro</div>
-                <div className="text-xl font-bold text-purple-700">{margemLucro.toFixed(1)}%</div>
-              </Card>
+              <Card className="p-4 border-l-4 border-l-blue-500"><div className="text-xs text-muted-foreground flex items-center gap-1"><FileText className="w-3 h-3"/> Total Faturado</div><div className="text-xl font-bold">{formatBRL(totalReceita)}</div></Card>
+              <Card className="p-4 border-l-4 border-l-amber-500"><div className="text-xs text-muted-foreground flex items-center gap-1"><Calculator className="w-3 h-3"/> Total Repassado</div><div className="text-xl font-bold">{formatBRL(totalRepasses)}</div></Card>
+              <Card className="p-4 border-l-4 border-l-emerald-500"><div className="text-xs text-muted-foreground flex items-center gap-1"><TrendingUp className="w-3 h-3"/> Lucro Bruto</div><div className="text-xl font-bold text-emerald-700">{formatBRL(lucroBruto)}</div></Card>
+              <Card className="p-4 border-l-4 border-l-purple-500"><div className="text-xs text-muted-foreground flex items-center gap-1"><Activity className="w-3 h-3"/> Margem de Lucro</div><div className="text-xl font-bold text-purple-700">{margemLucro.toFixed(1)}%</div></Card>
             </div>
 
             {filtroFisio === "todos" && (
               <div className="border rounded-lg overflow-hidden mt-6">
                 <table className="w-full text-sm text-left">
-                  <thead className="bg-muted/50 text-muted-foreground">
-                    <tr>
-                      <th className="p-3 font-semibold">Profissional</th>
-                      <th className="p-3 font-semibold text-center">Atendimentos</th>
-                      <th className="p-3 font-semibold text-right">Receita Gerada</th>
-                      <th className="p-3 font-semibold text-right">Repasse Total</th>
-                    </tr>
-                  </thead>
+                  <thead className="bg-muted/50 text-muted-foreground"><tr><th className="p-3 font-semibold">Profissional</th><th className="p-3 font-semibold text-center">Atendimentos</th><th className="p-3 font-semibold text-right">Receita Gerada</th><th className="p-3 font-semibold text-right">Repasse Total</th></tr></thead>
                   <tbody className="divide-y">
                     {resumoPorProfissional.map((res, i) => (
                       <tr key={i} className="hover:bg-muted/30">
-                        <td className="p-3 font-medium">{res.nome}</td>
-                        <td className="p-3 text-center">{res.qtd}</td>
-                        <td className="p-3 text-right">{formatBRL(res.receita)}</td>
-                        <td className="p-3 text-right text-amber-600 font-medium">{formatBRL(res.repasse)}</td>
+                        <td className="p-3 font-medium">{res.nome}</td><td className="p-3 text-center">{res.qtd}</td>
+                        <td className="p-3 text-right">{formatBRL(res.receita)}</td><td className="p-3 text-right text-amber-600 font-medium">{formatBRL(res.repasse)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -223,42 +167,21 @@ export default function RelatorioRepasses() {
           </section>
 
           <section className="space-y-4">
-            <h2 className="text-lg font-bold flex items-center gap-2 border-b pb-2 mt-8">
-              <FileText className="w-5 h-5 text-primary" /> Visão Analítica Detalhada
-            </h2>
-            
+            <h2 className="text-lg font-bold flex items-center gap-2 border-b pb-2 mt-8"><FileText className="w-5 h-5 text-primary" /> Visão Analítica Detalhada</h2>
             <div className="border rounded-lg overflow-hidden">
               <table className="w-full text-sm text-left">
-                <thead className="bg-slate-800 text-slate-100">
-                  <tr>
-                    <th className="p-3 font-medium">Data da Sessão</th>
-                    <th className="p-3 font-medium">Paciente</th>
-                    <th className="p-3 font-medium">Serviço/Guia</th>
-                    <th className="p-3 font-medium">Profissional</th>
-                    <th className="p-3 font-medium text-right">Base Faturada</th>
-                    <th className="p-3 font-medium text-right">Repasse</th>
-                    <th className="p-3 font-medium text-center">Status</th>
-                  </tr>
-                </thead>
+                <thead className="bg-slate-800 text-slate-100"><tr><th className="p-3 font-medium">Data da Sessão</th><th className="p-3 font-medium">Paciente</th><th className="p-3 font-medium">Serviço/Guia</th><th className="p-3 font-medium">Profissional</th><th className="p-3 font-medium text-right">Base Faturada</th><th className="p-3 font-medium text-right">Repasse</th><th className="p-3 font-medium text-center">Status</th></tr></thead>
                 <tbody className="divide-y bg-card text-foreground">
                   {repasses.map((r) => (
                     <tr key={r.id} className="hover:bg-muted/50 transition-colors">
-                      <td className="p-3 text-xs">
-                        {r.data_atendimento 
-                          ? format(parseISO(r.data_atendimento), "dd/MM/yyyy") 
-                          : format(parseISO(r.created_at), "dd/MM/yyyy")}
-                      </td>
+                      <td className="p-3 text-xs">{r.data_atendimento ? format(parseISO(r.data_atendimento), "dd/MM/yyyy") : format(parseISO(r.created_at), "dd/MM/yyyy")}</td>
                       <td className="p-3 font-medium">{r.atendimento?.paciente?.nome || "N/A"}</td>
                       <td className="p-3 text-xs text-muted-foreground">{r.atendimento?.tipo || "Geral"}</td>
                       <td className="p-3">{r.profissional?.nome || "N/A"}</td>
                       <td className="p-3 text-right">{formatBRL(Number(r.valor_atendimento))}</td>
                       <td className="p-3 text-right font-semibold text-amber-600">{formatBRL(Number(r.valor_repasse))}</td>
                       <td className="p-3 text-center">
-                        <span className={`px-2 py-1 rounded text-[10px] uppercase font-bold tracking-wider ${
-                          r.status === 'pago' ? 'bg-emerald-100 text-emerald-800' : 'bg-yellow-100 text-yellow-800'
-                        }`}>
-                          {r.status === 'pago' ? 'Conferido' : 'Pendente'}
-                        </span>
+                        <span className={`px-2 py-1 rounded text-[10px] uppercase font-bold tracking-wider ${r.status === 'pago' ? 'bg-emerald-100 text-emerald-800' : 'bg-yellow-100 text-yellow-800'}`}>{r.status === 'pago' ? 'Conferido' : 'Pendente'}</span>
                       </td>
                     </tr>
                   ))}
@@ -266,7 +189,6 @@ export default function RelatorioRepasses() {
               </table>
             </div>
           </section>
-
         </div>
       )}
     </div>
