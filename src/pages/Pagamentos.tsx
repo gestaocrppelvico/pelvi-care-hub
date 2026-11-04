@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Plus, Wallet, Receipt, Pencil, Trash2, Filter, Calendar, DollarSign, User, Package } from "lucide-react";
+import { ArrowLeft, Plus, Wallet, Receipt, Pencil, Trash2, Filter, Calendar, DollarSign, User, CheckCircle2, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { format, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -26,34 +26,57 @@ interface Pagamento {
   created_at: string;
   categoria?: string;
   paciente?: { nome: string } | null;
-  pacote_info?: any;
+}
+
+interface RepasseConferido {
+  id: string;
+  valor_repasse: number;
+  status: string;
+  profissional: { id: string; nome: string; cor_agenda: string } | null;
+}
+
+interface AgrupamentoRepasse {
+  profissional_id: string;
+  nome: string;
+  cor: string;
+  total: number;
+  repasses_ids: string[];
 }
 
 export default function Pagamentos() {
   const navigate = useNavigate();
   const { isAdmin } = useAuth();
-  const podeGerenciar = isAdmin;
 
   const [pagamentos, setPagamentos] = useState<Pagamento[]>([]);
+  const [repassesConferidos, setRepassesConferidos] = useState<RepasseConferido[]>([]);
   const [loading, setLoading] = useState(true);
+  
   const [filtroMes, setFiltroMes] = useState(format(new Date(), "yyyy-MM"));
   const [filtroTipo, setFiltroTipo] = useState<string>("todos");
-  const [filtroBeneficiario, setFiltroBeneficiario] = useState<string>("todos");
+  
+  // Modais
+  const [modalDespesaAberto, setModalDespesaAberto] = useState(false);
+  const [modalPagamentoRepasseAberto, setModalPagamentoRepasseAberto] = useState(false);
+  const [repasseSelecionado, setRepasseSelecionado] = useState<AgrupamentoRepasse | null>(null);
 
-  const [modalAberto, setModalAberto] = useState(false);
-  const [editandoId, setEditandoId] = useState<string | null>(null);
-  const [form, setForm] = useState({
+  // Formulários
+  const [formDespesa, setFormDespesa] = useState({
     beneficiario: "",
     valor: "",
     forma: "pix",
     data_pagamento: format(new Date(), "yyyy-MM-dd"),
-    categoria: "repasse",
+    categoria: "conta_fixa",
+    observacoes: ""
+  });
+
+  const [formPagamento, setFormPagamento] = useState({
+    forma: "pix",
+    data_pagamento: format(new Date(), "yyyy-MM-dd"),
     observacoes: ""
   });
 
   const [profissionais, setProfissionais] = useState<{ id: string; nome: string }[]>([]);
 
-  // Carregar profissionais para o select
   useEffect(() => {
     supabase
       .from("profissionais")
@@ -63,435 +86,383 @@ export default function Pagamentos() {
       .then(({ data }) => setProfissionais(data || []));
   }, []);
 
-  // Carregar pagamentos
-  async function carregarPagamentos() {
+  async function carregarDados() {
     setLoading(true);
     try {
       const start = startOfMonth(parseISO(filtroMes + "-01"));
       const end = endOfMonth(start);
 
-      const { data, error } = await supabase
+      // 1. Buscar Receitas e Despesas Avulsas (Extrato)
+      const { data: pagData, error: pagError } = await supabase
         .from("pagamentos")
-        .select(`
-          *,
-          paciente:pacientes(nome),
-          pacote_info:paciente_pacotes(
-            pacote:pacotes(nome),
-            servico:servicos(nome)
-          )
-        `)
+        .select(`*, paciente:pacientes(nome)`)
         .gte("data_pagamento", format(start, "yyyy-MM-dd"))
         .lte("data_pagamento", format(end, "yyyy-MM-dd"))
         .order("data_pagamento", { ascending: false });
 
-      if (error) throw error;
+      if (pagError) throw pagError;
 
-      const pagamentosComCategoria = (data || []).map(p => {
+      const extratoFormatado = (pagData || []).map(p => {
         let categoria = "receita";
-        // Se não tem paciente_id, é uma despesa (repasse ou conta fixa)
         if (!p.paciente_id) {
           categoria = p.observacoes?.toLowerCase().includes("repasse") ? "repasse" : "conta_fixa";
         }
         return { ...p, categoria };
       });
+      setPagamentos(extratoFormatado);
 
-      setPagamentos(pagamentosComCategoria);
+      // 2. 🔥 Buscar APENAS Repasses com status "conferido" para pagar
+      const { data: repData, error: repError } = await supabase
+        .from("repasses_atendimento")
+        .select(`id, valor_repasse, status, profissional:profissionais(id, nome, cor_agenda)`)
+        .eq("status", "conferido") // 👈 AQUI ESTÁ A MUDANÇA (traz só os conferidos)
+        .gte("data_atendimento", start.toISOString())
+        .lte("data_atendimento", end.toISOString());
+
+      if (repError) throw repError;
+      setRepassesConferidos((repData as any) || []);
+
     } catch (err: any) {
-      toast.error("Erro ao carregar pagamentos: " + err.message);
+      toast.error("Erro ao carregar dados: " + err.message);
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    carregarPagamentos();
+    carregarDados();
   }, [filtroMes]);
 
-  const pagamentosFiltrados = useMemo(() => {
-    let filtrados = pagamentos;
+  // Agrupar repasses conferidos por profissional
+  const repassesAgrupados = useMemo(() => {
+    const agrupamento: Record<string, AgrupamentoRepasse> = {};
 
-    if (filtroTipo !== "todos") {
-      filtrados = filtrados.filter(p => p.categoria === filtroTipo);
-    }
+    repassesConferidos.forEach(rep => {
+      if (!rep.profissional) return;
+      const profId = rep.profissional.id;
 
-    if (filtroBeneficiario !== "todos") {
-      const nomeProf = profissionais.find(p => p.id === filtroBeneficiario)?.nome.toLowerCase();
-      if (nomeProf) {
-        filtrados = filtrados.filter(p => 
-          p.observacoes?.toLowerCase().includes(nomeProf)
-        );
+      if (!agrupamento[profId]) {
+        agrupamento[profId] = {
+          profissional_id: profId,
+          nome: rep.profissional.nome,
+          cor: rep.profissional.cor_agenda || "#3b82f6",
+          total: 0,
+          repasses_ids: []
+        };
       }
-    }
 
-    return filtrados;
-  }, [pagamentos, filtroTipo, filtroBeneficiario, profissionais]);
+      agrupamento[profId].total += Number(rep.valor_repasse);
+      agrupamento[profId].repasses_ids.push(rep.id);
+    });
 
-  const totalRecebido = pagamentosFiltrados.filter(p => p.categoria === "receita").reduce((acc, p) => acc + Number(p.valor), 0);
-  const totalRepasses = pagamentosFiltrados.filter(p => p.categoria === "repasse").reduce((acc, p) => acc + Number(p.valor), 0);
-  const totalContas = pagamentosFiltrados.filter(p => p.categoria === "conta_fixa").reduce((acc, p) => acc + Number(p.valor), 0);
+    return Object.values(agrupamento).sort((a, b) => b.total - a.total);
+  }, [repassesConferidos]);
 
-  async function salvarPagamento() {
-    if (!form.beneficiario.trim()) {
-      toast.error("Informe o beneficiário/descrição.");
-      return;
-    }
-    if (!form.valor || parseFloat(form.valor) <= 0) {
-      toast.error("Informe um valor válido.");
+  const pagamentosFiltrados = useMemo(() => {
+    if (filtroTipo === "todos") return pagamentos;
+    return pagamentos.filter(p => p.categoria === filtroTipo);
+  }, [pagamentos, filtroTipo]);
+
+  // Totais do Extrato
+  const totalRecebido = pagamentos.filter(p => p.categoria === "receita").reduce((acc, p) => acc + Number(p.valor), 0);
+  const totalRepassesPagos = pagamentos.filter(p => p.categoria === "repasse").reduce((acc, p) => acc + Number(p.valor), 0);
+  const totalContas = pagamentos.filter(p => p.categoria === "conta_fixa").reduce((acc, p) => acc + Number(p.valor), 0);
+
+  // Ações
+  async function registrarDespesa() {
+    if (!formDespesa.beneficiario.trim() || !formDespesa.valor || parseFloat(formDespesa.valor) <= 0) {
+      toast.error("Preencha os campos obrigatórios.");
       return;
     }
 
     const payload = {
       paciente_id: null,
       paciente_pacote_id: null,
-      valor: parseFloat(form.valor),
-      forma: form.forma,
-      data_pagamento: form.data_pagamento,
-      observacoes: `${form.categoria === "repasse" ? "Repasse" : "Conta Fixa"} - ${form.beneficiario}${form.observacoes ? " | " + form.observacoes : ""}`
+      valor: parseFloat(formDespesa.valor),
+      forma: formDespesa.forma,
+      data_pagamento: formDespesa.data_pagamento,
+      observacoes: `${formDespesa.categoria === "repasse" ? "Repasse" : "Conta Fixa"} - ${formDespesa.beneficiario}${formDespesa.observacoes ? " | " + formDespesa.observacoes : ""}`
     };
 
     try {
-      if (editandoId) {
-        const { error } = await supabase
-          .from("pagamentos")
-          .update(payload)
-          .eq("id", editandoId);
-        if (error) throw error;
-        toast.success("Pagamento atualizado!");
-      } else {
-        const { error } = await supabase
-          .from("pagamentos")
-          .insert(payload);
-        if (error) throw error;
-        toast.success("Pagamento registrado!");
-      }
-      setModalAberto(false);
-      setEditandoId(null);
-      setForm({
-        beneficiario: "",
-        valor: "",
-        forma: "pix",
-        data_pagamento: format(new Date(), "yyyy-MM-dd"),
-        categoria: "repasse",
-        observacoes: ""
-      });
-      carregarPagamentos();
+      const { error } = await supabase.from("pagamentos").insert(payload);
+      if (error) throw error;
+      toast.success("Despesa registrada no extrato!");
+      setModalDespesaAberto(false);
+      setFormDespesa({ ...formDespesa, beneficiario: "", valor: "", observacoes: "" });
+      carregarDados();
     } catch (err: any) {
       toast.error("Erro: " + err.message);
     }
   }
 
-  async function excluirPagamento(id: string) {
-    if (!confirm("Tem certeza que deseja excluir este pagamento?")) return;
+  async function pagarRepasses() {
+    if (!repasseSelecionado) return;
+
     try {
-      const { error } = await supabase
-        .from("pagamentos")
-        .delete()
-        .eq("id", id);
+      // 1. Registrar no extrato de pagamentos
+      const { error: errPag } = await supabase.from("pagamentos").insert({
+        paciente_id: null,
+        valor: repasseSelecionado.total,
+        forma: formPagamento.forma,
+        data_pagamento: formPagamento.data_pagamento,
+        observacoes: `Repasse - ${repasseSelecionado.nome} | Referente a ${format(parseISO(filtroMes + "-01"), "MMMM/yyyy", { locale: ptBR })} ${formPagamento.observacoes ? " | " + formPagamento.observacoes : ""}`
+      });
+
+      if (errPag) throw errPag;
+
+      // 2. Atualizar os repasses para "pago"
+      const { error: errRep } = await supabase
+        .from("repasses_atendimento")
+        .update({ status: "pago" })
+        .in("id", repasseSelecionado.repasses_ids);
+
+      if (errRep) throw errRep;
+
+      toast.success(`Pagamento de ${repasseSelecionado.nome} registrado com sucesso!`);
+      setModalPagamentoRepasseAberto(false);
+      setRepasseSelecionado(null);
+      carregarDados();
+    } catch (err: any) {
+      toast.error("Erro ao processar pagamento: " + err.message);
+    }
+  }
+
+  async function excluirPagamento(id: string) {
+    if (!confirm("Tem certeza que deseja excluir este registro do extrato? (Isso não volta o status do repasse para pendente)")) return;
+    try {
+      const { error } = await supabase.from("pagamentos").delete().eq("id", id);
       if (error) throw error;
-      toast.success("Pagamento excluído!");
-      carregarPagamentos();
+      toast.success("Registro excluído!");
+      carregarDados();
     } catch (err: any) {
       toast.error("Erro ao excluir: " + err.message);
     }
   }
 
-  function abrirEdicao(pag: Pagamento) {
-    if (pag.categoria === "receita") {
-      toast.info("Para editar pagamentos de pacientes, acesse a ficha financeira do paciente.");
-      navigate(`/pacientes/${pag.paciente_id}/financeiro`);
-      return;
-    }
-
-    setEditandoId(pag.id);
-    const partes = pag.observacoes?.split(" - ") || [];
-    const categoria = partes[0]?.toLowerCase().includes("repasse") ? "repasse" : "conta_fixa";
-    const beneficiario = partes[1]?.split(" | ")[0] || "";
-    const obs = partes[1]?.split(" | ")[1] || "";
-    setForm({
-      beneficiario,
-      valor: String(pag.valor),
-      forma: pag.forma,
-      data_pagamento: pag.data_pagamento,
-      categoria,
-      observacoes: obs
-    });
-    setModalAberto(true);
-  }
-
-    const formatBRL = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-
-  // 🔥 TRAVA DE SEGURANÇA: Se não for Admin, bloqueia a tela inteira
   if (!isAdmin) {
     return (
       <div className="p-8 text-center mt-10 space-y-4">
         <h2 className="text-xl font-bold text-slate-700">Acesso Restrito</h2>
-        <p className="text-muted-foreground">Apenas administradores têm permissão para visualizar a página de pagamentos.</p>
+        <p className="text-muted-foreground">Apenas administradores têm permissão para acessar o financeiro.</p>
         <Button variant="outline" onClick={() => navigate("/dashboard")}>Voltar para o Início</Button>
       </div>
     );
   }
 
+  const formatBRL = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
   return (
-    <div className="space-y-4 pb-20">
-      <div className="flex items-center gap-2">
-        <Button variant="ghost" size="icon" onClick={() => navigate("/financeiro")}>
-          <ArrowLeft className="w-5 h-5" />
-        </Button>
-        <Wallet className="w-6 h-6 text-primary" />
-        <h1 className="text-2xl font-bold">Pagamentos</h1>
+    <div className="space-y-4 pb-20 max-w-6xl mx-auto p-2">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="icon" onClick={() => navigate("/financeiro")}>
+            <ArrowLeft className="w-5 h-5" />
+          </Button>
+          <Wallet className="w-6 h-6 text-primary" />
+          <h1 className="text-2xl font-bold">Gestão Financeira</h1>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setModalDespesaAberto(true)}>
+            <Receipt className="w-4 h-4 mr-2" /> Nova Despesa
+          </Button>
+        </div>
       </div>
 
-      {/* Filtros */}
-      <div className="flex flex-col sm:flex-row gap-3 p-3 bg-muted/50 rounded-lg border flex-wrap items-center">
+      <Card className="p-3 flex gap-3 items-center flex-wrap">
         <div className="flex items-center gap-2">
           <Calendar className="w-4 h-4 text-muted-foreground" />
-          <Input
-            type="month"
-            value={filtroMes}
-            onChange={(e) => setFiltroMes(e.target.value)}
-            className="w-[160px] h-9 text-sm"
-          />
+          <Input type="month" value={filtroMes} onChange={(e) => setFiltroMes(e.target.value)} className="w-[160px] h-9 text-sm" />
         </div>
-
         <Select value={filtroTipo} onValueChange={setFiltroTipo}>
-          <SelectTrigger className="w-full sm:w-[150px] h-9">
+          <SelectTrigger className="w-[180px] h-9">
             <Filter className="w-4 h-4 mr-1" />
-            <SelectValue placeholder="Tipo" />
+            <SelectValue placeholder="Filtrar Extrato" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="todos">Todos</SelectItem>
-            <SelectItem value="receita">Receitas (Pacientes)</SelectItem>
-            <SelectItem value="repasse">Repasses</SelectItem>
-            <SelectItem value="conta_fixa">Contas Fixas</SelectItem>
+            <SelectItem value="todos">Ver Tudo</SelectItem>
+            <SelectItem value="receita">Apenas Receitas</SelectItem>
+            <SelectItem value="repasse">Apenas Repasses Pagos</SelectItem>
+            <SelectItem value="conta_fixa">Apenas Contas Fixas</SelectItem>
           </SelectContent>
         </Select>
+        <Button variant="ghost" size="sm" onClick={carregarDados} className="ml-auto">Atualizar</Button>
+      </Card>
 
-        <Select value={filtroBeneficiario} onValueChange={setFiltroBeneficiario}>
-          <SelectTrigger className="w-full sm:w-[180px] h-9">
-            <SelectValue placeholder="Beneficiário (Prof)" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todos">Todos</SelectItem>
-            {profissionais.map(p => (
-              <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Button variant="outline" size="sm" onClick={carregarPagamentos} className="ml-auto">
-          Atualizar
-        </Button>
-
-        {podeGerenciar && (
-          <Button
-            size="sm"
-            onClick={() => {
-              setEditandoId(null);
-              setForm({
-                beneficiario: "",
-                valor: "",
-                forma: "pix",
-                data_pagamento: format(new Date(), "yyyy-MM-dd"),
-                categoria: "repasse",
-                observacoes: ""
-              });
-              setModalAberto(true);
-            }}
-            className="bg-emerald-600 hover:bg-emerald-700"
-          >
-            <Plus className="w-4 h-4 mr-1" /> Nova Despesa
-          </Button>
-        )}
-      </div>
-
-      {/* Resumo */}
-      <div className="grid grid-cols-3 gap-2">
-        <Card className="p-3 border-l-4 border-l-emerald-500">
-          <div className="text-xs text-muted-foreground">Total Recebido (Pacientes)</div>
-          <div className="font-bold text-lg text-emerald-600">{formatBRL(totalRecebido)}</div>
+      {/* Resumo Financeiro */}
+      <div className="grid grid-cols-3 gap-3">
+        <Card className="p-4 border-l-4 border-l-emerald-500">
+          <div className="text-xs text-muted-foreground font-medium">Receitas (Pacientes)</div>
+          <div className="font-bold text-2xl text-emerald-600">{formatBRL(totalRecebido)}</div>
         </Card>
-        <Card className="p-3 border-l-4 border-l-blue-500">
-          <div className="text-xs text-muted-foreground">Repasses Pagos</div>
-          <div className="font-bold text-blue-600">{formatBRL(totalRepasses)}</div>
+        <Card className="p-4 border-l-4 border-l-blue-500">
+          <div className="text-xs text-muted-foreground font-medium">Repasses Pagos</div>
+          <div className="font-bold text-2xl text-blue-600">{formatBRL(totalRepassesPagos)}</div>
         </Card>
-        <Card className="p-3 border-l-4 border-l-amber-500">
-          <div className="text-xs text-muted-foreground">Contas Fixas</div>
-          <div className="font-bold text-amber-600">{formatBRL(totalContas)}</div>
+        <Card className="p-4 border-l-4 border-l-amber-500">
+          <div className="text-xs text-muted-foreground font-medium">Contas Fixas Pagas</div>
+          <div className="font-bold text-2xl text-amber-600">{formatBRL(totalContas)}</div>
         </Card>
       </div>
 
-      {/* Lista de pagamentos */}
-      <div className="space-y-2">
-        {loading ? (
-          <div className="text-center py-8 text-sm text-muted-foreground">Carregando...</div>
-        ) : pagamentosFiltrados.length === 0 ? (
-          <Card className="p-8 text-center text-sm text-muted-foreground">
-            Nenhum pagamento registrado neste período.
+      {/* SEÇÃO 1: REPASSES CONFERIDOS A PAGAR */}
+      <div className="mt-6">
+        <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-3">
+          <Clock className="w-5 h-5 text-blue-600" /> Repasses Conferidos (Prontos para Pagamento)
+        </h2>
+        {repassesAgrupados.length === 0 ? (
+          <Card className="p-6 text-center text-sm text-muted-foreground bg-slate-50 border-dashed">
+            <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto mb-2" />
+            Nenhum repasse conferido aguardando pagamento neste mês.
           </Card>
         ) : (
-          pagamentosFiltrados.map((p) => {
-            const isReceita = p.categoria === "receita";
-            const nomePaciente = p.paciente?.nome || "Paciente não identificado";
-            const nomeItem = p.pacote_info?.pacote?.nome || p.pacote_info?.servico?.nome || "Sessão Avulsa";
-            
-            // Extrair nome do beneficiário de despesas
-            const nomeDespesa = p.observacoes?.split(" - ")[1]?.split(" | ")[0] || p.observacoes || "Despesa";
-
-            return (
-              <Card key={p.id} className="p-4 flex items-center gap-4 hover:shadow-md transition-shadow">
-                {isReceita ? (
-                  <div className="p-2 bg-emerald-100 rounded-full shrink-0">
-                    <User className="w-5 h-5 text-emerald-600" />
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {repassesAgrupados.map(rep => (
+              <Card key={rep.profissional_id} className="p-4 border-l-4" style={{ borderLeftColor: rep.cor }}>
+                <div className="flex justify-between items-start mb-2">
+                  <div>
+                    <div className="font-bold text-slate-800">{rep.nome}</div>
+                    <div className="text-xs text-muted-foreground">{rep.repasses_ids.length} sessões conferidas</div>
                   </div>
-                ) : (
-                  <Receipt className={`w-5 h-5 ${p.categoria === 'repasse' ? 'text-blue-500' : 'text-amber-500'} shrink-0`} />
-                )}
-                
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-bold text-slate-800 text-sm">
-                      {isReceita ? nomePaciente : nomeDespesa}
-                    </span>
-                    <Badge variant={isReceita ? 'default' : p.categoria === 'repasse' ? 'secondary' : 'outline'} className={`text-[10px] ${isReceita ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : ''}`}>
-                      {isReceita ? 'Receita' : p.categoria === 'repasse' ? 'Repasse' : 'Conta Fixa'}
-                    </Badge>
-                  </div>
-                  
-                  <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
-                    <span>{format(parseISO(p.data_pagamento), "dd/MM/yyyy", { locale: ptBR })}</span>
-                    <span>·</span>
-                    <span className="capitalize">{p.forma.replace("_", " ")}</span>
-                  </div>
-
-                  {isReceita && (
-                    <div className="text-[11px] text-slate-600 mt-1 flex items-center gap-1 bg-slate-50 w-fit px-2 py-0.5 rounded border">
-                      <Package className="w-3 h-3" /> Referente a: {nomeItem}
-                    </div>
-                  )}
-                  
-                  {!isReceita && p.observacoes && (
-                    <div className="text-[11px] text-slate-500 italic mt-1 truncate max-w-md">
-                      {p.observacoes}
-                    </div>
-                  )}
+                  <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">A Pagar</Badge>
                 </div>
-
-                <div className={`font-bold shrink-0 ${isReceita ? 'text-emerald-600' : 'text-slate-600'}`}>
-                  {isReceita ? "+" : "-"} {formatBRL(Number(p.valor))}
-                </div>
-
-                {podeGerenciar && (
-                  <div className="flex gap-1 shrink-0">
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => abrirEdicao(p)}>
-                      <Pencil className="w-4 h-4 text-blue-600" />
-                    </Button>
-                    {!isReceita && (
-                      <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-red-50" onClick={() => excluirPagamento(p.id)}>
-                        <Trash2 className="w-4 h-4 text-red-500" />
-                      </Button>
-                    )}
-                  </div>
-                )}
+                <div className="text-2xl font-bold text-slate-800 mb-3">{formatBRL(rep.total)}</div>
+                <Button className="w-full bg-emerald-600 hover:bg-emerald-700" onClick={() => {
+                  setRepasseSelecionado(rep);
+                  setModalPagamentoRepasseAberto(true);
+                }}>
+                  <DollarSign className="w-4 h-4 mr-1" /> Registrar Pagamento
+                </Button>
               </Card>
-            );
-          })
+            ))}
+          </div>
         )}
       </div>
 
-      {/* Modal Nova Despesa (Repasse / Conta Fixa) */}
-      <Dialog open={modalAberto} onOpenChange={setModalAberto}>
+      {/* SEÇÃO 2: EXTRATO DE PAGAMENTOS */}
+      <div className="mt-8">
+        <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-3">
+          <Receipt className="w-5 h-5 text-slate-600" /> Extrato de Movimentações
+        </h2>
+        <div className="space-y-2">
+          {loading ? (
+            <div className="text-center py-8 text-sm text-muted-foreground">Carregando...</div>
+          ) : pagamentosFiltrados.length === 0 ? (
+            <Card className="p-8 text-center text-sm text-muted-foreground">Nenhuma movimentação neste mês.</Card>
+          ) : (
+            pagamentosFiltrados.map((p) => {
+              const isReceita = p.categoria === "receita";
+              return (
+                <Card key={p.id} className="p-4 flex items-center gap-4 hover:shadow-md transition-shadow">
+                  <div className={`p-2 rounded-full shrink-0 ${isReceita ? 'bg-emerald-100' : 'bg-slate-100'}`}>
+                    {isReceita ? <User className="w-5 h-5 text-emerald-600" /> : <Receipt className="w-5 h-5 text-slate-600" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-bold text-slate-800 text-sm">
+                        {isReceita ? p.paciente?.nome : p.observacoes?.split(" - ")[1]?.split(" | ")[0]}
+                      </span>
+                      <Badge variant="outline" className={`text-[10px] ${isReceita ? 'text-emerald-700 border-emerald-200 bg-emerald-50' : 'text-slate-600 bg-slate-50'}`}>
+                        {isReceita ? 'Receita' : p.observacoes?.toLowerCase().includes("repasse") ? 'Repasse Pago' : 'Conta Fixa'}
+                      </Badge>
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      {format(parseISO(p.data_pagamento), "dd/MM/yyyy")} · {p.forma}
+                    </div>
+                    {!isReceita && p.observacoes && (
+                      <div className="text-[11px] text-slate-500 italic mt-1 truncate">{p.observacoes}</div>
+                    )}
+                  </div>
+                  <div className={`font-bold shrink-0 ${isReceita ? 'text-emerald-600' : 'text-slate-600'}`}>
+                    {isReceita ? "+" : "-"} {formatBRL(Number(p.valor))}
+                  </div>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:bg-red-50" onClick={() => excluirPagamento(p.id)}>
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </Card>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* MODAL: NOVA DESPESA */}
+      <Dialog open={modalDespesaAberto} onOpenChange={setModalDespesaAberto}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
-            <DialogTitle>{editandoId ? "Editar Despesa" : "Nova Despesa"}</DialogTitle>
+            <DialogTitle>Registrar Nova Despesa</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
-              <Label>Categoria</Label>
-              <Select value={form.categoria} onValueChange={(v) => setForm({ ...form, categoria: v })}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="repasse">Repasse</SelectItem>
-                  <SelectItem value="conta_fixa">Conta Fixa</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label>Descrição / Beneficiário *</Label>
+              <Input placeholder="Ex: Aluguel, Luz, Material..." value={formDespesa.beneficiario} onChange={(e) => setFormDespesa({ ...formDespesa, beneficiario: e.target.value })} />
             </div>
-
-            <div className="space-y-1.5">
-              <Label>Beneficiário / Descrição *</Label>
-              {form.categoria === "repasse" ? (
-                <Select value={form.beneficiario} onValueChange={(v) => setForm({ ...form, beneficiario: v })}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecione a profissional" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {profissionais.map(p => (
-                      <SelectItem key={p.id} value={p.nome}>{p.nome}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <Input
-                  placeholder="Ex: Aluguel, Luz, Internet..."
-                  value={form.beneficiario}
-                  onChange={(e) => setForm({ ...form, beneficiario: e.target.value })}
-                />
-              )}
-            </div>
-
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Valor (R$) *</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={form.valor}
-                  onChange={(e) => setForm({ ...form, valor: e.target.value })}
-                  placeholder="0,00"
-                />
+                <Input type="number" step="0.01" value={formDespesa.valor} onChange={(e) => setFormDespesa({ ...formDespesa, valor: e.target.value })} />
               </div>
               <div className="space-y-1.5">
-                <Label>Forma de Pagamento</Label>
-                <Select value={form.forma} onValueChange={(v) => setForm({ ...form, forma: v })}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="pix">PIX</SelectItem>
-                    <SelectItem value="transferencia">Transferência</SelectItem>
-                    <SelectItem value="dinheiro">Dinheiro</SelectItem>
-                    <SelectItem value="cartao_credito">Cartão de Crédito</SelectItem>
-                    <SelectItem value="cartao_debito">Cartão de Débito</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label>Data do Pagamento</Label>
+                <Input type="date" value={formDespesa.data_pagamento} onChange={(e) => setFormDespesa({ ...formDespesa, data_pagamento: e.target.value })} />
               </div>
             </div>
-
             <div className="space-y-1.5">
-              <Label>Data do Pagamento *</Label>
-              <Input
-                type="date"
-                value={form.data_pagamento}
-                onChange={(e) => setForm({ ...form, data_pagamento: e.target.value })}
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label>Observações</Label>
-              <Textarea
-                value={form.observacoes}
-                onChange={(e) => setForm({ ...form, observacoes: e.target.value })}
-                placeholder="Observações adicionais..."
-                rows={2}
-              />
+              <Label>Forma de Pagamento</Label>
+              <Select value={formDespesa.forma} onValueChange={(v) => setFormDespesa({ ...formDespesa, forma: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pix">PIX</SelectItem>
+                  <SelectItem value="transferencia">Transferência</SelectItem>
+                  <SelectItem value="dinheiro">Dinheiro</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setModalAberto(false)}>Cancelar</Button>
-            <Button onClick={salvarPagamento} className="bg-slate-800 hover:bg-slate-900 text-white">
-              <DollarSign className="w-4 h-4 mr-1" /> {editandoId ? "Atualizar" : "Registrar Despesa"}
-            </Button>
+            <Button variant="outline" onClick={() => setModalDespesaAberto(false)}>Cancelar</Button>
+            <Button onClick={registrarDespesa} className="bg-slate-800 text-white">Registrar Despesa</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL: PAGAR REPASSE */}
+      <Dialog open={modalPagamentoRepasseAberto} onOpenChange={setModalPagamentoRepasseAberto}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Pagar Repasse</DialogTitle>
+          </DialogHeader>
+          {repasseSelecionado && (
+            <div className="space-y-4 py-2">
+              <div className="bg-slate-50 border rounded-lg p-3 text-center">
+                <div className="text-sm text-muted-foreground">Profissional</div>
+                <div className="font-bold text-lg">{repasseSelecionado.nome}</div>
+                <div className="text-sm text-muted-foreground mt-2">Total a Pagar (Conferido)</div>
+                <div className="text-3xl font-black text-emerald-600">{formatBRL(repasseSelecionado.total)}</div>
+                <div className="text-xs text-muted-foreground mt-1">({repasseSelecionado.repasses_ids.length} sessões)</div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Forma de Pagamento</Label>
+                  <Select value={formPagamento.forma} onValueChange={(v) => setFormPagamento({ ...formPagamento, forma: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pix">PIX</SelectItem>
+                      <SelectItem value="transferencia">Transferência</SelectItem>
+                      <SelectItem value="dinheiro">Dinheiro</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Data do Pagamento</Label>
+                  <Input type="date" value={formPagamento.data_pagamento} onChange={(e) => setFormPagamento({ ...formPagamento, data_pagamento: e.target.value })} />
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setModalPagamentoRepasseAberto(false)}>Cancelar</Button>
+            <Button onClick={pagarRepasses} className="bg-emerald-600 text-white">Confirmar Pagamento</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
