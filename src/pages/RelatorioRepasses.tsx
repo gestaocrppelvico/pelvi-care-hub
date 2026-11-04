@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { format, startOfMonth, endOfMonth, parseISO } from "date-fns";
+import { format, startOfMonth, endOfMonth, parseISO, startOfDay, endOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { ArrowLeft, Printer, TrendingUp, Calculator, FileText, Activity } from "lucide-react";
 import { toast } from "sonner";
@@ -44,6 +44,11 @@ export default function RelatorioRepasses() {
     }
 
     setLoading(true);
+    
+    // 🔥 CORREÇÃO DE FUSO HORÁRIO: Força o início do dia às 00:00:00 e fim do dia às 23:59:59
+    const inicioFormatado = startOfDay(parseISO(dataInicio)).toISOString();
+    const fimFormatado = endOfDay(parseISO(dataFim)).toISOString();
+
     let query = supabase
       .from("repasses_atendimento")
       .select(`
@@ -51,8 +56,8 @@ export default function RelatorioRepasses() {
         profissional:profissionais(id, nome),
         atendimento:atendimentos(tipo, data_inicio, paciente:pacientes(nome))
       `)
-      .gte("data_atendimento", `${dataInicio}T00:00:00.000Z`)
-      .lte("data_atendimento", `${dataFim}T23:59:59.999Z`)
+      .gte("data_atendimento", inicioFormatado)
+      .lte("data_atendimento", fimFormatado)
       .order("data_atendimento", { ascending: true });
 
     if (filtroFisio !== "todos") {
