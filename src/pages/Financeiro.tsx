@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { 
   Wallet, Package, Settings, CheckCircle2, Activity, Undo2, Pencil, 
-  Search, ArrowUpDown, AlertTriangle, Check, X, DollarSign, Calendar, FileText 
+  Search, ArrowUpDown, AlertTriangle, Check, X, DollarSign, Calendar, Trash2 
 } from "lucide-react";
 import { toast } from "sonner";
 import { startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval, parseISO, startOfDay, endOfDay, format } from "date-fns";
@@ -76,6 +76,7 @@ export default function Financeiro() {
   const [ordenacao, setOrdenacao] = useState<Ordenacao>("data_desc");
   const [dataInicio, setDataInicio] = useState<string>("");
   const [dataFim, setDataFim] = useState<string>("");
+  
   const [editando, setEditando] = useState<RepasseRow | null>(null);
   const [valorAtendimento, setValorAtendimento] = useState("");
   const [valorRepasse, setValorRepasse] = useState("");
@@ -113,7 +114,7 @@ export default function Financeiro() {
     setLoading(false);
   }
 
-  // ----- CARREGAR FALTAS (CORRIGIDO) -----
+  // ----- CARREGAR FALTAS -----
   async function carregarFaltas() {
     setLoadingFaltas(true);
     try {
@@ -191,7 +192,7 @@ export default function Financeiro() {
     return Array.from(lista.entries()).map(([id, nome]) => ({ id, nome }));
   }, [repasses]);
 
-  // ----- FILTROS E ORDENAÇÃO DOS REPASSES -----
+  // ----- FILTROS E ORDENAÇÃO DOS REPASSES (🔥 CORRIGIDO AQUI) -----
   const repassesFiltrados = useMemo(() => {
     let filtrados = repasses;
     
@@ -216,9 +217,12 @@ export default function Financeiro() {
       
       if (start && end) {
         filtrados = filtrados.filter(r => {
-  const dataRef = (r as any).data_atendimento || r.created_at;
-  return isWithinInterval(parseISO(dataRef), { start, end });
-});
+          // 🔥 USA A DATA DO ATENDIMENTO. Se não tiver, usa a de criação.
+          const dataReferencia = r.atendimento?.data_inicio 
+            ? parseISO(r.atendimento.data_inicio) 
+            : parseISO(r.created_at);
+          return isWithinInterval(dataReferencia, { start, end });
+        });
       }
     }
 
@@ -229,16 +233,16 @@ export default function Financeiro() {
       );
     }
 
-        const comparar = (a: RepasseRow, b: RepasseRow) => {
-      // 🔥 Usar data_atendimento (data da sessão) em vez de created_at
-      const dataA = (a as any).data_atendimento || a.atendimento?.data_inicio || a.created_at;
-      const dataB = (b as any).data_atendimento || b.atendimento?.data_inicio || b.created_at;
-      
+    const comparar = (a: RepasseRow, b: RepasseRow) => {
+      // 🔥 ORDENA PELA DATA DO ATENDIMENTO
+      const dataA = a.atendimento?.data_inicio ? new Date(a.atendimento.data_inicio).getTime() : new Date(a.created_at).getTime();
+      const dataB = b.atendimento?.data_inicio ? new Date(b.atendimento.data_inicio).getTime() : new Date(b.created_at).getTime();
+
       switch (ordenacao) {
         case "data_desc":
-          return new Date(dataB).getTime() - new Date(dataA).getTime();
+          return dataB - dataA;
         case "data_asc":
-          return new Date(dataA).getTime() - new Date(dataB).getTime();
+          return dataA - dataB;
         case "paciente_asc":
           const nomeA = a.atendimento?.paciente?.nome || "";
           const nomeB = b.atendimento?.paciente?.nome || "";
@@ -269,6 +273,17 @@ export default function Financeiro() {
     const { error } = await supabase.from("repasses_atendimento").update({ status }).eq("id", id);
     if (error) { toast.error(error.message); return; }
     toast.success(`Repasse alterado para ${status}`);
+    carregar();
+  }
+
+  async function excluirRepasse(id: string) {
+    if (!confirm("Tem certeza que deseja excluir este repasse? Essa ação não pode ser desfeita.")) return;
+    const { error } = await supabase
+      .from("repasses_atendimento")
+      .delete()
+      .eq("id", id);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Repasse excluído!");
     carregar();
   }
 
@@ -454,40 +469,35 @@ export default function Financeiro() {
         <h1 className="text-2xl font-bold">Financeiro</h1>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-  <Link to="/financeiro/servicos">
-    <Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full">
-      <Package className="w-5 h-5 text-primary" />
-      <div className="font-medium text-sm">Serviços e Pacotes</div>
-    </Card>
-  </Link>
-  {isAdmin && (
-    <Link to="/financeiro/repasses">
-      <Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full">
-        <Settings className="w-5 h-5 text-primary" />
-        <div className="font-medium text-sm">Regras de Repasse</div>
-      </Card>
-    </Link>
-  )}
-  <Link to="/financeiro/relatorios">
-    <Card className="p-3 flex items-center gap-2 hover:bg-emerald-50 transition-colors h-full border-emerald-200">
-      <Activity className="w-5 h-5 text-emerald-600" />
-      <div className="font-medium text-sm text-emerald-800">Relatórios</div>
-    </Card>
-  </Link>
-  <Link to="/financeiro/pagamentos">
-    <Card className="p-3 flex items-center gap-2 hover:bg-blue-50 transition-colors h-full border-blue-200">
-      <DollarSign className="w-5 h-5 text-blue-600" />
-      <div className="font-medium text-sm text-blue-800">Pagamentos</div>
-    </Card>
-  </Link>
-  <Link to="/financeiro/autorizacoes">
-    <Card className="p-3 flex items-center gap-2 hover:bg-purple-50 transition-colors h-full border-purple-200">
-      <FileText className="w-5 h-5 text-purple-600" />
-      <div className="font-medium text-sm text-purple-800">Autorizações</div>
-    </Card>
-  </Link>
-</div>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+        <Link to="/financeiro/servicos">
+          <Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full">
+            <Package className="w-5 h-5 text-primary" />
+            <div className="font-medium text-sm">Serviços e Pacotes</div>
+          </Card>
+        </Link>
+        {isAdmin && (
+          <Link to="/financeiro/repasses">
+            <Card className="p-3 flex items-center gap-2 hover:bg-accent transition-colors h-full">
+              <Settings className="w-5 h-5 text-primary" />
+              <div className="font-medium text-sm">Regras de Repasse</div>
+            </Card>
+          </Link>
+        )}
+        <Link to="/financeiro/relatorios">
+          <Card className="p-3 flex items-center gap-2 hover:bg-emerald-50 transition-colors h-full border-emerald-200">
+            <Activity className="w-5 h-5 text-emerald-600" />
+            <div className="font-medium text-sm text-emerald-800">Relatórios</div>
+          </Card>
+        </Link>
+        <Link to="/financeiro/pagamentos">
+          <Card className="p-3 flex items-center gap-2 hover:bg-blue-50 transition-colors h-full border-blue-200">
+            <DollarSign className="w-5 h-5 text-blue-600" />
+            <div className="font-medium text-sm text-blue-800">Pagamentos</div>
+          </Card>
+        </Link>
+      </div>
+
       {/* Filtros */}
       <div className="flex flex-col sm:flex-row gap-3 p-3 bg-muted/50 rounded-lg border flex-wrap items-center">
         <Select value={filtroPeriodo} onValueChange={setFiltroPeriodo}>
@@ -640,6 +650,9 @@ export default function Financeiro() {
                   <Button size="sm" variant="outline" onClick={() => atualizarStatus(r.id, "conferido")}>
                     <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                   </Button>
+                  <Button size="sm" variant="ghost" className="hover:bg-red-50" onClick={() => excluirRepasse(r.id)}>
+                    <Trash2 className="w-4 h-4 text-red-500" />
+                  </Button>
                 </div>
               </Card>
             ))
@@ -707,6 +720,9 @@ export default function Financeiro() {
                     }}
                   >
                     <DollarSign className="w-4 h-4 text-green-600" />
+                  </Button>
+                  <Button size="sm" variant="ghost" className="hover:bg-red-50" onClick={() => excluirRepasse(r.id)}>
+                    <Trash2 className="w-4 h-4 text-red-500" />
                   </Button>
                 </div>
               </Card>
@@ -855,7 +871,7 @@ export default function Financeiro() {
         </DialogContent>
       </Dialog>
 
-      {/* MODAL DE CONFIRMAÇÃO DE PAGAMENTO (NOVO) */}
+      {/* MODAL DE CONFIRMAÇÃO DE PAGAMENTO */}
       <Dialog open={modalPagamentoAberto} onOpenChange={setModalPagamentoAberto}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
