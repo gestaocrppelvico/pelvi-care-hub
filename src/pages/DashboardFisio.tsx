@@ -1,26 +1,68 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { startOfMonth, endOfMonth } from "date-fns";
-import { Activity, Users, Wallet, Clock, CheckCircle, AlertTriangle } from "lucide-react";
+import { 
+  startOfMonth, endOfMonth, startOfWeek, endOfWeek, startOfDay, endOfDay 
+} from "date-fns";
+import { 
+  Activity, Users, Wallet, CheckCircle, AlertTriangle, 
+  TrendingUp, Target, XCircle, Filter, Calendar
+} from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
 
 // 🔥 DATA DE CORTE — mesma do EvolucoesPendentes
 const DATA_CORTE = new Date("2026-10-01T00:00:00");
+
+// 🔥 META MENSAL DE SESSÕES PARA GAMIFICAÇÃO (Pode ajustar conforme a clínica)
+const META_MENSAL = 80;
+
+type FiltroPeriodo = "dia" | "semana" | "mes";
 
 export default function DashboardFisio() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [filtroPeriodo, setFiltroPeriodo] = useState<FiltroPeriodo>("mes");
+
   const [metrics, setMetrics] = useState({
     atendimentos: 0,
     pacientesUnicos: 0,
-    repasseParaCalculo: 0, // Pendentes
-    repasseConferido: 0,   // Pagos / Conferidos
-    totalPrevisibilidade: 0
+    faltas: 0,
+    cancelados: 0,
+    taxaComparecimento: 0,
+    repasseTotal: 0,
+    repassePendente: 0,
+    sessoesSemEvolucao: 0,
+    metaAtingida: 0,
   });
-    const [sessoesSemEvolucao, setSessoesSemEvolucao] = useState(0);
+
+  // Calcula o período selecionado
+  const periodo = useMemo(() => {
+    const hoje = new Date();
+    let inicio: Date;
+    let fim: Date;
+
+    if (filtroPeriodo === "dia") {
+      inicio = startOfDay(hoje);
+      fim = endOfDay(hoje);
+    } else if (filtroPeriodo === "semana") {
+      inicio = startOfWeek(hoje, { weekStartsOn: 1 });
+      fim = endOfWeek(hoje, { weekStartsOn: 1 });
+    } else {
+      inicio = startOfMonth(hoje);
+      fim = endOfMonth(hoje);
+    }
+
+    return {
+      inicioISO: inicio.toISOString(),
+      fimISO: fim.toISOString(),
+    };
+  }, [filtroPeriodo]);
 
   useEffect(() => {
     async function carregarMetricas() {
@@ -41,46 +83,52 @@ export default function DashboardFisio() {
         }
 
         const meuId = prof.id;
-        const inicioMes = startOfMonth(new Date()).toISOString();
-        const fimMes = endOfMonth(new Date()).toISOString();
 
-        // 2. Busca Atendimentos realizados por ela neste mês
+        // 2. Busca TODOS os atendimentos do período para calcular métricas
         const { data: atendimentos } = await supabase
           .from("atendimentos")
-          .select("paciente_id")
+          .select("id, paciente_id, status")
           .eq("profissional_id", meuId)
-          .eq("status", "realizado")
-          .gte("data_inicio", inicioMes)
-          .lte("data_inicio", fimMes);
+          .gte("data_inicio", periodo.inicioISO)
+          .lte("data_inicio", periodo.fimISO);
 
-        // Conta quantos pacientes diferentes ela atendeu
-        const pacientesUnicos = new Set((atendimentos || []).map(a => a.paciente_id));
+        const realizados = (atendimentos || []).filter(a => a.status === "realizado");
+        const faltas = (atendimentos || []).filter(a => a.status === "faltou").length;
+        const cancelados = (atendimentos || []).filter(a => a.status === "cancelado").length;
+        
+        // Conta pacientes únicos que compareceram
+        const pacientesUnicos = new Set(realizados.map(a => a.paciente_id)).size;
 
-        // 3. Busca os Repasses gerados neste mês
+        // Taxa de Comparecimento (Baseado no que já aconteceu: Realizados + Faltas + Cancelados)
+        const totalConcluidos = realizados.length + faltas + cancelados;
+        const taxaComparecimento = totalConcluidos > 0 
+          ? Math.round((realizados.length / totalConcluidos) * 100) 
+          : 0;
+
+        // 3. Busca os Repasses gerados neste período
         const { data: repasses } = await supabase
           .from("repasses_atendimento")
           .select("valor_repasse, status")
           .eq("profissional_id", meuId)
-          .gte("created_at", inicioMes)
-          .lte("created_at", fimMes);
+          .gte("data_atendimento", periodo.inicioISO)
+          .lte("data_atendimento", periodo.fimISO);
 
-        let paraCalculo = 0;
-        let conferidos = 0;
+        let repasseTotal = 0;
+        let repassePendente = 0;
 
         (repasses || []).forEach(r => {
           const valor = Number(r.valor_repasse) || 0;
+          repasseTotal += valor;
           if (r.status === "pendente") {
-            paraCalculo += valor;
-          } else {
-            conferidos += valor; // status 'pago' ou 'conferido'
+            repassePendente += valor;
           }
         });
 
-               // 🔥 Buscar sessões sem evolução (>48h)
+        // 4. Buscar sessões sem evolução (>48h) - Regra global
         const limite48h = new Date();
         limite48h.setHours(limite48h.getHours() - 48);
 
-                const { data: atends48h } = await supabase
+        const { data: atends48h } = await supabase
           .from("atendimentos")
           .select("id")
           .eq("profissional_id", meuId)
@@ -89,8 +137,8 @@ export default function DashboardFisio() {
           .gte("data_inicio", DATA_CORTE.toISOString());
 
         const idsAtend = (atends48h || []).map((a: any) => a.id);
-
         let pendentesCount = 0;
+
         if (idsAtend.length > 0) {
           const { data: pronts } = await supabase
             .from("prontuarios")
@@ -100,25 +148,39 @@ export default function DashboardFisio() {
           const comEv = new Set((pronts || []).map((p: any) => p.atendimento_id));
           pendentesCount = idsAtend.filter((id: string) => !comEv.has(id)).length;
         }
-        setSessoesSemEvolucao(pendentesCount);
+
+        // 5. Calcula progresso da meta (apenas se for visualização mensal)
+        let metaAtingida = 0;
+        if (filtroPeriodo === "mes") {
+          metaAtingida = Math.min(Math.round((realizados.length / META_MENSAL) * 100), 100);
+        } else if (filtroPeriodo === "semana") {
+          metaAtingida = Math.min(Math.round((realizados.length / (META_MENSAL / 4)) * 100), 100);
+        } else {
+          metaAtingida = Math.min(Math.round((realizados.length / (META_MENSAL / 22)) * 100), 100); // 22 dias úteis
+        }
 
         setMetrics({
-          atendimentos: (atendimentos || []).length,
-          pacientesUnicos: pacientesUnicos.size,
-          repasseParaCalculo: paraCalculo,
-          repasseConferido: conferidos,
-          totalPrevisibilidade: paraCalculo + conferidos
+          atendimentos: realizados.length,
+          pacientesUnicos,
+          faltas,
+          cancelados,
+          taxaComparecimento,
+          repasseTotal,
+          repassePendente,
+          sessoesSemEvolucao: pendentesCount,
+          metaAtingida
         });
 
       } catch (error) {
         console.error("Erro ao carregar dashboard:", error);
+        toast.error("Erro ao carregar seus indicadores.");
       } finally {
         setLoading(false);
       }
     }
 
     carregarMetricas();
-  }, [user]);
+  }, [user, periodo, filtroPeriodo]);
 
   const fmt = (val: number) => val.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -127,14 +189,24 @@ export default function DashboardFisio() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-800">Meu Painel</h1>
-        <p className="text-sm text-muted-foreground">Resumo do seu desempenho e previsibilidade neste mês.</p>
+    <div className="space-y-6 pb-20 p-2 max-w-5xl mx-auto">
+      {/* Header e Filtro */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-800">Meu Painel</h1>
+          <p className="text-sm text-muted-foreground">Sua produtividade e previsibilidade.</p>
+        </div>
+
+        <div className="flex items-center gap-1.5 bg-white p-1 rounded-lg border shadow-sm">
+          <Filter className="w-3.5 h-3.5 text-slate-400 ml-2" />
+          <Button size="sm" variant={filtroPeriodo === "dia" ? "default" : "ghost"} onClick={() => setFiltroPeriodo("dia")} className="h-8 text-xs">Hoje</Button>
+          <Button size="sm" variant={filtroPeriodo === "semana" ? "default" : "ghost"} onClick={() => setFiltroPeriodo("semana")} className="h-8 text-xs">Semana</Button>
+          <Button size="sm" variant={filtroPeriodo === "mes" ? "default" : "ghost"} onClick={() => setFiltroPeriodo("mes")} className="h-8 text-xs">Mês</Button>
+        </div>
       </div>
 
+      {/* Top Row: Produtividade e Faturamento */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {/* Card 1: Produtividade (Atendimentos) */}
         <Card className="border-l-4 border-l-blue-500 shadow-sm">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium text-slate-600">Sessões Realizadas</CardTitle>
@@ -142,11 +214,10 @@ export default function DashboardFisio() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-slate-800">{metrics.atendimentos}</div>
-            <p className="text-xs text-muted-foreground mt-1">Neste mês</p>
+            <p className="text-xs text-muted-foreground mt-1">Pacientes atendidos no período</p>
           </CardContent>
         </Card>
 
-        {/* Card 2: Carteira de Pacientes */}
         <Card className="border-l-4 border-l-indigo-500 shadow-sm">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium text-slate-600">Pacientes Únicos</CardTitle>
@@ -158,44 +229,93 @@ export default function DashboardFisio() {
           </CardContent>
         </Card>
 
-        {/* Card 3: Previsibilidade Total */}
-        <Card className="border-l-4 border-l-emerald-500 bg-emerald-50/50 shadow-sm">
+        <Card className="border-l-4 border-l-emerald-500 bg-emerald-50/30 shadow-sm">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-emerald-800">Previsibilidade de Repasse</CardTitle>
+            <CardTitle className="text-sm font-medium text-emerald-800">Meus Ganhos</CardTitle>
             <Wallet className="h-4 w-4 text-emerald-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-emerald-700">{fmt(metrics.totalPrevisibilidade)}</div>
-            <p className="text-xs text-emerald-600/80 mt-1">Soma de todos os repasses do mês</p>
+            <div className="text-2xl font-bold text-emerald-700">{fmt(metrics.repasseTotal)}</div>
+            <p className="text-xs text-emerald-600/80 mt-1">
+              {fmt(metrics.repassePendente)} a receber (pendente)
+            </p>
           </CardContent>
         </Card>
       </div>
-      {/* 🔥 Card: Sessões sem Evolução */}
+
+      {/* Middle Row: Gamificação (Meta) e Qualidade (Taxa e Faltas) */}
+      <div className="grid gap-4 md:grid-cols-2">
+        {/* Card de Meta */}
+        <Card className="shadow-sm border-t-4 border-t-purple-500">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-bold text-slate-700 flex items-center gap-2">
+              <Target className="w-4 h-4 text-purple-600" /> 
+              Meta de Produtividade ({filtroPeriodo === 'mes' ? 'Mensal' : filtroPeriodo === 'semana' ? 'Semanal' : 'Diária'})
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex justify-between text-xs font-medium">
+              <span className="text-slate-500">Seu progresso</span>
+              <span className="text-purple-700 font-bold">{metrics.metaAtingida}%</span>
+            </div>
+            <Progress value={metrics.metaAtingida} className="h-3" />
+            <p className="text-xs text-muted-foreground">
+              {metrics.metaAtingida >= 100 
+                ? "🎉 Parabéns! Você bateu a meta do período!" 
+                : `Faltam ${Math.max(0, (filtroPeriodo === 'mes' ? META_MENSAL : filtroPeriodo === 'semana' ? META_MENSAL/4 : META_MENSAL/22) - metrics.atendimentos)} sessões para a meta.`}
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Card de Qualidade */}
+        <Card className="shadow-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-bold text-slate-700 flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-emerald-600" /> 
+              Taxa de Comparecimento
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex items-baseline gap-2">
+              <div className={`text-3xl font-black ${metrics.taxaComparecimento >= 85 ? 'text-emerald-600' : metrics.taxaComparecimento >= 70 ? 'text-amber-500' : 'text-rose-500'}`}>
+                {metrics.taxaComparecimento}%
+              </div>
+              <span className="text-xs text-muted-foreground">de presença</span>
+            </div>
+            <div className="flex gap-4 text-xs font-medium text-slate-600">
+              <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-amber-500" /> {metrics.faltas} faltas</span>
+              <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-rose-500" /> {metrics.cancelados} cancelados</span>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Bottom Row: Pendências */}
       <Card 
         className={`border-l-4 shadow-sm cursor-pointer hover:shadow-md transition-shadow ${
-          sessoesSemEvolucao > 0 ? "border-l-orange-500 bg-orange-50/30" : "border-l-emerald-500"
+          metrics.sessoesSemEvolucao > 0 ? "border-l-orange-500 bg-orange-50/30" : "border-l-emerald-500"
         }`}
         onClick={() => navigate("/evolucoes-pendentes")}
       >
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <CardTitle className={`text-sm font-medium ${
-            sessoesSemEvolucao > 0 ? "text-orange-800" : "text-emerald-800"
+            metrics.sessoesSemEvolucao > 0 ? "text-orange-800" : "text-emerald-800"
           }`}>
             Sessões sem Evolução
           </CardTitle>
           <AlertTriangle className={`h-4 w-4 ${
-            sessoesSemEvolucao > 0 ? "text-orange-500" : "text-emerald-500"
+            metrics.sessoesSemEvolucao > 0 ? "text-orange-500" : "text-emerald-500"
           }`} />
         </CardHeader>
         <CardContent>
           <div className="flex items-baseline gap-2">
             <div className={`text-2xl font-bold ${
-              sessoesSemEvolucao > 0 ? "text-orange-700" : "text-emerald-700"
+              metrics.sessoesSemEvolucao > 0 ? "text-orange-700" : "text-emerald-700"
             }`}>
-              {sessoesSemEvolucao}
+              {metrics.sessoesSemEvolucao}
             </div>
             <span className="text-xs text-muted-foreground">
-              {sessoesSemEvolucao > 0 ? "aguardando evolução" : "tudo em dia! 🎉"}
+              {metrics.sessoesSemEvolucao > 0 ? "aguardando evolução (clique para resolver)" : "tudo em dia! 🎉"}
             </span>
           </div>
           <p className="text-xs text-muted-foreground mt-1">
@@ -203,35 +323,6 @@ export default function DashboardFisio() {
           </p>
         </CardContent>
       </Card>
-      <div className="grid gap-4 md:grid-cols-2">
-        {/* Card 4: Para Cálculo */}
-        <Card className="shadow-sm">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-slate-600">Repasses para Cálculo</CardTitle>
-            <Clock className="h-4 w-4 text-amber-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-amber-500">{fmt(metrics.repasseParaCalculo)}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Valores gerados aguardando conferência da administração.
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Card 5: Conferidos */}
-        <Card className="shadow-sm">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-slate-600">Repasses Conferidos</CardTitle>
-            <CheckCircle className="h-4 w-4 text-emerald-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-emerald-600">{fmt(metrics.repasseConferido)}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Valores já validados e liberados. Se não baterem, verifique os pendentes.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
     </div>
   );
 }
