@@ -944,10 +944,6 @@ async function pacoteTemSaldo(pacoteId: string): Promise<boolean> {
   return (data.sessoes_totais - data.sessoes_realizadas) > 0;
 }
 
-// ============ CHECK-IN RÁPIDO ============
-async function handleCheckinRapido() {
-  if (!selectedAtend) return;
-  ...
   // ============ CHECK-IN RÁPIDO ============
   async function handleCheckinRapido() {
     if (!selectedAtend) return;
