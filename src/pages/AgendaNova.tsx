@@ -941,7 +941,11 @@ export default function AgendaNova() {
       toast.error("Para realizar o check-in, você precisa vincular um pacote/serviço primeiro.");
       return;
     }
-
+const temSaldo = await pacoteTemSaldo(selectedAtend.paciente_pacote_id);
+  if (!temSaldo) {
+    toast.error("Este pacote não tem mais saldo. Vincule um novo antes de fazer o check-in.");
+    return;
+  }
     setBusy(true);
     try {
       const { error } = await supabase
@@ -965,6 +969,13 @@ export default function AgendaNova() {
       toast.error("Vincule o paciente e o pacote antes de realizar.");
       return;
     }
+    if (statusFormValue === "realizado" && selectedAtend.paciente_pacote_id) {
+    const temSaldo = await pacoteTemSaldo(selectedAtend.paciente_pacote_id);
+    if (!temSaldo) {
+      toast.error("Este pacote não tem mais saldo. Vincule um novo antes de realizar.");
+      return;
+    }
+  }
     setBusy(true);
     try {
       const { error } = await supabase
@@ -1637,8 +1648,11 @@ export default function AgendaNova() {
     }
   }
   // ============ HELPERS ============
-  const prontoParaCheckin =
-    !!selectedAtend?.paciente_id && !!selectedAtend?.paciente_pacote_id;
+  // ✅ validação real: existe E tem saldo
+const pacoteValido = !!selectedAtend?.paciente_pacote_id &&
+  itensPaciente.some((i) => i.id === selectedAtend.paciente_pacote_id);
+
+const prontoParaCheckin = !!selectedAtend?.paciente_id && pacoteValido;
 
   const podeEnviarWhats =
     !!selectedAtend &&
@@ -2229,7 +2243,16 @@ export default function AgendaNova() {
                   </Button>
                 </div>
               )}
+async function pacoteTemSaldo(pacoteId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("paciente_pacotes")
+    .select("sessoes_totais, sessoes_realizadas")
+    .eq("id", pacoteId)
+    .maybeSingle();
 
+  if (error || !data) return false;
+  return (data.sessoes_totais - data.sessoes_realizadas) > 0;
+}
               {/* Status */}
               <div className="space-y-2 pt-2 border-t">
                 <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Alterar Status</Label>
