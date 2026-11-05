@@ -932,7 +932,23 @@ export default function AgendaNova() {
       setBusy(false);
     }
   }
-    // ============ CHECK-IN RÁPIDO ============
+  // 🔥 Saldo do pacote (revalida no banco)
+async function pacoteTemSaldo(pacoteId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("paciente_pacotes")
+    .select("sessoes_totais, sessoes_realizadas")
+    .eq("id", pacoteId)
+    .maybeSingle();
+
+  if (error || !data) return false;
+  return (data.sessoes_totais - data.sessoes_realizadas) > 0;
+}
+
+// ============ CHECK-IN RÁPIDO ============
+async function handleCheckinRapido() {
+  if (!selectedAtend) return;
+  ...
+  // ============ CHECK-IN RÁPIDO ============
   async function handleCheckinRapido() {
     if (!selectedAtend) return;
     
@@ -2243,16 +2259,6 @@ const prontoParaCheckin = !!selectedAtend?.paciente_id && pacoteValido;
                   </Button>
                 </div>
               )}
-async function pacoteTemSaldo(pacoteId: string): Promise<boolean> {
-  const { data, error } = await supabase
-    .from("paciente_pacotes")
-    .select("sessoes_totais, sessoes_realizadas")
-    .eq("id", pacoteId)
-    .maybeSingle();
-
-  if (error || !data) return false;
-  return (data.sessoes_totais - data.sessoes_realizadas) > 0;
-}
               {/* Status */}
               <div className="space-y-2 pt-2 border-t">
                 <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Alterar Status</Label>
