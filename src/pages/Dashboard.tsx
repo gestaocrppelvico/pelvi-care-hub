@@ -165,7 +165,7 @@ export default function Dashboard() {
           supabase.from("pacientes").select("id", { count: "exact", head: true }),
           supabase.from("pacientes").select("id", { count: "exact", head: true }).eq("ativo", true),
           supabase.from("profissionais").select("id", { count: "exact", head: true }).eq("ativo", true),
-          supabase.from("atendimentos").select("id, status").gte("data_inicio", inicioDia).lte("data_inicio", fimDia),
+          supabase.from("atendimentos").select("id, status").gte("data_inicio", inicioDia).lte("data_inicio", fimDia).not("status", "in", '("remarcado","cancelado")'),          
           supabase.from("repasses_atendimento").select("id, valor_repasse, status").gte("created_at", inicioPeriodo).lte("created_at", fimPeriodo),
           supabase.from("medicos").select("id", { count: "exact", head: true }),
           supabase.from("medicos").select("id, ultima_visita").not("ultima_visita", "is", null),
